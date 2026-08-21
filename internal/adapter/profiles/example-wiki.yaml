@@ -1,0 +1,60 @@
+# Serendipity Engine · 库画像（VaultProfile）示例
+# 通用示例：一个中文 Wiki 库的解析约定（无任何真实库内容）。
+# 真实库的画像放在各自库内 `<vault>/.serendipity/profile.yaml`（跟库走，不入库）。
+name: example-wiki
+
+excluded_dirs:
+  - .obsidian
+  - .trash
+  - .git
+
+# frontmatter title 提取键（按优先级）；兜底: 任意 *_name/_title 键 > H1 > 文件名
+title_keys:
+  - title
+  - name
+
+alias_keys:
+  - aliases
+
+tag_keys:
+  - tags
+
+# 类型推断：目录前缀 → 类型
+type_by_dir:
+  - pattern: "人物库"
+    type: 人物
+  - pattern: "设定库"
+    type: 设定
+  - pattern: "线索库"
+    type: 线索
+
+# 类型推断：frontmatter 键前缀 → 类型
+type_by_key:
+  - pattern: character_id
+    type: 人物
+  - pattern: setting_id
+    type: 设定
+  - pattern: clue_id
+    type: 线索
+
+# 类型推断：文件名前缀 → 类型（优先级高于目录规则）
+type_by_prefix:
+  - pattern: ".ingest-"
+    type: 报告
+  - pattern: "人物_"
+    type: 人物
+  - pattern: "设定_"
+    type: 设定
+  - pattern: "线索_"
+    type: 线索
+
+default_type: 其他
+
+# 结构/机器节点类型：实体查询默认从节点簇输出排除
+structural_types:
+  - 章节
+  - 大纲
+  - 报告
+  - 画布
+  - 索引
+  - 状态

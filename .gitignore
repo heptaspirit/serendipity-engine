@@ -1,0 +1,27 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+
+# Scratch 临时工作区（探针脚本 / 库拷贝 / 构建缓存，不入库）
+scratch/
+
+# DSH 工具目录与临时文件（不入库）
+.dsh-uploads/
+.dsh-vision-toolkit/
+seren.exe
+*.exe~
+*~
+/PROGRESS_LOG.md
+
+# 用户库专属信息（脱敏前不入库）
+docs/vault-survey.md
+internal/adapter/profiles/novel-wiki.yaml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor / local
+.vscode/
+.idea/

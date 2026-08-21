@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serendipity Engine · 图谱漫游</title>
+<style>
+  :root {
+    --bg: #16181d; --panel: #1e2128; --border: #2c313b;
+    --text: #e8e6e3; --muted: #9aa0ab; --accent: #d9a441;
+    --hop1: #d9a441; --hop2: #6fb3d9; --hop3: #9b8fd9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; color: var(--accent); cursor: pointer; }
+  header h1:hover { text-decoration: underline; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #back, #home { background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 14px;
+    align-self: center; }
+  #back:disabled { opacity: .35; cursor: default; }
+  #back:not(:disabled):hover, #home:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---- 初始页：漂浮气泡 ---- */
+  .hero { position: relative; height: 56vh; min-height: 380px;
+    border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    background: radial-gradient(ellipse at 30% 20%, #23262e 0%, var(--bg) 70%); }
+  .hero-title { text-align: center; padding-top: 32px; font-size: 26px;
+    font-weight: 700; color: var(--accent); }
+  .hero-sub { text-align: center; color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .bubbles { position: absolute; inset: 0; }
+  .bubble { position: absolute; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    font-size: 12px; text-align: center; padding: 6px; box-sizing: border-box;
+    box-shadow: 0 4px 18px rgba(0,0,0,.35); overflow: hidden; text-overflow: ellipsis;
+    animation: floaty var(--dur) ease-in-out infinite alternate; user-select: none; }
+  .bubble:hover { border-color: var(--accent); z-index: 2; }
+  @keyframes floaty {
+    from { transform: translate(0, 0); }
+    to { transform: translate(var(--dx), var(--dy)); }
+  }
+  .type-人物 { border-color: #d9a44166; color: #e8c77a; }
+  .type-设定 { border-color: #6fb3d966; color: #9cc9e0; }
+  .type-线索 { border-color: #9b8fd966; color: #c0b7e8; }
+  .type-ADR  { border-color: #7fbf7f66; color: #a8d8a8; }
+  .type-doc  { border-color: #6fb3d966; color: #9cc9e0; }
+  .type-block{ border-color: #d9a44133; color: #c9c3b8; }
+  main { max-width: 900px; margin: 0 auto; padding: 20px; }
+  .search { display: flex; gap: 8px; margin-bottom: 16px; }
+  .search input { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 15px; }
+  .search button { background: var(--accent); border: 0; color: #16181d;
+    padding: 10px 20px; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12.5px; margin: 8px 0 14px; }
+  .anchors { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .anchor { background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; font-size: 12.5px; color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 8px; cursor: pointer;
+    transition: border-color .15s, transform .1s; }
+  .card:hover { border-color: var(--accent); transform: translateX(2px); }
+  .card .top { display: flex; align-items: baseline; gap: 10px; }
+  .card .rank { color: var(--accent); font-weight: 700; min-width: 26px; }
+  .card .title { font-size: 15px; font-weight: 600; }
+  .card .id { color: var(--muted); font-size: 12px; }
+  .card .type { font-size: 11px; border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 7px; color: var(--muted); }
+  .card .hop { font-size: 11px; border-radius: 4px; padding: 1px 7px; font-weight: 600; }
+  .hop-1 { color: var(--hop1); } .hop-2 { color: var(--hop2); } .hop-3 { color: var(--hop3); }
+  .card .open { margin-left: auto; font-size: 12px; color: var(--accent);
+    text-decoration: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; }
+  .card .open:hover { border-color: var(--accent); }
+  .card .path { color: var(--muted); font-size: 12px; margin-top: 5px; word-break: break-all; }
+  .card .scores { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+  .fallback { background: #2a2417; border: 1px solid #4a3d1e; border-radius: 8px;
+    padding: 10px 14px; color: #d9b36a; font-size: 13px; margin-bottom: 12px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <button id="home" title="回到初始页">⌂</button>
+  <button id="back" disabled title="上一步">←</button>
+  <h1 id="brand">Serendipity Engine</h1>
+  <span class="sub" id="source">—</span>
+</header>
+<main>
+  <div class="search">
+    <input id="q" placeholder="输入笔记名 / 标签 / 任意词…" autofocus>
+    <button id="go">漫游</button>
+  </div>
+  <div id="meta" class="meta"></div>
+  <div id="anchors" class="anchors"></div>
+  <div id="fallback"></div>
+  <div id="list"></div>
+  <div class="hint">点击任意卡片 → 从该节点继续漫游（探索路径）· <span id="ver"></span></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+
+// 显示版本（/api/stats）
+fetch('/api/stats').then(r => r.json()).then(s => {
+  if (s.version && $('#ver')) $('#ver').textContent = 'Serendipity Engine ' + s.version;
+}).catch(() => {});
+
+// ---- 漫游历史栈（与浏览器 history 同步，后退/前进键可用）----
+let stack = [];
+let pos = -1;
+
+async function roam(query, mode) {
+  const r = await fetch('/api/roam?q=' + encodeURIComponent(query) + '&top=15');
+  const d = await r.json();
+  $('#source').textContent = 'source: ' + d.source;
+  $('#q').value = query;
+
+  // URL 同步 + 历史栈
+  if (mode === 'push') {
+    stack = stack.slice(0, pos + 1);
+    stack.push(query);
+    pos++;
+    history.pushState({ q: query }, '', '?q=' + encodeURIComponent(query));
+  } else if (mode === 'replace') {
+    history.replaceState({ q: query }, '', '?q=' + encodeURIComponent(query));
+  }
+  $('#back').disabled = pos <= 0;
+
+  // ---- 锚点：按 match 级别降序、同级别按度降序，只显示前 5 个"重的" ----
+  const anchors = (d.anchors || []).slice().sort((a, b) => (b.match - a.match) || (b.deg - a.deg));
+  const shownA = anchors.slice(0, 5);
+  $('#anchors').innerHTML = '';
+  if (shownA.length) {
+    $('#anchors').innerHTML = shownA.map(a =>
+      `<span class="anchor">锚: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
+    if (anchors.length > shownA.length) {
+      const more = document.createElement('span');
+      more.className = 'anchor';
+      more.textContent = '… 共 ' + anchors.length + ' 个锚点';
+      $('#anchors').appendChild(more);
+    }
+  }
+
+  // fallback notice
+  $('#fallback').innerHTML = '';
+  if (d.fallback === 1) {
+    $('#fallback').innerHTML = '<div class="fallback">锚定失败 → 全文检索降级（搜索式）</div>';
+  } else if (d.fallback === 2) {
+    $('#fallback').innerHTML = '<div class="fallback">查询点无/少链接 → 全文检索降级</div>';
+  }
+
+  // list
+  const list = $('#list');
+  if (!query) {
+    renderHome();
+    return;
+  }
+  const cards = (d.results || []).concat((d.fallback_hits || []).map(h => ({
+    id: h.id, title: h.title, type: h.type, hops: 0,
+    path: h.id, note: '全文命中 ' + h.count + ' 次'
+  })));
+  if (!cards.length) {
+    list.innerHTML = '<div class="empty">无命中——库里没有相关内容</div>';
+    return;
+  }
+  list.innerHTML = cards.map((c, i) => {
+    const hopCls = c.hops === 1 ? 'hop-1' : c.hops === 2 ? 'hop-2' : c.hops >= 3 ? 'hop-3' : '';
+    const hopLabel = c.hops ? c.hops + '-hop' : '';
+    const openLink = c.uri ? `<a class="open" href="${esc(c.uri)}" onclick="event.stopPropagation()" title="在笔记软件中打开">打开 ↗</a>` : '';
+    return `<div class="card" data-id="${esc(c.id)}">
+      <div class="top">
+        <span class="rank">${i + 1}</span>
+        <span class="title">${esc(c.title)}</span>
+        <span class="id">${esc(c.id)}</span>
+        <span class="type">${esc(c.type)}</span>
+        <span class="hop ${hopCls}">${hopLabel}</span>
+        ${openLink}
+      </div>
+      <div class="path">${esc(c.path || '')}</div>
+      <div class="scores">${c.note || 'score=' + c.score.toFixed(3) + ' ppr=' + c.ppr.toFixed(4) + ' act=' + c.act.toFixed(3)}</div>
+    </div>`;
+  }).join('');
+  // click to drill（向前漫游 = push 历史）
+  document.querySelectorAll('.card').forEach(el => {
+    el.onclick = () => roam(el.dataset.id, 'push');
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---- 初始页：热门节点漂浮气泡（点击即漫游）----
+async function renderHome() {
+  $('#list').innerHTML = `<div class="hero">
+      <div class="hero-title">图谱漫游</div>
+      <div class="hero-sub">你问一个点，它给你一片 —— 点击气泡开始漫游</div>
+      <div class="bubbles" id="bubbles"></div>
+    </div>`;
+  let hot = [];
+  try {
+    const r = await fetch('/api/hot?n=24');
+    hot = await r.json();
+  } catch (e) { hot = []; }
+  const box = $('#bubbles');
+  if (!box) return;
+  const pool = hot.slice().sort(() => Math.random() - 0.5).slice(0, 10);
+  if (!pool.length) {
+    box.innerHTML = '<div class="empty">库里还没有节点</div>';
+    return;
+  }
+  box.innerHTML = pool.map(b => {
+    const size = 64 + Math.random() * 44;
+    const style = 'left:' + (Math.random() * 86 + 5).toFixed(1) + '%;' +
+      'top:' + (Math.random() * 68 + 12).toFixed(1) + '%;' +
+      'width:' + size.toFixed(0) + 'px;height:' + size.toFixed(0) + 'px;' +
+      '--dx:' + (Math.random() * 60 - 30).toFixed(0) + 'px;' +
+      '--dy:' + (Math.random() * 44 - 22).toFixed(0) + 'px;' +
+      '--dur:' + (8 + Math.random() * 8).toFixed(1) + 's;' +
+      'animation-delay:' + (-Math.random() * 8).toFixed(1) + 's';
+    return `<div class="bubble type-${esc(b.type)}" data-id="${esc(b.id)}"
+        style="${style}" title="${esc(b.title)}">${esc(b.title)}</div>`;
+  }).join('');
+  document.querySelectorAll('.bubble').forEach(el => {
+    el.onclick = () => roam(el.dataset.id, 'push');
+  });
+}
+
+// ---- 回到初始页（重置漫游历史）----
+function goHome() {
+  stack = [''];
+  pos = 0;
+  roam('', 'replace');
+}
+
+// 浏览器前进/后退：从 history state 恢复对应查询（空查询也合法——回到初始页）
+window.addEventListener('popstate', e => {
+  const q = (e.state && e.state.q) || '';
+  if (pos > 0 && stack[pos - 1] === q) { pos--; }
+  else if (pos < stack.length - 1 && stack[pos + 1] === q) { pos++; }
+  else { stack = [q]; pos = 0; }
+  roam(q, 'replace');
+});
+
+$('#back').onclick = () => { if (pos > 0) history.back(); };
+$('#home').onclick = goHome;
+$('#brand').onclick = goHome;
+$('#go').onclick = () => { const q = $('#q').value.trim(); if (q) roam(q, 'push'); };
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+
+// 初始：把初始状态入栈（空查询也算一步，保证第一次搜索后就能回退）
+const initQ = new URLSearchParams(location.search).get('q') || '';
+stack = [initQ];
+pos = 0;
+roam(initQ, 'replace');
+</script>
+</body>
+</html>
