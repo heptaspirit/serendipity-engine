@@ -89,6 +89,8 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// 禁用缓存：前端迭代频繁，避免浏览器缓存旧页面导致"点了没反应"
+		w.Header().Set("Cache-Control", "no-store")
 		b, _ := staticFS.ReadFile("static/index.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(b)

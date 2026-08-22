@@ -17,7 +17,8 @@
     v0.1.1  页面与画像改动无涉本文件
     v0.1.2  刷新按钮 + diff 摘要展示
     v0.1.3  锚点可点击（从锚点继续漫游）；点击卡片输入框显示标题而非 ID；
-            孤立节点（fallback=2 且无命中）显示明确提示
+            孤立节点（fallback=2 且无命中）显示明确提示；请求失败显示错误；
+            点击卡片时 meta 显示"从「XX」继续漫游"反馈
 -->
 <html lang="zh">
 <head>
@@ -134,10 +135,20 @@ let stack = [];
 let pos = -1;
 
 async function roam(query, mode, display) {
-  const r = await fetch('/api/roam?q=' + encodeURIComponent(query) + '&top=15');
-  const d = await r.json();
+  let d;
+  try {
+    const r = await fetch('/api/roam?q=' + encodeURIComponent(query) + '&top=15');
+    d = await r.json();
+  } catch (e) {
+    // v0.1.3：请求失败也要可见（避免点击"静默没反应"）
+    $('#meta').textContent = '请求失败: ' + e.message;
+    return;
+  }
   $('#source').textContent = 'source: ' + d.source;
   $('#q').value = display || query;
+  if (display && mode === 'push') {
+    $('#meta').textContent = '从「' + display + '」继续漫游';
+  }
 
   // URL 同步 + 历史栈
   if (mode === 'push') {
