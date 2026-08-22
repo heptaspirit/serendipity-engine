@@ -19,6 +19,8 @@
     v0.1.3  锚点可点击（从锚点继续漫游）；点击卡片输入框显示标题而非 ID；
             孤立节点显示醒目"这个节点到头了"提示；请求失败显示错误；
             事件委托统一点击（卡片/气泡/锚点，杜绝漏绑定）；window.onerror 可见
+    v0.1.4  点击上报反馈埋点（POST /api/touch，不阻塞）；轮询 stats 对比
+            revision，库被自动监听刷新时提示"库已自动更新"
 -->
 <html lang="zh">
 <head>
@@ -287,14 +289,33 @@ window.addEventListener('popstate', e => {
 // ---- 事件委托：卡片 / 气泡 / 锚点 统一点击处理（v0.1.3）----
 // 任何时刻渲染出的节点都可点击（不依赖渲染时的绑定），杜绝"某类元素点了没反应"。
 // 点击瞬间 meta 区先给反馈（"漫游中…"），让操作立刻可感知。
+// v0.1.4：点击同时上报反馈埋点（POST /api/touch，fire-and-forget 不阻塞漫游）。
 document.addEventListener('click', e => {
   if (e.target.closest('a')) return; // 「打开 ↗」链接不拦截
   const el = e.target.closest('.card, .bubble, #anchors .anchor[data-id]');
   if (el && el.dataset.id) {
     $('#meta').textContent = '漫游中: ' + (el.dataset.title || el.title) + ' …';
+    fetch('/api/touch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: el.dataset.id, from: $('#q').value || '' })
+    }).catch(() => {});
     roam(el.dataset.id, 'push', el.dataset.title || el.title);
   }
 });
+
+// ---- 自动监听提示（v0.1.4）：轮询 stats 对比 revision，库被自动刷新时提示 ----
+let lastRevision = null;
+setInterval(async () => {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    if (lastRevision === null) { lastRevision = s.revision || 0; return; }
+    if ((s.revision || 0) !== lastRevision) {
+      lastRevision = s.revision || 0;
+      const m = $('#meta');
+      if (m) m.textContent = '库已自动更新（节点 ' + s.nodes + '）——点击任意卡片可看最新，或点 ↻ 查看明细';
+    }
+  } catch (e) { /* 轮询失败静默 */ }
+}, 30000);
 
 // ---- 页面 JS 错误可见（诊断用）：出错显示在 meta 区，不再静默 ----
 window.addEventListener('error', e => {

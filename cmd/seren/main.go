@@ -41,28 +41,34 @@
 //	v0.1.1  --profile-name 新增 okf（OKF 通用画像别名）；版本号提升。
 //	v0.1.2  新增 refresh 子命令 + serve 注入 /api/refresh 闭包（对账刷新）。
 //	v0.1.3  虎鲸空壳页面清理（过滤 + container 类型化，见 adapter/orca.go）。
+//	v0.1.4  自动监听（watch 轮询+节流，默认开）、反馈埋点（/api/touch，
+//	        仅记录不演化）、虎鲸跳转（--repo → orca-note://）。
 //
 // ============================================================================
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
 	"serendipity-engine/internal/roam"
 	"serendipity-engine/internal/store"
 	"serendipity-engine/internal/sync"
+	"serendipity-engine/internal/watch"
 	"serendipity-engine/internal/web"
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.3"
+const version = "v0.1.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -112,6 +118,11 @@ flags:
   --db <file.sqlite>          从持久化存储读图（跳过解析）
   --persist                   解析后持久化到库内 .serendipity/db-<hash>.sqlite
   --store <file.sqlite>       指定持久化路径（覆盖默认）
+监听/跳转/埋点:
+  --watch-off                 关闭自动监听（默认开：轮询变化→节流合并刷新）
+  --watch-interval N          监听轮询间隔秒（默认 10）
+  --watch-throttle N          刷新节流秒（默认 60，合并窗口防频繁重解析）
+  --repo <name>               虎鲸 repo 名（orca-note:// 跳转；默认取库文件名）
 `, version)
 }
 
@@ -362,7 +373,7 @@ func cmdRoam(args []string) {
 func cmdServe(args []string) {
 	pos, flags := parseArgs(args)
 	if len(pos) < 1 {
-		fatal("用法: seren serve <vault> [--port 8080] [--vault-name 库名]")
+		fatal("用法: seren serve <vault> [--port 8080] [--vault-name 库名] [--repo 虎鲸库名]")
 	}
 	vault := pos[0]
 	port := fint(flags, "port", 8080)
@@ -371,28 +382,77 @@ func cmdServe(args []string) {
 		fatal("画像加载失败: %v", err)
 	}
 	g, docs, src := loadSource(vault, p, flags["db"])
-
-	// vault 名（obsidian:// URI 跳转用）：显式 > 路径 basename；虎鲸库无跳转
-	vaultName := flags["vault-name"]
-	if vaultName == "" && !adapter.IsOrcaDB(vault) {
-		vaultName = filepath.Base(filepath.Clean(vault))
-	}
+	isOrca := adapter.IsOrcaDB(vault)
 	if flags["db"] != "" {
 		// 存储回读：按路径形态推断源（orca 节点 path = block/<id>）
+		isOrca = false
 		for _, d := range docs {
 			if strings.HasPrefix(d.Path, "block/") {
-				vaultName = "" // 虎鲸无 URI 跳转
+				isOrca = true
 				break
 			}
 		}
 	}
 
-	srv := web.New(g, p, src, vaultName, version, refreshFunc(vault, p, flags))
+	// vault 名（obsidian:// URI 跳转用）：显式 > 路径 basename
+	vaultName := flags["vault-name"]
+	if vaultName == "" && !isOrca {
+		vaultName = filepath.Base(filepath.Clean(vault))
+	}
+	// 虎鲸 repo 名（orca-note:// URI 跳转用）：显式 --repo > 库文件名（去 .db）
+	orcaRepo := ""
+	if isOrca {
+		orcaRepo = flags["repo"]
+		if orcaRepo == "" {
+			orcaRepo = strings.TrimSuffix(filepath.Base(vault), ".db")
+		}
+	}
+
+	storePath := storePathFor(vault, flags["store"])
+	refreshFn := refreshFunc(vault, p, flags)
+	// 反馈埋点闭包（克制：仅记录，写 store touch 表；失败静默）
+	touchFn := func(target, from string) error { return store.AppendTouch(storePath, target, from) }
+	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
+	srv.OrcaRepo = orcaRepo
+
+	// 自动监听（v0.1.4，克制设计见 internal/watch）：默认开启，--watch-off 关闭。
+	// 轮询间隔 --watch-interval 秒（默认 10s）；刷新节流 --watch-throttle 秒
+	// （默认 60s，合并窗口——连续编辑吸收为窗口内一次刷新）。
+	if flags["watch-off"] == "" {
+		interval := time.Duration(fint(flags, "watch-interval", 10)) * time.Second
+		throttle := time.Duration(fint(flags, "watch-throttle", 60)) * time.Second
+		var check func() (bool, error)
+		if isOrca {
+			check = watch.NewOrcaChecker(vault)
+		} else {
+			check = watch.NewVaultChecker(vault, p.ExcludedDirs)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go watch.Run(ctx, interval, throttle, check, func() error {
+			res, ng, err := refreshFn()
+			if err != nil {
+				return err
+			}
+			srv.ReplaceGraph(ng)
+			log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d（revision=%d）",
+				res.Added, res.Updated, res.Deleted, srv.Revision())
+			return nil
+		})
+		fmt.Printf("自动监听: 开（轮询 %v，刷新节流 %v；--watch-off 关闭）\n", interval, throttle)
+	}
+
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	fmt.Printf("Serendipity Engine %s Web UI: http://%s  (source: %s, 节点 %d)\n",
 		version, addr, src, g.Stats().Nodes)
-	if vaultName != "" {
+	switch {
+	case orcaRepo != "":
+		fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", orcaRepo)
+	case vaultName != "":
 		fmt.Printf("跳转: Obsidian vault 名=%s（卡片上点「打开」会跳到笔记软件）\n", vaultName)
+	}
+	if n, err := store.TouchCount(storePath); err == nil && n > 0 {
+		fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
 	}
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		fatal("服务失败: %v", err)

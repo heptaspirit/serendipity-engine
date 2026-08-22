@@ -20,16 +20,30 @@
 //	RWMutex 保护 G：读接口（stats/hot/roam）持 RLock，刷新替换持 Lock，
 //	本地单用户并发安全。
 //
-// ▍跳转
+// ▍跳转（v0.1.4 虎鲸跳转落地）
 //
 //	Obsidian 源且已知 vault 名 → 卡片「打开」生成 obsidian://open URI（去 .md，
-//	URL 编码）；虎鲸源（Path 前缀 block/）无 URI 跳转（v1 未做，见 product-form.md）。
+//	URL 编码）；虎鲸源（OrcaRepo 非空）→ 生成 orca-note://<repo>/block?blockId=<id>
+//	（协议见 orcanote-agent-skills / orcanote-markdown skill）。
+//
+// ▍反馈埋点（POST /api/touch，v0.1.4）
+//
+//	Web 端点击节点时上报 {target, from}，写入 store 的 touch 表（独立存储、
+//	容量上限，见 internal/store）。克制设计：仅记录不演化边权，杜绝
+//	"点击→边权变→结果变→再点击"的正反馈跑飞；写失败静默不影响主流程。
+//
+// ▍自动监听集成（v0.1.4）
+//
+//	watch 包轮询检测到变化 → 调用 main 注入的 refresh 闭包 → ReplaceGraph
+//	替换内存图并递增 revision；前端轮询 /api/stats 对比 revision 提示"库已更新"。
 //
 // ▍修改记录
 //
 //	v0.1.0  初版 REST + 页面。
 //	v0.1.1  页面/画像改动无涉本文件。
 //	v0.1.2  POST /api/refresh 对账刷新；RWMutex 图保护；刷新闭包注入。
+//	v0.1.3  / 响应 Cache-Control: no-store（防浏览器缓存旧页面）。
+//	v0.1.4  虎鲸跳转 orca-note://；POST /api/touch；ReplaceGraph + revision。
 //
 // ============================================================================
 package web
@@ -59,20 +73,42 @@ var staticFS embed.FS
 // 返回 diff 结果与刷新后的新图（供内存替换）。
 type RefreshFunc func() (*syncpkg.Result, *graph.Graph, error)
 
+// TouchFunc 反馈埋点闭包（由 main 构造，写 store 的 touch 表）。
+type TouchFunc func(target, from string) error
+
 // Server 持有图与画像，提供 REST 接口。
 type Server struct {
-	mu        sync.RWMutex // 保护 G（/api/refresh 替换图，读接口并发安全）
+	mu        sync.RWMutex // 保护 G 与 revision（刷新替换图，读接口并发安全）
 	G         *graph.Graph
 	P         *adapter.VaultProfile
 	Source    string
 	VaultName string // Obsidian vault 名（obsidian:// URI 跳转用）；空 = 不提供跳转
+	OrcaRepo  string // 虎鲸 repo 名（orca-note:// URI 跳转用）；空 = 不提供跳转
 	Version   string
 	Refresh   RefreshFunc // 非空时注册 POST /api/refresh
+	Touch     TouchFunc   // 非空时注册 POST /api/touch（反馈埋点）
+	revision  int         // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
 }
 
-// New 创建 Web 服务；refresh 为 nil 时不注册刷新端点。
-func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version string, refresh RefreshFunc) *Server {
-	return &Server{G: g, P: p, Source: source, VaultName: vaultName, Version: version, Refresh: refresh}
+// New 创建 Web 服务；refresh/touch 为 nil 时不注册对应端点。
+func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version string, refresh RefreshFunc, touch TouchFunc) *Server {
+	return &Server{G: g, P: p, Source: source, VaultName: vaultName, Version: version, Refresh: refresh, Touch: touch}
+}
+
+// ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
+// 自动监听触发共用）。调用方须持有新图所有权。
+func (s *Server) ReplaceGraph(g *graph.Graph) {
+	s.mu.Lock()
+	s.G = g
+	s.revision++
+	s.mu.Unlock()
+}
+
+// Revision 当前图版本号（/api/stats 返回，前端轮询提示"库已更新"）。
+func (s *Server) Revision() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revision
 }
 
 // Handler 返回路由。
@@ -83,6 +119,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/roam", s.handleRoam)
 	if s.Refresh != nil {
 		mux.HandleFunc("/api/refresh", s.handleRefresh)
+	}
+	if s.Touch != nil {
+		mux.HandleFunc("/api/touch", s.handleTouch)
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -96,6 +135,29 @@ func (s *Server) Handler() http.Handler {
 		w.Write(b)
 	})
 	return mux
+}
+
+// handleTouch POST /api/touch：反馈埋点（点击节点 = touch）。
+// 克制设计：仅记录，不演化边权；写失败静默（埋点不影响主流程）。
+func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+		From   string `json:"from"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" {
+		writeJSON(w, map[string]string{"ok": "false"})
+		return
+	}
+	if err := s.Touch(body.Target, body.From); err != nil {
+		// 埋点失败不影响主流程（克制：静默）
+		writeJSON(w, map[string]string{"ok": "false"})
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
 }
 
 // refreshResp 对账刷新 REST 响应（明细截断到 limit，防大库刷爆响应）。
@@ -121,9 +183,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": err.Error()})
 		return
 	}
-	s.mu.Lock()
-	s.G = g
-	s.mu.Unlock()
+	s.ReplaceGraph(g)
 
 	changes := res.Changes
 	if len(changes) > limit {
@@ -137,16 +197,18 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 type statsResp struct {
-	Nodes   int    `json:"nodes"`
-	Edges   int    `json:"edges"`
-	Version string `json:"version"`
+	Nodes    int    `json:"nodes"`
+	Edges    int    `json:"edges"`
+	Version  string `json:"version"`
+	Revision int    `json:"revision"` // 图版本号：自动/手动刷新后 +1（前端轮询提示更新）
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	st := s.G.Stats()
+	rev := s.revision
 	s.mu.RUnlock()
-	writeJSON(w, statsResp{Nodes: st.Nodes, Edges: st.Edges, Version: s.Version})
+	writeJSON(w, statsResp{Nodes: st.Nodes, Edges: st.Edges, Version: s.Version, Revision: rev})
 }
 
 // hotNode 初始页漂浮气泡节点。
@@ -218,7 +280,7 @@ type roamItem struct {
 	Hops  int      `json:"hops,omitempty"`
 	Path  []string `json:"path,omitempty"`
 	Count int      `json:"count,omitempty"` // 全文命中次数（降级）
-	URI   string   `json:"uri,omitempty"`   // obsidian:// 跳转（仅 Obsidian 源且有 VaultName）
+	URI   string   `json:"uri,omitempty"`   // obsidian:// 或 orca-note:// 跳转（对应源）
 }
 
 // obsidianURI 拼 obsidian://open?vault=<名>&file=<相对路径>（去 .md，URL 编码）。
@@ -230,13 +292,30 @@ func (s *Server) obsidianURI(path string) string {
 	return "obsidian://open?vault=" + url.QueryEscape(s.VaultName) + "&file=" + url.QueryEscape(file)
 }
 
+// orcaURI 拼 orca-note://<repo>/block?blockId=<id>（虎鲸跳转，v0.1.4；
+// 协议见 orcanote-agent-skills 的 orcanote-markdown skill：块链接用块 ID）。
+func (s *Server) orcaURI(id string) string {
+	if s.OrcaRepo == "" || id == "" {
+		return ""
+	}
+	return "orca-note://" + url.QueryEscape(s.OrcaRepo) + "/block?blockId=" + url.QueryEscape(id)
+}
+
+// uriFor 按源类型生成跳转 URI：虎鲸（OrcaRepo 非空）用块 ID；否则 Obsidian 路径。
+func (s *Server) uriFor(path, id string) string {
+	if s.OrcaRepo != "" {
+		return s.orcaURI(id)
+	}
+	return s.obsidianURI(path)
+}
+
 func (s *Server) toItems(results []score.Result) []roamItem {
 	out := make([]roamItem, 0, len(results))
 	for _, r := range results {
 		out = append(out, roamItem{
 			ID: r.ID, Title: r.Title, Type: r.Type,
 			Score: r.Score, PPR: r.PPR, Act: r.Act, Hops: r.Hops, Path: r.Path,
-			URI: s.obsidianURI(nodePath(s.G, r.ID)),
+			URI: s.uriFor(nodePath(s.G, r.ID), r.ID),
 		})
 	}
 	return out
@@ -247,7 +326,7 @@ func (s *Server) toHitItems(hits []graph.TextHit) []roamItem {
 	for _, h := range hits {
 		out = append(out, roamItem{
 			ID: h.ID, Title: h.Title, Type: h.Type, Count: h.Count,
-			URI: s.obsidianURI(nodePath(s.G, h.ID)),
+			URI: s.uriFor(nodePath(s.G, h.ID), h.ID),
 		})
 	}
 	return out

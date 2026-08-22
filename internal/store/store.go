@@ -19,11 +19,17 @@
 //   - Save 全量重写是幂等的：任何一次 refresh 后存储即最新状态，重复刷新无副作用；
 //   - 增量写（WAL 单行 UPDATE）是 v1.5 优化，不改本模块语义。
 //
+// ▍反馈埋点（v0.1.4）
+//   touch 表独立于 documents/links：Save 全量重写只 DELETE 后两张表，touch 保留
+//   （增量写入）。容量上限 touchMax=5000，超限删最旧——克制设计防无限增长；
+//   埋点只记录不演化边权（杜绝"点击→边权变→结果变→再点击"正反馈跑飞）。
+//
 // ▍修改记录
 //
 //	v0.1.0  初版 Save/Load 全量重写。
 //	v0.1.2  Load 支持不存在的存储文件（首次对账全新增）；补充模块头注释。
 //	v0.1.3  Load 兼容"存在但从未写入"的空库文件（无 documents 表 → 无旧状态）。
+//	v0.1.4  AppendTouch/TouchCount（反馈埋点，独立表 + 容量上限）。
 //
 // ============================================================================
 package store
@@ -40,6 +46,53 @@ import (
 	_ "modernc.org/sqlite"
 	"serendipity-engine/internal/adapter"
 )
+
+// touchMax 反馈埋点（touch）表容量上限：保留最近 N 条，防无限增长
+// （克制设计 v0.1.4：埋点只记录不演化，杜绝"点击→边权变→结果变→再点击"正反馈）。
+const touchMax = 5000
+
+// AppendTouch 记录一次节点点击（反馈埋点，独立表——Save 全量重写不清除）。
+// 容量上限：超出 touchMax 时删除最旧记录（按 id 单调递增裁剪）。
+func AppendTouch(dbPath, target, from string) error {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS touch (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts INTEGER NOT NULL,
+			target TEXT NOT NULL,
+			src TEXT
+		)`); err != nil {
+		return err
+	}
+	// 注意：src = 来源节点（from 是 SQL 保留字，不能用做列名）
+	if _, err := db.Exec(`INSERT INTO touch (ts, target, src) VALUES (?,?,?)`,
+		time.Now().Unix(), target, from); err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM touch WHERE id <= (SELECT MAX(id) FROM touch) - ?`, touchMax)
+	return err
+}
+
+// TouchCount 返回已记录的点击数（serve 启动/刷新日志用）。
+func TouchCount(dbPath string) (int, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM touch`).Scan(&n); err != nil {
+		return 0, err // 表不存在 = 0
+	}
+	return n, nil
+}
 
 // DBPath 返回库的默认存储路径：<vault>/.serendipity/db-<路径hash>.sqlite
 // （设计 §6.8 多库：每库一 DB，便携闭环）。

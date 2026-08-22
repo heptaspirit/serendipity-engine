@@ -396,6 +396,13 @@ wiki 的原始承诺——知识通过链接自组织、词条之间互相引路
 
 **对账正确性的三个前提（v0.1.2 实测确认）**：① 快照必须含未 checkpoint 的 WAL（VACUUM INTO 优先；文件拷贝路径先 wal 后 db + 打开时自动 recovery）；② 虎鲸 schema 的生成列 `name_p = to_pinyin(name)` 需确定性函数 stub（否则 VACUUM INTO 报 malformed）；③ Tags/Aliases/Refs 比较前排序（adapter 输出顺序不稳定会误报）。自动监听（fsnotify / DB 轮询）是 v1.5 的热同步，不在 v1。
 
+**〔v0.1.4 落地〕自动监听 + 反馈埋点 + 虎鲸跳转（克制设计，用户拍板"不要太频繁"）**：
+
+- **自动监听（internal/watch）**：轮询式（非事件监听，频率完全可控）——Obsidian 逐 .md 文件比对 (mtime,size) 快照（含新增/删除），虎鲸 stat 库文件。检测到变化进入"待刷新"，**刷新节流 60s 合并窗口**（连续编辑吸收为至多每分钟一次全量刷新）。**排除 `.serendipity/.git/.obsidian/.trash/.dsh`**——store 写入自身产物不自触发"变化→刷新→写入→再变化"无限循环（正反馈核心防线）。刷新失败仅记日志、保留待刷新，节流后重试，不轰炸。serve 默认开启，`--watch-off` 关闭，`--watch-interval`（轮询秒）/`--watch-throttle`（节流秒）可调。
+- **反馈埋点（POST /api/touch）**：Web 端点击节点上报 {target, from} → store 独立 touch 表（**Save 全量重写不清除**，容量上限 5000 条防无限增长）。**v1 不做边权演化**——埋点只记录不演化，"点击→边权变→结果变→再点击"的跑飞在源头切断；将来要看数据再决定演化策略。
+- **虎鲸跳转（orca-note://）**：卡片「打开」生成 `orca-note://<repo>/block?blockId=<id>`（协议见 orcanote-agent-skills），repo 名 = `--repo` 或库文件名（去 .db）。
+- **Web 可见性**：自动刷新后 revision+1，前端每 30s 轮询 stats 对比，提示"库已自动更新"。
+
 **查询降级策略（〔修订 #10〕新增）**：个人 vault 大量孤儿节点、小组件、随手链，激活扩散在稀疏/破碎图上会频繁返回空或平凡结果。v1 起内置降级——当查询点无/少链接时，回退到**标签命中 + 全文 LIKE** 兜底，保证每次查询都有输出；补链（AI）是 v2 的正规解法。**〔实测〕已在真实库确认**（示例库细节已脱敏，见 `docs/spike-report.md`）：存在大量孤儿节点、正文页零链接、图高度集中于索引子图——降级策略是刚需不是保险。
 
 **配置分层（2026-08-21 补充）**
