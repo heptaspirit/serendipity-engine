@@ -17,8 +17,8 @@
     v0.1.1  页面与画像改动无涉本文件
     v0.1.2  刷新按钮 + diff 摘要展示
     v0.1.3  锚点可点击（从锚点继续漫游）；点击卡片输入框显示标题而非 ID；
-            孤立节点（fallback=2 且无命中）显示明确提示；请求失败显示错误；
-            点击卡片时 meta 显示"从「XX」继续漫游"反馈
+            孤立节点显示醒目"这个节点到头了"提示；请求失败显示错误；
+            事件委托统一点击（卡片/气泡/锚点，杜绝漏绑定）；window.onerror 可见
 -->
 <html lang="zh">
 <head>
@@ -100,6 +100,11 @@
   .fallback { background: #2a2417; border: 1px solid #4a3d1e; border-radius: 8px;
     padding: 10px 14px; color: #d9b36a; font-size: 13px; margin-bottom: 12px; }
   .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  /* v0.1.3：漫游到头的醒目提示（孤立节点/无关联内容） */
+  .deadend { background: #3a2a12; border: 2px solid var(--accent); color: #ffd77a;
+    border-radius: 10px; padding: 24px 18px; text-align: center; font-size: 17px;
+    font-weight: 700; margin-bottom: 12px; }
+  .deadend-sub { font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 20px; text-align: center; }
 </style>
 </head>
@@ -177,9 +182,6 @@ async function roam(query, mode, display) {
       $('#anchors').appendChild(more);
     }
   }
-  document.querySelectorAll('#anchors .anchor[data-id]').forEach(el => {
-    el.onclick = () => roam(el.dataset.id, 'push', el.dataset.title);
-  });
 
   // fallback notice
   $('#fallback').innerHTML = '';
@@ -200,10 +202,13 @@ async function roam(query, mode, display) {
     path: h.id, note: '全文命中 ' + h.count + ' 次'
   })));
   if (!cards.length) {
-    // v0.1.3：区分"孤立节点无关联"（fallback=2 且全文也无命中）与普通无命中
-    list.innerHTML = d.fallback === 2
-      ? '<div class="empty">该节点没有关联的节点（孤立）——换个入口试试</div>'
-      : '<div class="empty">无命中——库里没有相关内容</div>';
+    // v0.1.3：漫游到头（fallback=2 且全文也无命中）→ 醒目提示，避免"点了没反应"
+    if (d.fallback === 2) {
+      list.innerHTML = `<div class="deadend">⚠ 这个节点到头了
+        <div class="deadend-sub">它没有关联的节点——试试搜索其他关键词，或点左上角「⌂」回初始页</div></div>`;
+    } else {
+      list.innerHTML = '<div class="empty">无命中——库里没有相关内容</div>';
+    }
     return;
   }
   list.innerHTML = cards.map((c, i) => {
@@ -223,10 +228,6 @@ async function roam(query, mode, display) {
       <div class="scores">${c.note || 'score=' + c.score.toFixed(3) + ' ppr=' + c.ppr.toFixed(4) + ' act=' + c.act.toFixed(3)}</div>
     </div>`;
   }).join('');
-  // click to drill（向前漫游 = push 历史；输入框显示标题而非 ID）
-  document.querySelectorAll('.card').forEach(el => {
-    el.onclick = () => roam(el.dataset.id, 'push', el.dataset.title);
-  });
 }
 
 function esc(s) {
@@ -262,12 +263,9 @@ async function renderHome() {
       '--dy:' + (Math.random() * 44 - 22).toFixed(0) + 'px;' +
       '--dur:' + (8 + Math.random() * 8).toFixed(1) + 's;' +
       'animation-delay:' + (-Math.random() * 8).toFixed(1) + 's';
-    return `<div class="bubble type-${esc(b.type)}" data-id="${esc(b.id)}"
+    return `<div class="bubble type-${esc(b.type)}" data-id="${esc(b.id)}" data-title="${esc(b.title)}"
         style="${style}" title="${esc(b.title)}">${esc(b.title)}</div>`;
   }).join('');
-  document.querySelectorAll('.bubble').forEach(el => {
-    el.onclick = () => roam(el.dataset.id, 'push', el.title);
-  });
 }
 
 // ---- 回到初始页（重置漫游历史）----
@@ -284,6 +282,24 @@ window.addEventListener('popstate', e => {
   else if (pos < stack.length - 1 && stack[pos + 1] === q) { pos++; }
   else { stack = [q]; pos = 0; }
   roam(q, 'replace');
+});
+
+// ---- 事件委托：卡片 / 气泡 / 锚点 统一点击处理（v0.1.3）----
+// 任何时刻渲染出的节点都可点击（不依赖渲染时的绑定），杜绝"某类元素点了没反应"。
+// 点击瞬间 meta 区先给反馈（"漫游中…"），让操作立刻可感知。
+document.addEventListener('click', e => {
+  if (e.target.closest('a')) return; // 「打开 ↗」链接不拦截
+  const el = e.target.closest('.card, .bubble, #anchors .anchor[data-id]');
+  if (el && el.dataset.id) {
+    $('#meta').textContent = '漫游中: ' + (el.dataset.title || el.title) + ' …';
+    roam(el.dataset.id, 'push', el.dataset.title || el.title);
+  }
+});
+
+// ---- 页面 JS 错误可见（诊断用）：出错显示在 meta 区，不再静默 ----
+window.addEventListener('error', e => {
+  const m = $('#meta');
+  if (m) m.textContent = '页面错误: ' + (e.message || 'unknown');
 });
 
 $('#back').onclick = () => { if (pos > 0) history.back(); };
