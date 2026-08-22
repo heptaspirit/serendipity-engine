@@ -27,7 +27,7 @@ func (g *Graph) PPR(seeds []string, teleport float64, iters int) map[string]floa
 			if deg == 0 {
 				// 悬空节点：把概率按种子分布回退（等价于均匀回跳的简化）
 				for s, w := range seed {
-					next[s] += (1-teleport) * p[id] * w
+					next[s] += (1 - teleport) * p[id] * w
 				}
 				continue
 			}

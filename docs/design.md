@@ -380,6 +380,22 @@ wiki 的原始承诺——知识通过链接自组织、词条之间互相引路
 - **最终一致性**：mtime 极端漏报由"用户下次再改该文件"兜底收敛，无需内容哈希（对账用）；内容哈希只用于改名识别，二者用途不同。
 - 与 §6.7 的关系：实时监听 = 热同步，启动对账 = 冷同步，**共用同一套解析器**——对账不是新系统，只是给"同步"补上离线区间
 
+**〔v0.1.2 落地〕`seren refresh` + Web `/api/refresh`（对账刷新 v1）**：使用者增删改笔记后手动触发，全量重解析 + 与上次持久化状态 diff（`internal/sync`，按 ID 对齐、规范化比较 Title/Type/Path/Tags/Aliases/Text/Refs 字段），报告 新增/更新/删除 明细并写回存储（幂等全量重写）。边际情况实测（TestOrca 21976 块大库）：
+
+| 场景 | 实测行为 |
+|---|---|
+| 首次刷新（无存储） | 全部 added（等价 index） |
+| 新增页面/块（虎鲸 CLI create_page/insert_markdown） | 新增 1 文档（段落折叠进页面） |
+| 删除块（delete_blocks） | deleted；被删块的后代变链顶 → added |
+| 修改文本/标题 | updated，字段级明细（title/text/aliases/refs…） |
+| 引用增删 | updated 的 refs 字段 + 引用±N；同文档内引用正确丢弃 |
+| 块移动页面（归属变化） | 两个文档都 updated |
+| 删除被引用块（悬空） | deleted + 引用方 updated(refs -1) |
+| 重复刷新 | 幂等（全 unchanged） |
+| 虎鲸 app 独占锁活库 | 文件拷贝快照 + WAL recovery + integrity_check 兜底（VACUUM INTO 拿不到读锁时），实测 0.84s |
+
+**对账正确性的三个前提（v0.1.2 实测确认）**：① 快照必须含未 checkpoint 的 WAL（VACUUM INTO 优先；文件拷贝路径先 wal 后 db + 打开时自动 recovery）；② 虎鲸 schema 的生成列 `name_p = to_pinyin(name)` 需确定性函数 stub（否则 VACUUM INTO 报 malformed）；③ Tags/Aliases/Refs 比较前排序（adapter 输出顺序不稳定会误报）。自动监听（fsnotify / DB 轮询）是 v1.5 的热同步，不在 v1。
+
 **查询降级策略（〔修订 #10〕新增）**：个人 vault 大量孤儿节点、小组件、随手链，激活扩散在稀疏/破碎图上会频繁返回空或平凡结果。v1 起内置降级——当查询点无/少链接时，回退到**标签命中 + 全文 LIKE** 兜底，保证每次查询都有输出；补链（AI）是 v2 的正规解法。**〔实测〕已在真实库确认**（示例库细节已脱敏，见 `docs/spike-report.md`）：存在大量孤儿节点、正文页零链接、图高度集中于索引子图——降级策略是刚需不是保险。
 
 **配置分层（2026-08-21 补充）**

@@ -12,10 +12,10 @@ import (
 
 // Options 漫游参数。
 type Options struct {
-	Top            int
-	Hops           int
-	Lambda, Theta  float64
-	Alpha, Beta    float64
+	Top              int
+	Hops             int
+	Lambda, Theta    float64
+	Alpha, Beta      float64
 	FilterStructural bool // 簇输出是否排除结构类型（实体查询 true；文本搜索式降级 false）
 }
 
@@ -32,17 +32,17 @@ type Anchor struct {
 type FallbackMode int
 
 const (
-	ModeNormal FallbackMode = iota
-	ModeNoAnchor            // 无锚点 → 全文检索（不过滤结构）
-	ModeSparse              // 锚点命中但邻居稀疏 → 全文检索（过滤结构）
+	ModeNormal   FallbackMode = iota
+	ModeNoAnchor              // 无锚点 → 全文检索（不过滤结构）
+	ModeSparse                // 锚点命中但邻居稀疏 → 全文检索（过滤结构）
 )
 
 // Outcome 漫游结果。
 type Outcome struct {
-	Anchors       []Anchor          `json:"anchors"`
-	Results       []score.Result    `json:"results"`
-	Fallback      FallbackMode      `json:"fallback"`
-	FallbackHits  []graph.TextHit   `json:"fallback_hits"`
+	Anchors      []Anchor        `json:"anchors"`
+	Results      []score.Result  `json:"results"`
+	Fallback     FallbackMode    `json:"fallback"`
+	FallbackHits []graph.TextHit `json:"fallback_hits"`
 }
 
 // Compute 执行一次查询漫游。

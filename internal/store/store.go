@@ -1,5 +1,30 @@
-// Package store 实现设计 §6.8 的 SQLite 持久化（主存储）。
-// v1 写语义：全量重写（幂等）；对账/增量同步是 v1.5（启动对账章节）。
+// ============================================================================
+// 文件：internal/store/store.go
+// 模块：SQLite 持久化（设计 §6.8 主存储）
+//
+// ▍职责
+//
+//	Document 列表 ⇄ SQLite 的存取。v1 写语义 = 全量重写（幂等，DELETE + INSERT 于
+//	一个事务）；对账刷新（internal/sync + cmd refresh）依赖本模块作为"上次状态"。
+//
+// ▍存储布局
+//
+//	默认路径 <vault>/.serendipity/db-<库路径 hash12>.sqlite（DBPath），多库各一文件，
+//	便携闭环（库在哪图在哪，见设计 §6.8）。两张表：
+//	  documents(id PK, title, type, path, mtime, size, tags, aliases, text)
+//	  links(a, b, weight, PK(a,b)) —— 无向边，pair 去重（Save 内 seen 集合）
+//
+// ▍与对账的关系（v0.1.2）
+//   - Load 对不存在的文件返回空列表（nil, nil）：对账刷新"首次"场景等价全新增；
+//   - Save 全量重写是幂等的：任何一次 refresh 后存储即最新状态，重复刷新无副作用；
+//   - 增量写（WAL 单行 UPDATE）是 v1.5 优化，不改本模块语义。
+//
+// ▍修改记录
+//
+//	v0.1.0  初版 Save/Load 全量重写。
+//	v0.1.2  Load 支持不存在的存储文件（首次对账全新增）；补充模块头注释。
+//
+// ============================================================================
 package store
 
 import (
@@ -7,6 +32,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -90,7 +116,11 @@ func Save(dbPath string, docs []*adapter.Document) error {
 }
 
 // Load 从存储读回 Document 列表（含 Refs，可直接 graph.Build）。
+// 存储文件不存在 → 返回空列表（对账刷新"首次"场景：等价全新增）。
 func Load(dbPath string) ([]*adapter.Document, error) {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, nil
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err

@@ -27,28 +27,32 @@ package adapter
 //   2. Repo / Plugin / PluginStorage 表含用户凭据（API key、对象存储密钥等）与
 //      私有数据——本适配器不查询这些表；图数据只从 Block/BlockRef/BlockAlias 派生。
 //
-// ▍聚合策略（v0.1.1 起，修"每块一节点"的纯数字噪声）
+// ▍聚合策略（v0.1.1 起，修"每块一节点"的纯数字噪声；v0.1.2 补虚拟文档根）
 //   旧版把每个 Block 都做成一个 Document（真实库 4919 节点），其中 1042 个页面块
 //   大多无别名、无文本，标题兜底成"块#N"——输出一片纯数字，没有任何具体信息。
-//   v0.1.1 把图节点粒度收敛到**页面**：
-//     - 页面块 → 一个 Document(type=doc)：页面自身 text + 页面内所有内容块按
-//       left 顺序链拼接的 text，构成页面全文（全文 LIKE 兜底直接可用）；
-//     - BlockRef 的 f/t 都先映射到"所属页面"，边 = 页面间无向边；映射后自环
-//       （同页内部引用）丢弃；引用别名（type2）暂存备用；
+//   v0.1.1 把图节点粒度收敛到**页面**；v0.1.2 处理深层树（TestOrca 大库实测）：
+//     - 页面块 → 一个 Document(type=doc)；**链顶内容块**（parent 无效且无页面
+//       祖先，如剪藏书根）→ 一个 Document(type=block，虚拟文档根)；
+//     - 文档根自身 text + 全部非文档根后代按 left 顺序链拼接的 text，构成文档
+//       全文（全文 LIKE 兜底直接可用）；
+//     - BlockRef 的 f/t 都先映射到"所属文档根"，边 = 文档根间无向边；映射后自环
+//       （同文档内部引用）丢弃；引用别名（type2）暂存备用；
 //     - 嵌套页面（content NULL 且 parent 非空）仍是独立 Document，并向其宿主
-//       页面加一条"包含"边（保留层级信息，防碎块）；
-//     - 游离内容块（parent NULL 且 content 非空，如快速记录）→ 独立
-//       Document(type=block)；
-//     - 标题兜底：别名 > 页面文本首行（去行尾 " #标签"）> 首个内容块文本首行
+//       文档根加一条"包含"边（保留层级信息，防碎块）；
+//     - 标题兜底：别名 > 文档根文本首行（去行尾 " #标签"）> 首个后代块文本首行
 //       > "页面#N" / "块#N"（已极少）。
 //
 // ▍修改记录
 //   v0.1.0  初版：每 Block 一节点 → 页面块全成"块#N"，纯数字噪声（已弃用）。
 //   v0.1.1  页面/内容块聚合重写；引用归一化到所属页面；left 排序链；标题兜底改善。
+//   v0.1.2  pageOf 链顶虚拟文档根（TestOrca 深层树重复/碎片修复：21805→538 文档）；
+//          CopyDBForRead 双路径快照（VACUUM INTO 优先 + 文件拷贝/WAL recovery/
+//          integrity_check 兜底，兼容虎鲸 app 独占锁）；to_pinyin 确定性 stub。
 // ============================================================================
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,8 +61,23 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // 纯 Go SQLite，零 CGO（设计 §6.8）
+	sqlite "modernc.org/sqlite" // 纯 Go SQLite，零 CGO（设计 §6.8）；命名 import 以注册 stub 函数
 )
+
+// init 注册虎鲸库缺失的自定义函数 stub。
+// 实测：虎鲸 schema 里 BlockAlias 有生成列 name_p = to_pinyin(name)（拼音搜索）。
+// CopyDBForRead 用 VACUUM INTO 做一致性快照时需复制 schema —— SQLite 要求生成列
+// 里的函数必须是**确定性**函数（否则 schema 校验报 malformed），且函数必须存在
+// （否则报 no such function）。stub 返回输入原样即可：我们从不读 name_p 列，
+// 只要 schema 复制能通过。注册是进程级（modernc driver），本地工具可接受。
+func init() {
+	sqlite.RegisterDeterministicScalarFunction("to_pinyin", 1, func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if len(args) == 0 || args[0] == nil {
+			return nil, nil
+		}
+		return args[0], nil
+	})
+}
 
 // orcaBlock 一行 Block 表的原始数据。
 type orcaBlock struct {
@@ -180,8 +199,14 @@ func (o *orcaDB) leftOf(id int64) int64 {
 	return 0
 }
 
-// pageOf 返回块所属的页面块 id；游离块（无页面祖先）ok=false。
-// 页面块属于自己；内容块向上找最近的 content-NULL 祖先。
+// pageOf 返回块所属的"文档根"块 id：
+//   - 内容块向上找最近的页面（content NULL）祖先 → 页面即文档根；
+//   - 若无页面祖先，则链条顶端（parent 无效/缺失）的块是**虚拟文档根**
+//     （如剪藏书：epub 导入的书根是内容块而非页面，整棵子树挂在它下面）。
+//
+// 文档根是唯一的：页面块属于自己；每个块恰好归一个文档根。
+// TestOrca 大库实测：深层树（书→章节→段落）若按"无页面祖先即游离"处理，
+// 链上每个块都会独立成文档且被父块 walk 折叠——内容重复、碎片化。
 func (o *orcaDB) pageOf(id int64) (int64, bool) {
 	if v, ok := o.owner[id]; ok {
 		return v, v >= 0
@@ -195,20 +220,23 @@ func (o *orcaDB) pageOf(id int64) (int64, bool) {
 		o.owner[id] = id
 		return id, true
 	}
-	cur := b.parent
-	for cur.Valid {
-		pb, ok := o.blocks[cur.Int64]
+	// 内容块：向上找最近页面祖先；无则链顶块为虚拟文档根
+	top := id
+	cur := b
+	for cur.parent.Valid {
+		parent, ok := o.blocks[cur.parent.Int64]
 		if !ok {
-			break
+			break // 父缺失：cur 即链顶
 		}
-		if !pb.content.Valid { // 最近的页面祖先 = 所属页面
-			o.owner[id] = cur.Int64
-			return cur.Int64, true
+		if !parent.content.Valid { // 最近页面祖先
+			o.owner[id] = parent.id
+			return parent.id, true
 		}
-		cur = pb.parent
+		top = parent.id
+		cur = parent
 	}
-	o.owner[id] = -1
-	return 0, false
+	o.owner[id] = top
+	return top, true
 }
 
 // isPage 判断块是否为页面块（content 列为 NULL）。
@@ -218,7 +246,8 @@ func isPage(b *orcaBlock) bool { return b != nil && !b.content.Valid }
 func (o *orcaDB) documents() []*Document {
 	docs := map[int64]*Document{} // 文档根块 id → Document
 
-	// 1. 建壳：页面块 + 游离内容块
+	// 1. 建壳：每个"文档根"一个 Document。
+	//    文档根 = 页面块（content NULL）∪ 链顶内容块（虚拟文档根，如剪藏书根）。
 	for id, b := range o.blocks {
 		switch {
 		case isPage(b):
@@ -229,7 +258,8 @@ func (o *orcaDB) documents() []*Document {
 				MTime: time.Unix(b.modified, 0),
 			}
 		default:
-			if _, ok := o.pageOf(id); !ok {
+			root, _ := o.pageOf(id)
+			if root == id { // 自己是链顶内容块 → 虚拟文档根
 				docs[id] = &Document{
 					ID:    strconv.FormatInt(id, 10),
 					Type:  "block",
@@ -240,7 +270,7 @@ func (o *orcaDB) documents() []*Document {
 		}
 	}
 
-	// 2. 填充：文本（自身 + 内容块后代按序拼接）+ 引用（归一化到所属页面）+ 包含边
+	// 2. 填充：文本（自身 + 非文档根后代按序拼接）+ 引用（归一化到所属文档根）+ 包含边
 	for id, d := range docs {
 		refSet := map[string]bool{}
 		addRef := func(t int64) {
@@ -358,12 +388,23 @@ func orcaTitleFromText(t string) string {
 	return strings.TrimSpace(string(runes))
 }
 
-// CopyDBForRead 把虎鲸库拷贝到安全位置再读（绝不锁活库、绝不在库内写文件）。
-// 返回拷贝路径与清理函数；拷贝优先放系统临时目录，失败则退回当前目录。
+// CopyDBForRead 把虎鲸库做成一致性快照再读（绝不锁活库、绝不在库内写文件）。
+//
+// 双路径（实测 TestOrca 大库，虎鲸 app 常以独占锁打开活库）：
+//
+//	A. VACUUM INTO：等价 backup API，输出含未 checkpoint WAL 事务的一致性副本，
+//	   最干净。但 app 持 EXCLUSIVE 锁时拿不到读锁（busy_timeout 后 SQLITE_BUSY）。
+//	B. 文件级拷贝（.db + .db-wal，先 wal 后 db）：Windows 文件共享允许文件拷贝，
+//	   不经过 SQLite 锁协议。拷贝打开时 SQLite 自动做 WAL recovery（wal 与 db 的
+//	   salt 匹配才合并，最坏丢未 checkpoint 数据、绝不损坏）；打开后跑
+//	   integrity_check 校验（拷贝中 app 写入导致中间态 → 检测到则重试一次）。
+//
+// 返回快照路径与清理函数；快照优先放系统临时目录，失败则退回当前目录。
 func CopyDBForRead(src string) (string, func(), error) {
 	cleanup := func() {}
 	dirs := []string{os.TempDir(), "."}
 	var lastErr error
+
 	for _, dir := range dirs {
 		f, err := os.CreateTemp(dir, "seren-orca-*.db")
 		if err != nil {
@@ -372,31 +413,104 @@ func CopyDBForRead(src string) (string, func(), error) {
 		}
 		dst := f.Name()
 		f.Close()
-		in, err := os.Open(src)
-		if err != nil {
-			os.Remove(dst)
-			lastErr = err
-			continue
+
+		// 探测：app 是否独占锁（busy_timeout=0 立即失败）→ 决定走哪条路径
+		locked := probeLocked(src)
+		var snapErr error
+		if !locked {
+			if err := vacuumInto(src, dst); err == nil {
+				return dst, func() { os.Remove(dst) }, nil
+			} else {
+				snapErr = err
+			}
 		}
-		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
-			in.Close()
-			os.Remove(dst)
-			lastErr = err
-			continue
+		if err := fileCopySnapshot(src, dst); err == nil {
+			return dst, func() { os.Remove(dst); os.Remove(dst + "-wal") }, nil
+		} else if snapErr == nil {
+			snapErr = err
 		}
-		if _, err := out.ReadFrom(in); err != nil {
-			in.Close()
-			out.Close()
-			os.Remove(dst)
-			lastErr = err
-			continue
-		}
-		in.Close()
-		out.Close()
-		return dst, func() { os.Remove(dst) }, nil
+		lastErr = snapErr
+		os.Remove(dst)
+		os.Remove(dst + "-wal")
 	}
 	return "", cleanup, lastErr
+}
+
+// probeLocked 探测源库当前是否被独占（busy_timeout=0，立即返回）。
+func probeLocked(src string) bool {
+	db, err := sql.Open("sqlite", src)
+	if err != nil {
+		return true // 打不开按锁处理，走文件拷贝兜底
+	}
+	defer db.Close()
+	db.Exec("PRAGMA busy_timeout = 0")
+	var one int
+	if err := db.QueryRow("SELECT 1").Scan(&one); err != nil {
+		return true
+	}
+	return false
+}
+
+// vacuumInto 路径 A：VACUUM INTO 一致性快照。
+func vacuumInto(src, dst string) error {
+	db, err := sql.Open("sqlite", src)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// 活库可能正被虎鲸 app 占用：等待锁释放（默认 busy_timeout=0 会立刻失败）
+	db.Exec("PRAGMA busy_timeout = 3000")
+	// VACUUM INTO 的文件名是 SQL 字符串字面量，不支持参数绑定 → 转义单引号
+	_, err = db.Exec("VACUUM INTO '" + strings.ReplaceAll(dst, "'", "''") + "'")
+	if err != nil {
+		return fmt.Errorf("VACUUM INTO: %w", err)
+	}
+	return nil
+}
+
+// fileCopySnapshot 路径 B：文件级拷贝 .db + .db-wal（先 wal 后 db），
+// 打开时自动 WAL recovery，再 integrity_check 校验。
+func fileCopySnapshot(src, dst string) error {
+	// 先 wal 后 db：checkpoint 间隙若 db 已更新，旧 wal salt 不匹配会被忽略，
+	// 不会丢已 checkpoint 的数据
+	if err := copyFile(src+"-wal", dst+"-wal"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", dst)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.Exec("PRAGMA busy_timeout = 3000")
+	var ok string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
+		return err
+	}
+	if ok != "ok" {
+		return fmt.Errorf("快照完整性校验失败: %s", ok)
+	}
+	return nil
+}
+
+// copyFile 简单的文件复制（无缓冲优化——个人库规模足够）。
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := out.ReadFrom(in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // IsOrcaDB 按扩展名粗判是否为虎鲸库文件。

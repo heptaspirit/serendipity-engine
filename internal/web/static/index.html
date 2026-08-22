@@ -1,4 +1,22 @@
 <!DOCTYPE html>
+<!--
+  文件：internal/web/static/index.html（go:embed，Web 入口的可视化页面）
+  模块：Serendipity Engine 图谱漫游 UI（纯前端，零依赖）
+
+  ▍功能
+    - 初始页：热门节点漂浮气泡（/api/hot），点击气泡开始漫游
+    - 搜索框：查询漫游（/api/roam），锚点按 match 级别/度展示前 5 个
+    - 卡片：点击任意卡片 = 从该节点继续漫游（探索路径，push 历史栈）
+    - 历史栈与浏览器 history 同步：后退/前进键可用（?q= URL 同步）
+    - Obsidian 源：卡片「打开 ↗」跳转 obsidian://（server 端拼 URI）
+    - 刷新按钮 ↻（v0.1.2）：POST /api/refresh 对账同步增删改，展示
+      新增/更新/删除摘要并重渲染当前视图
+
+  ▍修改记录
+    v0.1.0  初版：漫游/锚点/卡片/历史栈/回退/初始页气泡
+    v0.1.1  页面与画像改动无涉本文件
+    v0.1.2  刷新按钮 + diff 摘要展示
+-->
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -18,11 +36,11 @@
   header h1 { font-size: 17px; margin: 0; color: var(--accent); cursor: pointer; }
   header h1:hover { text-decoration: underline; }
   header .sub { color: var(--muted); font-size: 12px; }
-  #back, #home { background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  #back, #home, #refresh { background: var(--panel); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 14px;
     align-self: center; }
-  #back:disabled { opacity: .35; cursor: default; }
-  #back:not(:disabled):hover, #home:hover { border-color: var(--accent); color: var(--accent); }
+  #back:disabled, #refresh:disabled { opacity: .35; cursor: default; }
+  #back:not(:disabled):hover, #home:hover, #refresh:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
 
   /* ---- 初始页：漂浮气泡 ---- */
   .hero { position: relative; height: 56vh; min-height: 380px;
@@ -86,6 +104,7 @@
 <header>
   <button id="home" title="回到初始页">⌂</button>
   <button id="back" disabled title="上一步">←</button>
+  <button id="refresh" title="对账刷新：重新解析并同步增删改">↻</button>
   <h1 id="brand">Serendipity Engine</h1>
   <span class="sub" id="source">—</span>
 </header>
@@ -251,6 +270,28 @@ $('#home').onclick = goHome;
 $('#brand').onclick = goHome;
 $('#go').onclick = () => { const q = $('#q').value.trim(); if (q) roam(q, 'push'); };
 $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+
+// ---- 对账刷新：POST /api/refresh，同步增删改后重渲染当前视图 ----
+$('#refresh').onclick = async () => {
+  const btn = $('#refresh');
+  btn.disabled = true;
+  const hint = $('#meta');
+  hint.textContent = '刷新中…';
+  try {
+    const r = await fetch('/api/refresh', { method: 'POST' });
+    const d = await r.json();
+    if (d.error) { hint.textContent = '刷新失败: ' + d.error; return; }
+    hint.textContent = '已刷新: 新增 ' + d.added + ' · 更新 ' + d.updated +
+      ' · 删除 ' + d.deleted + ' · 未变 ' + d.unchanged +
+      '（' + d.duration_ms + 'ms，节点 ' + d.nodes + '）';
+    const q = $('#q').value.trim();
+    if (q) roam(q, 'replace'); else renderHome();
+  } catch (e) {
+    hint.textContent = '刷新失败: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 // 初始：把初始状态入栈（空查询也算一步，保证第一次搜索后就能回退）
 const initQ = new URLSearchParams(location.search).get('q') || '';

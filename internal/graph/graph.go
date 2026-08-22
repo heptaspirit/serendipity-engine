@@ -21,12 +21,12 @@ type Edge struct {
 }
 
 type Graph struct {
-	nodes       map[string]*Node
-	adj         map[string][]string // 无向邻接（去重）
-	dangling    map[string]int      // 解析到但文件不存在的链接目标 → 计数
-	totalLinks  int                 // 全部 [[链接]] 数（含重复/悬空/自环）
-	selfLinks   int
-	multiedge   int // 已见面对之间的重复链接数
+	nodes      map[string]*Node
+	adj        map[string][]string // 无向邻接（去重）
+	dangling   map[string]int      // 解析到但文件不存在的链接目标 → 计数
+	totalLinks int                 // 全部 [[链接]] 数（含重复/悬空/自环）
+	selfLinks  int
+	multiedge  int // 已见面对之间的重复链接数
 }
 
 func Build(docs []*adapter.Document) *Graph {
@@ -187,10 +187,10 @@ type MatchLevel int
 
 const (
 	MatchLike  MatchLevel = iota + 1 // 子串命中（ID/title 包含）
-	MatchTag                          // 标签精确
-	MatchAlias                        // 别名精确
-	MatchTitle                        // title 精确
-	MatchExact                        // ID 精确
+	MatchTag                         // 标签精确
+	MatchAlias                       // 别名精确
+	MatchTitle                       // title 精确
+	MatchExact                       // ID 精确
 )
 
 // Match 锚点命中项。
