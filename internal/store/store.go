@@ -23,6 +23,7 @@
 //
 //	v0.1.0  初版 Save/Load 全量重写。
 //	v0.1.2  Load 支持不存在的存储文件（首次对账全新增）；补充模块头注释。
+//	v0.1.3  Load 兼容"存在但从未写入"的空库文件（无 documents 表 → 无旧状态）。
 //
 // ============================================================================
 package store
@@ -117,6 +118,7 @@ func Save(dbPath string, docs []*adapter.Document) error {
 
 // Load 从存储读回 Document 列表（含 Refs，可直接 graph.Build）。
 // 存储文件不存在 → 返回空列表（对账刷新"首次"场景：等价全新增）。
+// 文件存在但从未写入（空库/无 documents 表）→ 同样视为无旧状态（v0.1.3）。
 func Load(dbPath string) ([]*adapter.Document, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil
@@ -126,6 +128,10 @@ func Load(dbPath string) ([]*adapter.Document, error) {
 		return nil, err
 	}
 	defer db.Close()
+	var tbl string
+	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='documents'`).Scan(&tbl); err != nil {
+		return nil, nil // 空库/半成品 → 无旧状态
+	}
 
 	rows, err := db.Query(`SELECT id, title, type, path, mtime, size, tags, aliases, text FROM documents`)
 	if err != nil {

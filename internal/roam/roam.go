@@ -1,5 +1,10 @@
 // Package roam 封装查询漫游管线（CLI 与 Web 共用）：
 // 锚定 → PPR + 激活扩散 → 排除（种子/目录枢纽/结构类型）→ 归一化融合 + 跳数配额 → 降级兜底。
+//
+// ▍降级搜索词（v0.1.3）
+//   Web 端"点击卡片继续漫游"用节点 ID（虎鲸为纯数字块 ID）作查询词；锚定后若
+//   邻居稀疏走 ModeSparse 全文兜底时，纯数字全文搜必空（孤立节点点击"没反应"）。
+//   修复：查询词为纯数字且唯一锚定时，降级搜索改用锚点 title。
 package roam
 
 import (
@@ -110,8 +115,17 @@ func Compute(g *graph.Graph, p *adapter.VaultProfile, query string, opt Options)
 		HopQuota: [3]float64{0.5, 0.3, 0.2},
 	})
 	if len(out.Results) == 0 {
-		// 锚点命中但邻居稀疏 → 全文 LIKE 兜底（保留结构过滤）
-		hits := g.TextSearch(query, opt.Top*2)
+		// 锚点命中但邻居稀疏 → 全文 LIKE 兜底（保留结构过滤）。
+		// v0.1.3 降级搜索词优化：Web 端"点击卡片继续漫游"用节点 ID 作查询词，
+		// 纯数字全文搜必空——孤立节点点击会"没反应"。改用锚点 title 搜索，
+		// 让孤立节点也能找到正文提到它的内容（fallback 不排除种子，自身可见）。
+		searchQ := query
+		if isNumeric(query) && len(matches) == 1 {
+			if n, ok := g.Node(matches[0].ID); ok && n.Title != "" {
+				searchQ = n.Title
+			}
+		}
+		hits := g.TextSearch(searchQ, opt.Top*2)
 		filtered := hits[:0]
 		structural := map[string]bool{}
 		for _, t := range p.StructuralTypes {
@@ -127,4 +141,17 @@ func Compute(g *graph.Graph, p *adapter.VaultProfile, query string, opt Options)
 		out.FallbackHits = filtered
 	}
 	return out
+}
+
+// isNumeric 判断查询词是否为纯数字（虎鲸块 ID 形态；Web 点击卡片漫游的查询词）。
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
