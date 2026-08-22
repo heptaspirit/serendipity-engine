@@ -40,6 +40,7 @@
 //	v0.1.0  初版五子命令。
 //	v0.1.1  --profile-name 新增 okf（OKF 通用画像别名）；版本号提升。
 //	v0.1.2  新增 refresh 子命令 + serve 注入 /api/refresh 闭包（对账刷新）。
+//	v0.1.3  虎鲸空壳页面清理（过滤 + container 类型化，见 adapter/orca.go）。
 //
 // ============================================================================
 package main
@@ -61,7 +62,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.2"
+const version = "v0.1.3"
 
 func main() {
 	if len(os.Args) < 2 {

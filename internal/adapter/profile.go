@@ -25,6 +25,7 @@ package adapter
 //   v0.1.0  初版：title/alias/tag 键 + 类型规则 + 排除目录 + 默认画像。
 //   v0.1.1  OKF 落地：新增 type_field / description_keys / resource_keys；
 //           okf 内置画像别名。
+//   v0.1.3  默认 structural_types 加 container（虎鲸空壳容器排除）。
 // ============================================================================
 
 import (
@@ -70,6 +71,9 @@ type TypeRule struct {
 // DefaultObsidianProfile 通用默认画像：只认 Obsidian 最普适的约定 + OKF 通用格式。
 // OKF 落地（v0.1.1）：type 字段作节点类型；description/resource 并入正文；md 链接
 // 由通用语法层支持（obsidian.go）；index/log 不默认结构类型化（真实库可能是正文）。
+// v0.1.3：structural_types 含 container——虎鲸 adapter 把"空壳容器"（无内容但有
+// 结构引用的嵌套页面宿主）标为 container，实体漫游/hot 默认排除；Obsidian 库无
+// container 类型故不受影响。
 func DefaultObsidianProfile() *VaultProfile {
 	return &VaultProfile{
 		Name:            "default-obsidian",
@@ -81,6 +85,7 @@ func DefaultObsidianProfile() *VaultProfile {
 		DescriptionKeys: []string{"description"},
 		ResourceKeys:    []string{"resource"},
 		DefaultType:     "note",
+		StructuralTypes: []string{"container"},
 	}
 }
 

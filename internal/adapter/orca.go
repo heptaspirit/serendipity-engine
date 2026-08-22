@@ -48,6 +48,8 @@ package adapter
 //   v0.1.2  pageOf 链顶虚拟文档根（TestOrca 深层树重复/碎片修复：21805→538 文档）；
 //          CopyDBForRead 双路径快照（VACUUM INTO 优先 + 文件拷贝/WAL recovery/
 //          integrity_check 兜底，兼容虎鲸 app 独占锁）；to_pinyin 确定性 stub。
+//   v0.1.3  过滤无信息量空壳文档（无别名/无文本/无引用，TestOrca 实测 132 个空页面
+//          零引用 → 消除"页面#N"噪声）；标题行首 "#" 清理（"#马背上的朝廷"→"马背上的朝廷"）。
 // ============================================================================
 
 import (
@@ -244,7 +246,8 @@ func isPage(b *orcaBlock) bool { return b != nil && !b.content.Valid }
 
 // documents 组装 Document 列表（聚合策略见文件头）。
 func (o *orcaDB) documents() []*Document {
-	docs := map[int64]*Document{} // 文档根块 id → Document
+	docs := map[int64]*Document{}   // 文档根块 id → Document
+	dropped := map[int64]bool{}     // v0.1.3：被过滤的空壳文档（清理引用用）
 
 	// 1. 建壳：每个"文档根"一个 Document。
 	//    文档根 = 页面块（content NULL）∪ 链顶内容块（虚拟文档根，如剪藏书根）。
@@ -325,6 +328,40 @@ func (o *orcaDB) documents() []*Document {
 		d.Size = int64(len(d.Text))
 		d.Aliases = o.alias[id]
 		d.Title = o.docTitle(id, o.blocks[id])
+
+		// v0.1.3：清理无信息量的空壳文档（无别名 + 无文本）。
+		//   - 无任何引用/包含边 → 纯噪声，直接删除（TestOrca 实测 304 个，
+		//     标题兜底"页面#N"对用户无意义）；
+		//   - 有结构引用（嵌套页面宿主 / BlockRef）→ 标记为 container 类型：
+		//     保留组织结构，但纳入默认结构类型后从漫游结果与 hot 气泡排除
+		//     （profile.go DefaultObsidianProfile.StructuralTypes）。
+		if d.Text == "" && len(d.Aliases) == 0 {
+			if len(d.Refs) == 0 {
+				dropped[id] = true
+				delete(docs, id)
+			} else {
+				d.Type = "container"
+				d.Title = "容器#" + strconv.FormatInt(id, 10)
+			}
+		}
+	}
+
+	// 清理保留文档 Refs 中指向被过滤空壳的目标（宿主对空壳子页面的"包含边"
+	// 会随过滤悬空——一并移除，避免悬空链接/脏 links 行）
+	if len(dropped) > 0 {
+		dropStr := make(map[string]bool, len(dropped))
+		for id := range dropped {
+			dropStr[strconv.FormatInt(id, 10)] = true
+		}
+		for _, d := range docs {
+			kept := d.Refs[:0]
+			for _, r := range d.Refs {
+				if !dropStr[r] {
+					kept = append(kept, r)
+				}
+			}
+			d.Refs = kept
+		}
 	}
 
 	// 3. 按块 id 稳定排序输出（确定性）
@@ -367,8 +404,8 @@ func (o *orcaDB) docTitle(id int64, b *orcaBlock) string {
 	return "块#" + strconv.FormatInt(id, 10)
 }
 
-// orcaTitleFromText 从文本提取标题：首行、去行尾 " #标签"、截断 30 字符。
-// 虎鲸页面文本常见形态："标题 #标签"（如 "十一个时区之旅 #书籍"）。
+// orcaTitleFromText 从文本提取标题：首行、去行首 "#"（markdown 标题，虎鲸 text 列
+// 标题行常见 "#马背上的朝廷"）、去行尾 " #标签"、截断 30 字符。
 func orcaTitleFromText(t string) string {
 	t = strings.TrimSpace(t)
 	if t == "" {
@@ -377,6 +414,8 @@ func orcaTitleFromText(t string) string {
 	if i := strings.IndexByte(t, '\n'); i > 0 {
 		t = t[:i]
 	}
+	t = strings.TrimSpace(t)
+	t = strings.TrimLeft(t, "#")
 	t = strings.TrimSpace(t)
 	if i := strings.Index(t, " #"); i > 0 {
 		t = t[:i]
