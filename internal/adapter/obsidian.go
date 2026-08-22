@@ -33,6 +33,7 @@ package adapter
 //   v0.1.0  初版：[[...]] + frontmatter + H1 + 画像语义映射。
 //   v0.1.1  OKF 通用格式落地：markdown 链接入图、type 字段作节点类型、
 //           description/resource 并入正文。
+//   v0.1.2  同名文件 ID 消歧（重名文档改用相对路径 ID，防持久化 UNIQUE 冲突）。
 // ============================================================================
 
 import (
@@ -54,8 +55,11 @@ var (
 
 // ParseVault 递归扫描 vault 根下所有 .md，按 VaultProfile 解析为 Document 列表。
 // 通用语法（[[...]] / markdown 链接 / frontmatter / H1）是固定的；语义映射走画像。
+// 同名文件消歧（v0.1.2）：ID = 文件名，不同目录同名文件会撞 ID（Obsidian 自身
+// 也不允许重名——冲突通常是归档/副本），从第二个起改用相对路径作 ID，两者都保留。
 func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 	var docs []*Document
+	seen := map[string]string{} // id → 已占用的相对路径（冲突检测）
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -73,6 +77,13 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 		if err != nil {
 			return err
 		}
+		if prev, dup := seen[doc.ID]; dup {
+			// 同名冲突：保留前者 basename ID（[[链接]] 走最短名），
+			// 后者改用相对路径 ID（去 .md、/ 分隔），二者都进图
+			doc.ID = strings.TrimSuffix(doc.Path, ".md")
+			_ = prev
+		}
+		seen[doc.ID] = doc.Path
 		docs = append(docs, doc)
 		return nil
 	})
