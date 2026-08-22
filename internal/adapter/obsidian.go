@@ -1,5 +1,40 @@
 package adapter
 
+// ============================================================================
+// 文件：internal/adapter/obsidian.go
+// 模块：Obsidian（通用 Markdown）库适配器 —— 把 vault 里的 .md 解析成 Document 列表
+//
+// ▍职责
+//   内核只认识 Document（设计 §6.8 Document API）；本文件 = Obsidian/通用 Markdown
+//   的翻译器。图节点粒度 = 页面（Obsidian 链接目标天然是页面，图自洽性原则 §6.9）。
+//
+// ▍解析分层（VaultProfile 哲学，见 profile.go）
+//   通用语法（四海皆准，由代码固定，本文件）：
+//     - [[...]] 维基双链（含 frontmatter 里的 [[...]]）
+//     - 标准 Markdown 链接 [文本](目标) —— Google Open Knowledge Format (OKF)
+//       的通用格式（v0.1.1 起）：OKF 的知识图谱完全由 markdown 链接构成，因此
+//       默认解析必须认识它；只认指向 .md 笔记的链接，附件/目录/外链一律忽略。
+//     - 开头 --- frontmatter 块、首个 H1
+//   语义映射（因人而异，走画像 YAML）：title/别名/标签键、类型推断、排除目录。
+//
+// ▍OKF（Open Knowledge Format, Google Cloud 2026 发布）在默认解析中的落地
+//   OKF v0.1 = "一目录 markdown 文件 + YAML frontmatter" 的可移植知识格式：
+//   每个概念一个文件，frontmatter 只约定六个可查询字段——type / title /
+//   description / resource / tags / timestamp；概念间用普通 markdown 链接连成图；
+//   index.md / log.md 为保留文件名（导航与变更历史，由画像决定是否结构类型化）。
+//   默认画像（default-obsidian）因此内置：
+//     type_field = "type"         → frontmatter 的 type 值即节点类型
+//     description_keys = ["description"] → 描述并入正文（全文检索可命中元数据）
+//     resource_keys = ["resource"]       → 外部资源地址并入正文
+//     title_keys = ["title"]、tag_keys = ["tags"]（OKF 同名字段）
+//   OKF 的 markdown 链接由通用语法层直接支持（见 parseLinks）。
+//
+// ▍修改记录
+//   v0.1.0  初版：[[...]] + frontmatter + H1 + 画像语义映射。
+//   v0.1.1  OKF 通用格式落地：markdown 链接入图、type 字段作节点类型、
+//           description/resource 并入正文。
+// ============================================================================
+
 import (
 	"os"
 	"path/filepath"
@@ -8,15 +43,17 @@ import (
 )
 
 var (
-	linkRe  = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
-	h1Re    = regexp.MustCompile(`(?m)^#\s+(.+?)\s*$`)
-	tagRe   = regexp.MustCompile(`(?m)^\s*-\s*(.+?)\s*$`)
-	kvRe    = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
+	linkRe       = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+	mdLinkRe     = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	schemeRe     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
+	h1Re         = regexp.MustCompile(`(?m)^#\s+(.+?)\s*$`)
+	tagRe        = regexp.MustCompile(`(?m)^\s*-\s*(.+?)\s*$`)
+	kvRe         = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
 	inlineListRe = regexp.MustCompile(`^\s*\[(.*)\]\s*$`)
 )
 
 // ParseVault 递归扫描 vault 根下所有 .md，按 VaultProfile 解析为 Document 列表。
-// 通用语法（[[...]] / frontmatter / H1）是固定的；语义映射（title/别名/标签/类型）走画像。
+// 通用语法（[[...]] / markdown 链接 / frontmatter / H1）是固定的；语义映射走画像。
 func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 	var docs []*Document
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -42,7 +79,7 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 	return docs, err
 }
 
-// ParseFile 解析单篇 markdown：frontmatter（title/aliases/tags/类型）+ [[链接]]。
+// ParseFile 解析单篇 markdown：frontmatter（title/别名/标签/类型）+ 双链 + OKF 元数据。
 func ParseFile(path, root string, p *VaultProfile) (*Document, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -66,6 +103,10 @@ func ParseFile(path, root string, p *VaultProfile) (*Document, error) {
 		Type: inferType(rel, meta, p),
 		Text: body, // 全文（去 frontmatter）——降级兜底
 	}
+	// OKF 通用字段：description/resource 并入正文，全文检索可命中结构化元数据
+	if extras := okfMetaText(meta, lists, p); extras != "" {
+		doc.Text = extras + "\n\n" + body
+	}
 	if st, err := os.Stat(path); err == nil {
 		doc.MTime = st.ModTime()
 		doc.Size = st.Size()
@@ -75,9 +116,27 @@ func ParseFile(path, root string, p *VaultProfile) (*Document, error) {
 	return doc, nil
 }
 
+// okfMetaText 把画像声明为"描述/资源"的 frontmatter 字段并成一段（OKF 通用格式）。
+// description 直接并入；resource 加前缀以区分（外部资源地址，可被全文检索命中）。
+func okfMetaText(meta map[string]string, lists map[string][]string, p *VaultProfile) string {
+	var parts []string
+	for _, d := range frontmatterStrings(meta, lists, p.DescriptionKeys) {
+		if strings.TrimSpace(d) != "" {
+			parts = append(parts, d)
+		}
+	}
+	for _, r := range frontmatterStrings(meta, lists, p.ResourceKeys) {
+		if strings.TrimSpace(r) != "" {
+			parts = append(parts, "资源: "+r)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 // ---- frontmatter ----
 
 // parseFrontmatter 解析开头的 --- 块，返回 kv 与列表型字段。
+// 已知限制：不支持 YAML 块标量（| > 多行值）——description 建议单行（OKF 规范同）。
 func parseFrontmatter(text string) (map[string]string, map[string][]string) {
 	meta := map[string]string{}
 	lists := map[string][]string{}
@@ -158,13 +217,23 @@ func extractTitle(meta map[string]string, body, id string, p *VaultProfile) stri
 	return id
 }
 
-// inferType 按画像规则推断节点类型：键规则 > 文件名前缀 > 文件名包含 > 目录前缀 > 默认。
+// inferType 按画像规则推断节点类型：
+// 键规则 > OKF type 字段 > 文件名前缀 > 文件名包含 > 目录前缀 > 默认。
+// OKF type 字段（type_field，默认 "type"）的值即节点类型；放在键规则之后——
+// 库专属的键规则更具体，理应优先；type 字段是通用约定，优于文件名启发式。
 func inferType(rel string, meta map[string]string, p *VaultProfile) string {
 	base := filepath.Base(rel)
 	for _, r := range p.TypeByKey {
 		for k := range meta {
 			if strings.HasPrefix(k, r.Pattern) {
 				return r.Type
+			}
+		}
+	}
+	if p.TypeField != "" {
+		if v, ok := meta[p.TypeField]; ok {
+			if v = strings.TrimSpace(v); v != "" {
+				return v
 			}
 		}
 	}
@@ -188,9 +257,20 @@ func inferType(rel string, meta map[string]string, p *VaultProfile) string {
 
 // ---- 链接 ----
 
-// parseLinks 提取 [[...]]：去别名（|）、去 #锚点、去 .md 后缀、去空白。
+// parseLinks 提取全部内链：[[...]] 维基双链 + 标准 Markdown 链接（OKF 通用格式）。
+// 统一归一：去别名（|）、去 #锚点、去 .md 后缀、取文件名（相对/绝对路径均按 basename）。
+// Markdown 链接只认指向 .md 的（OKF 约定：概念间以 .md 链接相连）；带协议的外链
+// （http/mailto/obsidian:// 等）、附件、目录、纯锚点一律不进图。
 func parseLinks(text string) []string {
+	seen := map[string]bool{}
 	var out []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
 	for _, m := range linkRe.FindAllStringSubmatch(text, -1) {
 		raw := m[1]
 		if i := strings.IndexByte(raw, '|'); i >= 0 {
@@ -201,10 +281,24 @@ func parseLinks(text string) []string {
 		}
 		raw = strings.TrimSpace(raw)
 		raw = strings.TrimSuffix(raw, ".md")
-		if raw == "" {
-			continue
+		if raw != "" {
+			add(raw)
 		}
-		out = append(out, raw)
+	}
+	for _, m := range mdLinkRe.FindAllStringSubmatch(text, -1) {
+		raw := strings.TrimSpace(m[1])
+		if i := strings.IndexAny(raw, "#?"); i >= 0 {
+			raw = raw[:i]
+		}
+		raw = strings.TrimRight(raw, "/")
+		if raw == "" || schemeRe.MatchString(raw) {
+			continue // 外链
+		}
+		if !strings.HasSuffix(strings.ToLower(raw), ".md") {
+			continue // 只认 .md 笔记
+		}
+		raw = filepath.Base(strings.TrimSuffix(raw, ".md"))
+		add(raw)
 	}
 	return out
 }

@@ -432,15 +432,18 @@ v1 已能回答"图谱漫游有没有增量价值"这个核心问题，Python �
 
 | 层 | 内容 | 形式 |
 |---|---|---|
-| 通用语法 | `[[...]]` 链接、frontmatter 块、H1 提取 | 代码固定 |
-| **VaultProfile** | title_keys / alias_keys / tag_keys / excluded_dirs / 类型推断规则（目录/键/前缀/后缀）/ structural_types | **YAML 画像**，内置默认 + 按库覆盖 |
+| 通用语法 | `[[...]]` 链接、标准 Markdown 链接（OKF）、frontmatter 块、H1 提取 | 代码固定 |
+| **VaultProfile** | title_keys / alias_keys / tag_keys / excluded_dirs / 类型推断规则（目录/键/前缀/后缀）/ type_field / description_keys / resource_keys / structural_types | **YAML 画像**，内置默认 + 按库覆盖 |
 | 适配器 | 非 Obsidian 软件（虎鲸等） | 独立 adapter（§6.9） |
 
 - **画像载体**：`<vault>/.serendipity/profile.yaml` 跟库走（§6.8 配置分层收口）；缺失字段用通用默认补齐（防御性校验）。
 - **新库 onboarding**：`seren profile-detect <vault>` 自动产出画像骨架（frontmatter 键普查 / 目录结构 / 文件名前缀统计 / 结构类型猜测），人工微调类型名后保存——机器产出骨架，人定语义。
 - **类型字段（spike F4 落地）**：Document 增加 `Type`，实体查询默认从节点簇排除 `structural_types`（章节/大纲/报告/画布/索引/状态等机器与结构节点）——实测后输出全为内容类型（人物/线索/设定/ADR），2-hop 惊喜保留、噪音消失。
+- **OKF 通用格式落地（〔v0.1.1〕Google Open Knowledge Format）**：OKF v0.1 = "一目录 markdown + YAML frontmatter" 的可移植知识格式，frontmatter 只约定六个可查询字段 `type / title / description / resource / tags / timestamp`，概念间用**普通 markdown 链接**连成图（`index.md` / `log.md` 为保留文件名）。默认解析因此内置：① 标准 markdown 链接（目标须 `.md`）与 `[[...]]` 一样入图——通用语法层直接支持；② `type_field="type"`——frontmatter 的 `type` 值即节点类型；③ `description_keys` / `resource_keys`——描述与资源地址并入正文，全文检索可命中结构化元数据；④ `--profile-name okf` 与 default-obsidian 等价。`index` / `log` **不默认结构类型化**（真实库里可能是正文页面，是否排除由各库画像 `structural_types` 自定）。参考：https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing
 
 **图自洽性原则（用户拍板）**：节点粒度 = 原生链接粒度——Obsidian 链接目标是页面 → 节点 = 页面；虎鲸链接目标是块 → 节点 = 块；思源（预留）同理。强行跨原生粒度（如把 Obsidian 页面拆成块节点）会产生用户看不懂的碎片图——**图的样子必须和笔记软件里的样子一致**。
+
+**〔v0.1.1 实测修订〕虎鲸节点粒度收敛到页面**：虎鲸的"块"分页面块与内容块（页面块里装很多内容块，每段一个块），而链接目标虽为块 ID，绝大多数指向**页面块**。初版"每块一节点"把 1042 个空页面块也做成节点，标题兜底成 `块#N`，输出一片纯数字。修订：图节点 = 页面（在 app 里用户看到的就是页面），页面内内容块按 `left` 顺序链拼进页面全文，块级引用归一化到所属页面 → 页面间无向边；嵌套页面保留独立文档 + 包含边；游离内容块（快速记录）独立成文档。节点数 4919 → 1832，枢纽全为真实标题。细节见 §6.9.1。
 
 ```
 Document（= 图节点，粒度 = 原生链接目标）：
@@ -493,20 +496,22 @@ Document（= 图节点，粒度 = 原生链接目标）：
 | 输出聚合 | 块级漫游结果带"所属页面 / 父链"上下文，防碎块 | 低 |
 | 标签实体节点 | `#` 别名块 = 现成实体锚，锚定层几乎免费 | 低（反而省事） |
 
-**虎鲸格式实测（〔实测〕2026-08-21，真实虎鲸库解码，内容已脱敏）**：
+**虎鲸格式实测（〔实测〕2026-08-21，真实虎鲸库解码，内容已脱敏；〔v0.1.1〕页面/内容块模型细化）**：
 
 虎鲸**没有笔记文件**——数据全在库根 `OrcaNote.db`（SQLite，WAL 模式，另有日期备份）。adapter 必须改走 **SQLite 直读**而非文件解析：
 
 | 表 | 内容 | 对图的贡献 |
 |---|---|---|
-| Block | `id, content(JSON), text, created, modified, parent, left` | 节点；`content IS NULL` 的块 = 文档根节点；其余为块，`parent`/`left` 构成层级与顺序 |
-| BlockRef | `id, f, t, type, alias` | 边；三种 type 实测：1=正文内嵌引用、2=带别名/属性的引用、3=无别名关联引用 |
+| Block | `id, content(JSON), text, created, modified, parent, left` | 节点；**`content IS NULL` 的块 = 页面块**（一个页面 = 一个文档，可嵌套）；其余为**内容块**（一段 = 一个块，从属于页面）；`parent`/`left` 构成层级与顺序（`left` = 前兄弟指针） |
+| BlockRef | `id, f, t, type, alias` | 边；三种 type 实测：1=正文内嵌引用、2=带别名/属性的引用、3=无别名关联引用；`alias` 列是引用标签（如 `书籍`） |
 | BlockAlias | `name, block, pos` | title（块可多别名，如 `历史` + `History`）——别名即 title，锚定层直接用 |
 | BlockRefData | `id, name, value` | 引用级属性（如 `状态=已读`）——v2 可作打分信号 |
 | BlockProperty | `block, name, type, value` | 块级属性（含 journal 日期等） |
 | BlockFTS | FTS 索引 | 全文检索现成——v1 降级策略直接可用 |
 
-- **内容格式**：`Block.content` 是 JSON 分段数组——`{"t":"t","v":"文本"}` 文本段、`{"t":"r","v":目标块ID}` 引用段。**引用关系内嵌在内容里，连 markdown 解析都不需要**——"块 ID → 内容映射"从"中"降为"低"，虎鲸去风险项只剩"监听/对账改为 DB 轮询"。
+- **页面块 vs 内容块（〔v0.1.1〕用户确认的模型）**：一个页面块里会有很多内容块（每段一个块）。`text` 列是**已解析纯文本**——内联引用已渲染成 `[目标标题]`（如 `阅读了[十一个时区之旅]和[文化、权力与国家…]`），adapter 直接使用，无需再解 `content` JSON。
+- **〔v0.1.1〕聚合策略**：图节点 = 页面块（type=doc）。页面自身 text + 页面内全部内容块按 `left` 链顺序拼接 → 页面全文；所有 `BlockRef` 的 f/t 先映射到"所属页面"（内容块向上找最近页面祖先），边 = 页面间无向边，映射后自环丢弃；嵌套页面（`content NULL` 且 `parent` 非空）仍是独立文档并向宿主页面加包含边；游离内容块（`parent` 为 NULL）独立成文档（type=block）。标题兜底：别名 > 页面文本首行（去行尾 ` #标签`）> 首个内容块文本首行 > `页面#N`/`块#N`。实测 4919 节点 → 1832（1042 页面 + 790 游离块），枢纽全为真实标题，漫游结果带真实书名/主题。
+- **内容格式**：`Block.content` 是 JSON 分段数组——`{"t":"t","v":"文本"}` 文本段、`{"t":"r","v":目标块ID}` 引用段。**引用关系内嵌在内容里，连 markdown 解析都不需要**——"块 ID → 内容映射"从"中"降为"低"（v0.1.1 起聚合到页面后连 content JSON 都不必解，text 列已解析）。
 - **读取纪律**：活库带 WAL、可能被占用——**先拷贝到 `.serendipity/` 再读，绝不锁活库**；对账基于 DB 而非文件监听（v1.5 细节）。
 - **安全红线〔实测〕：`Repo` 表含用户凭据**（实测有 DeepSeek API key / 对象存储密钥）——adapter 与 `.serendipity/` 拷贝**必须排除 Repo 表**，图数据只从 Block/BlockRef/BlockAlias/BlockProperty 派生。
 

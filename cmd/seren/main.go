@@ -1,5 +1,34 @@
-// Command seren：Serendipity Engine 的 CLI 入口（设计 §6.8 三入口之 CLI）。
-// 子命令：index（解析+建图+统计+持久化）、roam（查询漫游）、serve（Web UI）、profile-detect。
+// ============================================================================
+// 文件：cmd/seren/main.go
+// 模块：Serendipity Engine CLI 入口（设计 §6.8 三入口之 CLI）
+//
+// ▍职责
+//   把"解析 → 建图 → 漫游 → 持久化 → Web"串成一条命令行。子命令：
+//     index          解析 + 建图 + 统计 + 持久化
+//     roam <q>       查询漫游 → top-N 节点簇（CLI 版）
+//     serve          启动 Web UI（REST / JSON + 节点簇可视化，同一核心）
+//     profile-detect 扫描 vault，产出解析画像 YAML（新库 onboarding）
+//     version        打印版本（与 git tag 同步）
+//
+// ▍数据源自动识别（loadSource，优先级从高到低）
+//   1. --db <file.sqlite>   从持久化存储读图（跳过解析）
+//   2. 虎鲸库（扩展名 .db） 先 CopyDBForRead 拷贝再解析（安全红线见 adapter/orca.go）
+//   3. Obsidian vault       按 VaultProfile 解析（见 adapter/obsidian.go、profile.go）
+//
+// ▍画像（VaultProfile）解析顺序（ResolveProfile）
+//   显式 --profile 文件 > --profile-name 内置名（default-obsidian / okf /
+//   example-wiki）> <vault>/.serendipity/profile.yaml（跟库走）> 通用默认。
+//   OKF（Open Knowledge Format）通用格式由默认画像内置（type_field /
+//   description_keys / resource_keys / markdown 链接），见 adapter/profile.go。
+//
+// ▍安全说明
+//   本命令只在用户本机运行，无网络出口；不读取也不输出任何凭据类数据；
+//   虎鲸库 Repo 表（含 API key）从不解析（adapter/orca.go 红线）。
+//
+// ▍修改记录
+//   v0.1.0  初版五子命令。
+//   v0.1.1  --profile-name 新增 okf（OKF 通用画像别名）；版本号提升。
+// ============================================================================
 package main
 
 import (
@@ -18,7 +47,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.0"
+const version = "v0.1.1"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -61,7 +90,7 @@ flags:
   --beta Y       激活分权重 (默认 0.5)
 画像/存储:
   --profile <file.yaml>       显式画像文件
-  --profile-name <name>       内置画像名 (default-obsidian / example-wiki)
+  --profile-name <name>       内置画像名 (default-obsidian / okf / example-wiki)
   --db <file.sqlite>          从持久化存储读图（跳过解析）
   --persist                   解析后持久化到库内 .serendipity/db-<hash>.sqlite
   --store <file.sqlite>       指定持久化路径（覆盖默认）

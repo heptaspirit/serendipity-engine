@@ -1,6 +1,13 @@
 # Serendipity Engine · 库画像（VaultProfile）示例
 # 通用示例：一个中文 Wiki 库的解析约定（无任何真实库内容）。
 # 真实库的画像放在各自库内 `<vault>/.serendipity/profile.yaml`（跟库走，不入库）。
+#
+# OKF（Open Knowledge Format）提示（v0.1.1 起默认解析已内置）：
+#   - type_field: frontmatter 的 type 值即节点类型（OKF 唯一必填字段）。
+#   - description_keys / resource_keys: 描述与外部资源地址并入正文，全文检索可命中。
+#   - 标准 markdown 链接 [x](note.md) 与 [[x]] 一样入图（OKF 概念间用 md 链接相连）。
+#   - index.md / log.md 是 OKF 保留文件名（导航/变更历史）：如你的库把它们当结构页，
+#     把 index / log 加进下面的 structural_types；默认不排除（真实库可能是正文页面）。
 name: example-wiki
 
 excluded_dirs:
@@ -18,6 +25,15 @@ alias_keys:
 
 tag_keys:
   - tags
+
+# frontmatter 键，其值 = 节点类型（OKF `type`；留空 = 不启用）
+# type_field: type
+
+# frontmatter 键，并入正文（OKF `description` / `resource`；留空 = 不启用）
+# description_keys:
+#   - description
+# resource_keys:
+#   - resource
 
 # 类型推断：目录前缀 → 类型
 type_by_dir:
