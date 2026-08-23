@@ -36,7 +36,9 @@
 - [x] 最小 stdio JSON-RPC（v0.1.9）：`initialize` / `tools/list` / `tools/call`（+ ping），自实现薄协议，零第三方依赖（`internal/mcp`）
 - [x] `seren mcp` 子命令：`--db <store.sqlite>` 启动建图；只 import `internal/{graph,roam,adapter,store,score,sync}` 纯库，**不碰** `internal/web` / `internal/watch`（不影响本体，边界守护见维护指南 §4.1）
 - [x] 只读四件套 tools：`graph.stats` / `graph.roam` / `graph.random`（随机漫步，v0.1.7 已铺路）/ `graph.relation`（白盒输出，全部只读，不写 touch、不触发 refresh）
-- [ ] dsh 联调：MCP 配置指向 `seren mcp --db <store>`，验证 `graph.roam` / `graph.relation` / `graph.random` 返回可读
+- [ ] dsh 联调：MCP 配置指向 `seren mcp --db <store>`（已在 cordis.patch.yml 注册 mcp-seren
+  stdio 实例），验证 `graph.roam` / `graph.relation` / `graph.random` 返回可读（**待 DSH web
+  重启后验证**，见 07-mcp.md §7.4）
 - [x] 文档与发布：07-mcp.md 更新为"已落地"，补 README 入口 + 版本记录（v0.1.9）
 
 ## M1：引擎核心完善（M0 之后）
