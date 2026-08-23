@@ -103,14 +103,17 @@ cmd/seren 子命令:
    启动时建图，注册四件套 tools（stats / roam / random / relation）。
 3. **[x] 联调（本地验证）**：echo 管道调 `initialize` / `tools/list` / tools/call，
    验证返回结构与 AI 可读性；确认不触发任何写操作；import 边界守护（维护指南 §4.1）。
-4. **[待重启验证] dsh 联调**：已在 DSH profile 的 `cordis.patch.yml` 注册 `mcp-seren`
+4. **[✓ 已测 / ⏸ 临时停用] dsh 联调**：已在 DSH profile 的 `cordis.patch.yml` 注册 `mcp-seren`
    stdio 实例（`transport: stdio` + `command: seren.exe mcp <vault> --db <store>`，
    serverName=seren，failOnStartupError:false；原文件已备份）。DSH web **重启后**生效，
    工具以 `mcp__seren__graph.stats / .roam / .random / .relation` 出现。DSH 的 MCP 客户端
    用官方 `@modelcontextprotocol/sdk` 的 StdioClientTransport（与我们自实现的
    initialize/tools/list/tools/call 兼容）；env 清洗只丢凭据形状与过期 DSH_* 变量，
-   TEMP/PATH 保留（sqlite 无碍）。重启后在 dsh 会话里调 `graph.roam("成吉思汗")` /
-   `graph.relation` / `graph.random` 验证端到端可读。
+   TEMP/PATH 保留（sqlite 无碍）。v0.1.10 修复 initialize 回显 protocolVersion（消除
+   SDK 客户端重连循环）+ 启动横幅仅 TTY 打印，**已重启并实测通过**（stats=235 /
+   roam / random / relation 四件套齐全且控制台安静）。
+   **当前该实例在 cordis.patch.yml 中被注释停用**（临时接入测试用，避免一直占 MCP 位）；
+   需要时取消注释 + DSH web 重启即重新启用。
 
 ## 8. 决策已定 / 留待
 
