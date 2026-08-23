@@ -3,6 +3,7 @@
 > 日期：2026-08-21
 > 起因：Web UI 目前是"一直跳"的独立页面，用户问：能否从界面跳回笔记软件？还是做成软件插件？
 > 结论：**分层做，不二选一**——① 跳转链接（今天已做）→ ② 插件薄壳（中期）→ ③ MCP server（v3，与虎鲸 MCP 互操作）。
+> **2026-08-23 更新**：② 已拍板 = 两个独立仓库的插件薄壳（Obsidian / 虎鲸，引擎零改动、不做移植、移动端 isDesktopOnly 坦诚声明）；③ MCP 提前与引擎安全前置同批（roadmap M0）。详见 [plugin-evaluation.md](plugin-evaluation.md) 与 [roadmap.md](roadmap.md)。
 
 ---
 

@@ -47,6 +47,8 @@
 //	        关系查询 /api/relation（权重+路径+证据，为 MCP 铺路）。
 //	v0.1.6  打分桶内归一化（修复深跳 score=0 误导）；快照增量解析
 //	        （ParseVaultIncremental：mtime/size 复用未变文件，只重解析变更）。
+//	v0.1.7  随机漫步（roam --random）：随机 roll 起点 + 它的簇——"节点 + 簇"
+//	        一次给出；roll 取舍：质量门槛过滤 + deg^α 加权 + 防重复 + 可复现种子。
 //
 // ============================================================================
 package main
@@ -55,6 +57,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,7 +75,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.6"
+const version = "v0.1.7"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -104,7 +107,7 @@ func usage() {
 	fmt.Printf(`Serendipity Engine %s
 用法:
   seren index <vault|OrcaNote.db> [flags]  解析、建图、统计（.db 自动识别为虎鲸库）
-  seren roam <vault|OrcaNote.db> <query> [flags]   查询漫游 → top-N 节点簇
+  seren roam <vault|OrcaNote.db> [query] [flags]   查询漫游 → top-N 节点簇（--random 随机漫步）
   seren serve <vault|OrcaNote.db> [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新）
   seren refresh <vault|OrcaNote.db> [flags] 对账刷新：重解析 + 与上次持久化状态 diff
   seren profile-detect <vault>          扫描 vault，提出解析画像 YAML（新库 onboarding）
@@ -116,6 +119,10 @@ flags:
   --hops N       最大跳数 (默认 3)
   --alpha X      结构分权重 (默认 0.5)
   --beta Y       激活分权重 (默认 0.5)
+随机漫步 (v0.1.7):
+  --random       随机漫步：随机 roll 起点 + 它的簇（可省略 query）
+  --seed N       随机种子（默认 0=随机；固定 N 可复现同一漫步，便于分享/测试）
+  --rand-alpha X 随机起点度加权指数：0=均匀（惊喜），1=偏丰富簇（默认 0.5）
 画像/存储:
   --profile <file.yaml>       显式画像文件
   --profile-name <name>       内置画像名 (default-obsidian / okf / example-wiki)
@@ -142,6 +149,9 @@ func parseArgs(args []string) (pos []string, flags map[string]string) {
 			} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 				flags[kv[0]] = args[i+1]
 				i++
+			} else {
+				// 裸布尔开关（如 --random / --watch-off）：此前被静默忽略
+				flags[kv[0]] = "true"
 			}
 		} else {
 			pos = append(pos, a)
@@ -385,12 +395,17 @@ func cmdIndex(args []string) {
 
 func cmdRoam(args []string) {
 	pos, flags := parseArgs(args)
-	if len(pos) < 2 {
-		fatal("用法: seren roam <vault> <query> [flags]")
+	random := flags["random"] != ""
+	if len(pos) < 1 {
+		fatal("用法: seren roam <vault> [query] [flags]（--random 随机漫步时可省略 query）")
 	}
-	vault, query := pos[0], pos[1]
-	if strings.TrimSpace(query) == "" {
-		fatal("查询不能为空")
+	vault := pos[0]
+	var query string
+	if len(pos) >= 2 {
+		query = pos[1]
+	}
+	if !random && strings.TrimSpace(query) == "" {
+		fatal("查询不能为空（或加 --random 随机漫步）")
 	}
 	top := fint(flags, "top", 15)
 	lambda := ffloat(flags, "lambda", 0.7)
@@ -398,19 +413,39 @@ func cmdRoam(args []string) {
 	hops := fint(flags, "hops", 3)
 	alpha := ffloat(flags, "alpha", 0.5)
 	beta := ffloat(flags, "beta", 0.5)
+	seed := fint64(flags, "seed", 0)
+	randAlpha := ffloat(flags, "rand-alpha", 0.5)
 
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 	if err != nil {
 		fatal("画像加载失败: %v", err)
 	}
 	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
-	out := roam.Compute(g, p, query, roam.Options{
+	opt := roam.Options{
 		Top: top, Hops: hops, Lambda: lambda, Theta: theta,
 		Alpha: alpha, Beta: beta, FilterStructural: true,
-	})
+	}
+
+	var out *roam.Outcome
+	if random {
+		// 随机漫步（v0.1.7）：seed=0 用时间随机；固定 seed 可复现（同一节点同一簇）
+		var rng *rand.Rand
+		if seed != 0 {
+			rng = rand.New(rand.NewPCG(uint64(seed), uint64(seed)>>1^0x9E3779B97F4A7C15))
+		} else {
+			rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15))
+		}
+		out = roam.ComputeRandom(g, p, opt, roam.Roll{Rng: rng, Alpha: randAlpha})
+	} else {
+		out = roam.Compute(g, p, query, opt)
+	}
 
 	fmt.Printf("source: %s\n", src)
-	fmt.Printf("query: %s\n", query)
+	if random {
+		fmt.Printf("mode: random-walk (🎲 随机起点 + 簇, rand-alpha=%.2f)\n", randAlpha)
+	} else {
+		fmt.Printf("query: %s\n", query)
+	}
 	fmt.Printf("画像: %s\n", p.Name)
 	switch out.Fallback {
 	case roam.ModeNoAnchor:
@@ -425,15 +460,26 @@ func cmdRoam(args []string) {
 			if i > 0 {
 				fmt.Print(" ")
 			}
-			fmt.Printf("%s", a.ID)
+			if a.Random {
+				fmt.Print("🎲")
+			} else {
+				fmt.Printf("%s", a.ID)
+			}
 		}
 		fmt.Println()
 		for _, a := range out.Anchors {
-			fmt.Printf("  -> %s (title=%s, type=%s)\n", a.ID, a.Title, a.Type)
+			mark := ""
+			if a.Random {
+				mark = " 🎲 随机起点"
+			}
+			fmt.Printf("  -> %s (title=%s, type=%s)%s\n", a.ID, a.Title, a.Type, mark)
 		}
 		fmt.Printf("params: lambda=%.2f theta=%.2f hops=%d alpha=%.2f beta=%.2f top=%d\n",
 			lambda, theta, hops, alpha, beta, top)
 		fmt.Println("--- top 节点簇 ---")
+		if len(out.Results) == 0 {
+			fmt.Println("  (该随机节点没有可展示的关联簇——再试一次，或去掉 --random 用查询漫游)")
+		}
 		for i, r := range out.Results {
 			fmt.Printf("%2d. %-28s %-12s %-6s score=%.3f ppr=%.4f act=%.3f %d-hop  %s\n",
 				i+1, r.ID, r.Title, nodeType(g, r.ID), r.Score, r.PPR, r.Act, r.Hops, strings.Join(r.Path, " → "))
@@ -623,6 +669,15 @@ func sortStrings(ss []string) {
 func fint(flags map[string]string, k string, def int) int {
 	if v, ok := flags[k]; ok {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func fint64(flags map[string]string, k string, def int64) int64 {
+	if v, ok := flags[k]; ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.6** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
+> **v0.1.7** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
 > An activation engine (query-anchored PPR + spreading activation + hop-quota) bolted onto the
 > bi-directional links of your notes, so the wiki "actually comes alive".
 > English README; [中文](README.md).
@@ -15,6 +15,10 @@
 
 - **Query-driven roaming**: type a note name / tag / any word → get a filtered, ranked, explainable cluster
   of related nodes (with activation paths)
+- **🎲 Random walk** (v0.1.7): "just wander around" when you don't know what to ask — a random start
+  node + its cluster in one shot; rolling trade-offs: quality-gate filtering (structural / empty-title /
+  orphan / hub) + deg^α weighting (0 = uniform surprise, 1 = richer clusters) + anti-repeat +
+  `--seed` reproducibility for sharing
 - **Serendipity mechanism**: hop-quota mixing (1:2:3-hop = 50/30/20) so surprising "I didn't think of it,
   but it's related" deep-hop nodes appear steadily
 - **White-box & interactive**: every recommendation is explainable (activation path), click-to-roam,
@@ -81,6 +85,7 @@ go build -o seren.exe ./cmd/seren
 # Roam
 .\seren.exe roam <vault> "search"              # Obsidian vault
 .\seren.exe roam "D:\...\OrcaNote.db" "history" # Orca DB (.db auto-detected)
+.\seren.exe roam <vault> --random --seed 42      # 🎲 random walk: random start + cluster (--seed = reproducible)
 
 # Web UI (hero page with floating hot-node bubbles; auto-watch on by default)
 .\seren.exe serve <vault> --port 8080
@@ -113,10 +118,11 @@ go build -o seren.exe ./cmd/seren
 
 ## Status
 
-v0.1.6 (2026-08-23): bucket-normalized scoring (fixes the misleading score=0 on deep-hop
-nodes), snapshot incremental parsing (Obsidian re-parses only changed files), and an MCP
-architecture study (`docs/architecture/07-mcp.md`, not started) are done; the obsidian://
-jump was manually verified by the user.
+v0.1.7 (2026-08-23): 🎲 random walk — a random start node + its cluster in one shot (quality-gate
+filtering + deg^α weighting + anti-repeat + `--seed` reproducibility; CLI `--random` / Web 🎲 button),
+plus deterministic tie-breaking in ranking (same seed ⇒ same cluster). v0.1.6 items — bucket-normalized
+scoring, snapshot incremental parsing, the MCP architecture study (`docs/architecture/07-mcp.md`,
+not started) — are in the same release train.
 Next: Playwright frontend test automation, MCP server (v3, study ready), feedback-loop observation.
 
 ## License

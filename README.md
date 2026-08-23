@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.6** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
+> **v0.1.7** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
 > 给个人笔记的双链装上激活引擎（查询锚定 PPR + 激活扩散 + 跳数配额），让"wiki 真正跑起来"。
 > 中文 README；[English](README.en.md)。
 
@@ -13,6 +13,7 @@
 ## 特性
 
 - **查询驱动漫游**：输入笔记名 / 标签 / 任意词 → 输出一批筛选、排序、可解释的相关节点簇（带激活路径）
+- **🎲 随机漫步**（v0.1.7）：不想打字时"随便逛逛"——随机 roll 一个起点 + 它的簇（"节点 + 簇"一次给出）；roll 取舍：质量门槛过滤（结构/空标题/孤立/枢纽）+ deg^α 度加权（0=均匀惊喜，1=偏丰富簇）+ 防重复 + `--seed` 可复现分享
 - **serendipity 机制**：跳数配额混合（1:2:3-hop = 50/30/20），保证"我没想到但确实相关"的深跳惊喜节点稳定出现
 - **白盒可干预**：每条推荐可解释（激活路径）、可点击续漫游、可跳回原笔记软件
 - **解析规则抽离**：VaultProfile 库画像（title/别名/标签/类型规则 YAML 化）+ `profile-detect` 新库自动探测——换库不改代码；Google OKF 通用格式入默认解析
@@ -60,6 +61,7 @@ go build -o seren.exe ./cmd/seren
 # 漫游
 .\seren.exe roam <vault> "寻找"               # Obsidian 库
 .\seren.exe roam "D:\...\OrcaNote.db" "历史"    # 虎鲸库（.db 自动识别）
+.\seren.exe roam <vault> --random --seed 42      # 🎲 随机漫步：随机起点+簇（--seed 可复现）
 
 # Web UI（初始页漂浮热门节点，点击即漫游；自动监听默认开）
 .\seren.exe serve <vault> --port 8080
@@ -88,15 +90,18 @@ go build -o seren.exe ./cmd/seren
 | [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) | 设计评审 13 条决策（已全部接受） |
 | [`docs/spike-report.md`](docs/spike-report.md) | Spike 验证报告（机制结论 / 参数重测，示例内容已脱敏） |
 | [`docs/product-form.md`](docs/product-form.md) | 产品形态决策（跳回软件 vs 插件 vs MCP） |
+| [`docs/roadmap.md`](docs/roadmap.md) | **引擎设计路线图**（M0 插件前置+MCP / M1 核心完善 / M2 插件薄壳） |
+| [`docs/plugin-evaluation.md`](docs/plugin-evaluation.md) | 插件化调研与决策（Obsidian/虎鲸薄壳，不做移植，移动端坦诚声明） |
 
 > 开发日志与遗留问题见本地 `PROGRESS_LOG.md`（不入库）。
 
 ## 状态
 
-v0.1.6（2026-08-23）：打分桶内归一化（修复深跳 score=0 误导）、快照增量解析
-（Obsidian 只重解析变更文件）、MCP 架构研究（07-mcp.md，未开工）已完成；
-obsidian:// 真机跳转用户手动验证通过。
-下一步：Playwright 前端自动化测试、MCP server（v3，研究稿已就绪）、反馈闭环观察。
+v0.1.7（2026-08-23）：🎲 随机漫步（随机 roll 起点 + 它的簇；质量门槛 + deg^α 加权 +
+防重复 + seed 可复现；CLI `--random` / Web 🎲 按钮）、Rank 并列分稳定破序（同 seed 同簇）
+已完成；v0.1.6 的桶内归一化、快照增量解析、MCP 架构研究（07-mcp.md，未开工）在列。
+下一步：M0——serve 安全前置（token 鉴权 + Host 校验）、API 契约文档、MCP server v3（提前），
+见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 ## License
 

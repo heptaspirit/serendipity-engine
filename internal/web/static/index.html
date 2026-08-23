@@ -12,8 +12,10 @@
   ▍功能
     - 初始页：热门节点漂浮气泡（/api/hot），点击气泡开始漫游
     - 搜索框：查询漫游（/api/roam），锚点按 match 级别/度展示前 5 个
+    - 🎲 随机漫步（/api/roam?random=1，v0.1.7）：随机 roll 起点 + 它的簇——
+      "节点 + 簇"一次给出；点簇内任意卡片即转入正常漫游
     - 设置抽屉 ⚙：暴露安全可调参数（/api/config 白名单：top/hops/lambda/theta/
-      alpha/beta），范围/步长/默认来自服务端，localStorage 记忆，可一键重置
+      alpha/beta/rand_alpha），范围/步长/默认来自服务端，localStorage 记忆，可一键重置
     - 关系查询（/api/relation，v0.1.5）：两节点最短路径 + 双向 PPR + 证据链
     - 卡片：点击任意卡片 = 从该节点继续漫游（探索路径，push 历史栈）
     - 历史栈与浏览器 history 同步：后退/前进键可用（?q= URL 同步）
@@ -31,6 +33,8 @@
     v0.1.5  关系查询 URI（后端）；本文件未涉
     v0.1.6  dsh web 设计语言换肤；设置抽屉暴露安全参数（/api/config + clamp）；
             深跳节点 score≤0 展示修复；接入 /api/relation 关系查询；交互与可用性优化
+    v0.1.7  🎲 随机漫步按钮（/api/roam?random=1）；随机起点标签 + 空簇提示；
+            设置抽屉新增"随机漫步·度加权"滑块（rand_alpha）
 -->
 <html lang="zh">
 <head>
@@ -229,6 +233,7 @@
     <button id="home" class="icon-btn" title="回到初始页">⌂</button>
     <button id="back" class="icon-btn" disabled title="上一步">←</button>
     <button id="refresh" class="icon-btn" title="对账刷新：重新解析并同步增删改">↻</button>
+    <button id="dice" class="icon-btn" title="随机漫步：随机起点 + 它的簇">🎲</button>
   </div>
   <h1 id="brand" class="brand">Serendipity Engine <span class="tag" id="ver"></span></h1>
   <div class="header-right">
@@ -267,7 +272,7 @@
   <div id="anchors" class="anchors"></div>
   <div id="fallback"></div>
   <div id="list"></div>
-  <div class="hint">点击任意卡片 → 从该节点继续漫游（探索路径）· 点击「⚙ 参数」可调整漫游设置</div>
+  <div class="hint">🎲 随机漫步：随机起点 + 它的簇 · 点击任意卡片 → 从该节点继续漫游（探索路径）· 点击「⚙ 参数」可调整漫游设置</div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
@@ -400,7 +405,30 @@ async function roam(query, mode, display) {
     history.replaceState({ q: query }, '', '?q=' + encodeURIComponent(query));
   }
   $('#back').disabled = pos <= 0;
+  renderOutcome(d, query, false);
+}
 
+// 🎲 随机漫步（v0.1.7）：服务端 roll 随机起点 + 它的簇。
+// 不进历史栈——"随便逛逛"不该打断/污染回退路径；点簇内任意卡片即转入正常漫游。
+async function roamRandom() {
+  let d;
+  try {
+    const qs = paramQS();
+    const url = '/api/roam?random=1' + (qs ? '&' + qs : '');
+    const r = await fetch(url);
+    d = await r.json();
+  } catch (e) {
+    $('#meta').textContent = '请求失败: ' + e.message;
+    return;
+  }
+  const anchor = (d.anchors || [])[0];
+  $('#q').value = anchor && anchor.title ? anchor.title : '';
+  $('#meta').textContent = '🎲 随机起点（再点 🎲 换一个；点卡片从该节点继续漫游）';
+  renderOutcome(d, '', true);
+}
+
+// 渲染 roam 响应（锚点/降级/列表）。listMode=true 时空查询也渲染列表（随机漫步）。
+function renderOutcome(d, query, listMode) {
   // ---- 锚点：按 match 级别降序、同级别按度降序，只显示前 5 个"重的" ----
   const anchors = (d.anchors || []).slice().sort((a, b) => (b.match - a.match) || (b.deg - a.deg));
   const shownA = anchors.slice(0, 5);
@@ -408,7 +436,7 @@ async function roam(query, mode, display) {
   if (shownA.length) {
     $('#anchors').innerHTML = shownA.map(a =>
       `<span class="anchor" data-id="${esc(a.id)}" data-title="${esc(a.title)}"
-         title="点击从该节点继续漫游">锚: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
+         title="点击从该节点继续漫游">${a.random ? '🎲 随机起点' : '锚'}: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
     if (anchors.length > shownA.length) {
       const more = document.createElement('span');
       more.className = 'anchor more';
@@ -425,16 +453,19 @@ async function roam(query, mode, display) {
   }
 
   const list = $('#list');
-  if (!query) { renderHome(); return; }
+  if (!query && !listMode) { renderHome(); return; }
 
   const cards = (d.results || []).concat((d.fallback_hits || []).map(h => ({
     id: h.id, title: h.title, type: h.type, hops: 0,
     path: h.id, note: '全文命中 ' + h.count + ' 次'
   })));
   if (!cards.length) {
+    const isRandom = !!(d.anchors || [])[0] && d.anchors[0].random;
     if (d.fallback === 2) {
       list.innerHTML = `<div class="deadend">⚠ 这个节点到头了
         <div class="deadend-sub">它没有关联的节点——试试搜索其他关键词，或点左上角「⌂」回初始页</div></div>`;
+    } else if (isRandom) {
+      list.innerHTML = '<div class="empty">🎲 这个节点比较安静，没有关联簇——再掷一次试试</div>';
     } else {
       list.innerHTML = '<div class="empty">无命中——库里没有相关内容</div>';
     }
@@ -619,6 +650,7 @@ $('#back').onclick = () => { if (pos > 0) history.back(); };
 $('#home').onclick = goHome;
 $('#brand').onclick = goHome;
 $('#go').onclick = () => { const q = $('#q').value.trim(); if (q) roam(q, 'push'); };
+$('#dice').onclick = roamRandom;
 $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
 $('#rel-go').onclick = queryRelation;
 $('#rel-from').addEventListener('keydown', e => { if (e.key === 'Enter') queryRelation(); });

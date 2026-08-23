@@ -7,7 +7,9 @@
 //	把内存图（graph.Graph）暴露成 REST 接口并托管可视化页面：
 //	  GET  /api/stats    规模统计（节点/边/版本）
 //	  GET  /api/hot      热门节点（初始页漂浮气泡池，跳过结构类型与目录枢纽）
-//	  GET  /api/roam?q=  查询漫游（与 CLI 同一 roam.Compute 管线）
+//	  GET  /api/roam?q=  查询漫游（与 CLI 同一 roam.Compute 管线）；
+//	       /api/roam?random=1 随机漫步（v0.1.7：roll 随机起点 + 簇，
+//	       ?seed=N 可复现，?rand_alpha= 度加权指数，内置防重复 ring）
 //	  GET  /api/relation?from=&to=  两节点关系查询（v0.1.5：最短路径+双向
 //	       PPR 强度+证据链，white-box；from/to 接受 ID 或标题）
 //	  GET  /api/config   前端可调参数白名单（top/hops/lambda/theta/alpha/beta
@@ -50,6 +52,9 @@
 //	v0.1.4  虎鲸跳转 orca-note://；POST /api/touch；ReplaceGraph + revision。
 //	v0.1.5  GET /api/relation 关系查询（最短路径+双向 PPR+证据链）；
 //	        /api/refresh 响应补充 renamed/renames（改名迁移，修订 #8）。
+//	v0.1.7  随机漫步 GET /api/roam?random=1（服务端 roll 随机起点 + 簇；
+//	        ?seed=N 固定种子可复现、跳过防重复；?rand_alpha= 度加权指数；
+//	        内置 32 个"最近起点"ring 防连续撞车）。
 //
 // ============================================================================
 package web
@@ -58,12 +63,14 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
@@ -94,11 +101,20 @@ type Server struct {
 	Refresh   RefreshFunc // 非空时注册 POST /api/refresh
 	Touch     TouchFunc   // 非空时注册 POST /api/touch（反馈埋点）
 	revision  int         // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
+
+	// 随机漫步状态（v0.1.7）：randMu 保护 rng 与 recent（rand.Rand 非并发安全）。
+	randMu sync.Mutex
+	rng    *rand.Rand // 时间种子随机源（?seed=N 时用独立固定源，不占此锁路径）
+	recent []string   // 最近随机起点（防重复 ring，上限 32）
 }
 
 // New 创建 Web 服务；refresh/touch 为 nil 时不注册对应端点。
 func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version string, refresh RefreshFunc, touch TouchFunc) *Server {
-	return &Server{G: g, P: p, Source: source, VaultName: vaultName, Version: version, Refresh: refresh, Touch: touch}
+	return &Server{
+		G: g, P: p, Source: source, VaultName: vaultName, Version: version,
+		Refresh: refresh, Touch: touch,
+		rng: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15)),
+	}
 }
 
 // ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
@@ -417,7 +433,7 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	vals := r.URL.Query()
 	s.mu.RLock()
-	out := roam.Compute(s.G, s.P, query, roam.Options{
+	opt := roam.Options{
 		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
 		// （高阶内部项——跳数配额/PPR 阻尼/迭代次数——不对外暴露，保持默认）。
 		Top:    clampInt(vals, "top", 15, 1, 60),
@@ -427,7 +443,44 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 		Alpha:  clampFloat(vals, "alpha", 0.5, 0, 1),
 		Beta:   clampFloat(vals, "beta", 0.5, 0, 1),
 		FilterStructural: true,
-	})
+	}
+
+	// 随机漫步（v0.1.7）：?random=1 时忽略 q，roll 随机起点 + 簇。
+	if vals.Get("random") == "1" {
+		out := s.computeRandom(vals, opt)
+		writeJSON(w, s.roamRespOf(out, "random"))
+		s.mu.RUnlock()
+		return
+	}
+
+	out := roam.Compute(s.G, s.P, query, opt)
+	writeJSON(w, s.roamRespOf(out, query))
+	s.mu.RUnlock()
+}
+
+// computeRandom 执行一次随机漫步（?random=1，v0.1.7）。
+// ?seed=N 固定种子 → 完全确定（同一 URL 每次同一节点同一簇，可分享），跳过防重复；
+// 否则用服务端时间种子 rng + 最近起点 ring（防连续撞车，上限 32）。
+func (s *Server) computeRandom(vals url.Values, opt roam.Options) *roam.Outcome {
+	alpha := clampFloat(vals, "rand_alpha", 0.5, 0, 1)
+	if n, err := strconv.ParseInt(vals.Get("seed"), 10, 64); err == nil {
+		rng := rand.New(rand.NewPCG(uint64(n), uint64(n)>>1^0x9E3779B97F4A7C15))
+		return roam.ComputeRandom(s.G, s.P, opt, roam.Roll{Rng: rng, Alpha: alpha})
+	}
+	s.randMu.Lock()
+	out := roam.ComputeRandom(s.G, s.P, opt, roam.Roll{Rng: s.rng, Alpha: alpha, Avoid: s.recent})
+	if len(out.Anchors) > 0 {
+		s.recent = append(s.recent, out.Anchors[0].ID)
+		if len(s.recent) > 32 {
+			s.recent = s.recent[len(s.recent)-32:]
+		}
+	}
+	s.randMu.Unlock()
+	return out
+}
+
+// roamRespOf 把漫游结果包装成 REST 响应（查询与随机共用）。
+func (s *Server) roamRespOf(out *roam.Outcome, query string) roamResp {
 	resp := roamResp{
 		Query: query, Source: s.Source, Vault: s.VaultName,
 		Anchors: out.Anchors, Fallback: int(out.Fallback),
@@ -437,8 +490,7 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.FallbackHits = s.toHitItems(out.FallbackHits)
 	}
-	s.mu.RUnlock()
-	writeJSON(w, resp)
+	return resp
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -510,6 +562,7 @@ func tuneParams() []TuneParam {
 		{Key: "theta", Label: "剪枝阈值", Type: "float", Min: 0, Max: 1, Step: 0.01, Default: 0.1, Group: "算法", Hint: "低于该值的激活路径被剪枝（0-1），越大结果越少"},
 		{Key: "alpha", Label: "结构分权重", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.5, Group: "融合", Hint: "PPR 结构分在融合中的权重（0-1）"},
 		{Key: "beta", Label: "激活分权重", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.5, Group: "融合", Hint: "激活分在融合中的权重（0-1）"},
+		{Key: "rand_alpha", Label: "随机漫步·度加权", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.5, Group: "随机", Hint: "🎲 随机起点的度加权指数：0=均匀（惊喜），1=偏丰富簇；只影响随机漫步"},
 	}
 }
 

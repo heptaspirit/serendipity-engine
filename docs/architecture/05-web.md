@@ -9,7 +9,7 @@
 |---|---|---|
 | `/api/stats` | GET | 节点/边/版本/**revision**（图版本号，自动/手动刷新 +1，前端轮询提示更新） |
 | `/api/hot?n=` | GET | 热门节点（按度降序，跳过结构类型 + 目录枢纽），初始页气泡池 |
-| `/api/roam?q=&top=` | GET | 查询漫游（与 CLI 同一 `roam.Compute`） |
+| `/api/roam?q=&top=` | GET | 查询漫游（与 CLI 同一 `roam.Compute`）；`?random=1` 随机漫步（v0.1.7：roll 随机起点 + 簇；`?seed=N` 固定种子可复现、跳过防重复；`?rand_alpha=` 度加权指数；服务端内置 32 个"最近起点"ring 防连续撞车） |
 | `/api/relation?from=&to=` | GET | 两节点关系查询（v0.1.5）：BFS 最短路径 + 双向 PPR 强度（对称 affinity）+ 激活值 + 证据链；from/to 接受 ID 或标题（`resolveID` 锚定）。white-box 输出，为未来 MCP 暴露（`graph.relation`）铺路 |
 | `/api/refresh` | POST | 对账刷新（`RefreshFunc` 非空时注册）→ diff 摘要（limit 截断；含 renamed/renames 明细，v0.1.5） |
 | `/api/touch` | POST | 反馈埋点 `{target, from}`（`TouchFunc` 非空时注册） |

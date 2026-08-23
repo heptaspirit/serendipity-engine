@@ -104,7 +104,15 @@ func Rank(g *graph.Graph, actMap map[string]graph.ActivationResult, pprMap map[s
 		buckets[h] = append(buckets[h], c)
 	}
 	for h := 1; h <= 3; h++ {
-		sort.Slice(buckets[h], func(i, j int) bool { return buckets[h][i].score > buckets[h][j].score })
+		// 并列分按 ID 稳定破序（v0.1.7）：Rank 入参来自 map 迭代，sort.Slice 不稳定
+		// 会让并列项顺序随运行变化——同 seed 随机漫步"同一簇"就不成立。分数单调性
+		// 不受影响（只改并列顺序），查询漫游输出也更稳定。
+		sort.Slice(buckets[h], func(i, j int) bool {
+			if buckets[h][i].score != buckets[h][j].score {
+				return buckets[h][i].score > buckets[h][j].score
+			}
+			return buckets[h][i].id < buckets[h][j].id
+		})
 	}
 
 	need := opts.TopN
