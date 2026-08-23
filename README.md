@@ -84,6 +84,7 @@ go build -o seren.exe ./cmd/seren
 |---|---|
 | **`docs/architecture/`** | **架构文档（面向未来维护者）**：00 总览与哲学 / 01 数据模型 / 02 适配器 / 03 引擎 / 04 同步 / 05 Web / 06 维护指南 |
 | [`docs/design.md`](docs/design.md) | 设计文档（修订版 v2，含评审决策 + spike 实测 + VaultProfile）——作者设计过程记录 |
+| [`docs/frontend-issues.md`](docs/frontend-issues.md) | **前端问题记录与交接**（Web UI 历史问题/修复/验证 + 遗留待办 + 测试方法；前端专项 session 先读这里） |
 | [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) | 设计评审 13 条决策（已全部接受） |
 | [`docs/spike-report.md`](docs/spike-report.md) | Spike 验证报告（机制结论 / 参数重测，示例内容已脱敏） |
 | [`docs/product-form.md`](docs/product-form.md) | 产品形态决策（跳回软件 vs 插件 vs MCP） |
