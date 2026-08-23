@@ -85,6 +85,21 @@ go build -o scratch/seren.exe ./cmd/seren
 - 提交前检查：`git ls-files | Select-String 'novel-wiki|scratch|PROGRESS|vault-survey'`。
 - 推送到 GitHub 前确认历史无敏感文件（历史重写要谨慎，方案见 PROGRESS_LOG）。
 
+## 4.1 MCP / Web 边界守护（v0.1.9）
+
+- **`internal/mcp`（AI 入口）只 import 纯库**（`internal/{graph,roam,adapter,store,score,sync}`），
+  **绝不 `internal/web`（Web 是消费者不是内核）和 `internal/watch`（监听是 serve 的事）**。
+  这是"不影响本体"的落点，不是靠拆二进制。
+- 检查命令（每次涉 MCP 改动后跑；应**无输出**）：
+
+  ```powershell
+  go list -deps .\internal\mcp | Select-String "serendipity-engine/internal/(web|watch)"
+  ```
+
+- **MCP 默认只读**：不写 touch、不触发 refresh、不读凭据表——AI 会话不能改动本地状态。
+- 若未来 MCP 引入第三方依赖或协议面显著变大，再评估是否剥离（见 07-mcp.md §1
+  ——当前自实现薄协议 + 单二进制 + 零第三方依赖是最优解，不必破坏单二进制）。
+
 ## 5. 版本与发布
 
 发布清单（每版按序走）：

@@ -1,9 +1,10 @@
-# MCP 暴露架构研究（v3，未开工）
+# MCP 暴露架构研究（v3，已落地 v0.1.9）
 
-> 状态：**研究稿**（2026-08-23，用户指示"先不开工，研究靠谱架构 + 不影响本体的
-> 接入方式"）。方向已在 design.md §6.10 拍板：**"AI 通道用 MCP 而非自定义
-> REST……REST 给 Web / CLI 自用，MCP 给 AI 用，同一个核心。"** 本文把形态、
-> 边界、tools、风险落成可执行方案；开工时按 §7 步骤走。
+> 状态：**已落地**（v0.1.9，2026-08-23）。此前为研究稿（用户指示"先不开工，研究靠谱
+> 架构 + 不影响本体的接入方式"）。方向已在 design.md §6.10 拍板：**"AI 通道用 MCP
+> 而非自定义 REST……REST 给 Web / CLI 自用，MCP 给 AI 用，同一个核心。"** 本文把
+> 形态、边界、tools、风险落成可执行方案；落地实现见 `internal/mcp` + `cmd/seren`
+> `seren mcp` 子命令（自实现薄协议，零第三方依赖，单二进制不变）。
 
 ## 0. 目标与硬约束
 
@@ -91,18 +92,22 @@ cmd/seren 子命令:
   （正反馈/资源风险，与既有克制原则一致）。
 - **凭证安全**：MCP 只读图数据；虎鲸 Repo 表红线不变（从不解析，见 02-adapters）。
 
-## 7. 落地步骤（开工时按此走）
+## 7. 落地步骤（v0.1.9 已走完 1-3）
 
-1. **协议实验**：Go 里实现 `initialize` / `tools/list` / `tools/call` 的最小
-   stdio JSON-RPC 服务，用 dsh 的 MCP 配置接入验证链路通。
-2. **`seren mcp` 子命令**：解析 `--db`（复用 storePathFor / loadSource 逻辑），
+1. **[x] 协议实验**：Go 里实现 `initialize` / `tools/list` / `tools/call` 的最小
+   stdio JSON-RPC 服务（`internal/mcp`），单测覆盖生命周期与错误路径。
+2. **[x] `seren mcp` 子命令**：解析 `--db`（复用 storePathFor / loadSource 逻辑），
    启动时建图，注册四件套 tools（stats / roam / random / relation）。
-3. **联调**：在 dsh 会话里调 `graph.roam("成吉思汗")` / `graph.relation`，
-   验证返回结构与 AI 可读性；确认不触发任何写操作。
-4. **文档与发布**：更新本文为"已落地"，补 README 入口 + 版本记录。
+3. **[x] 联调（本地验证）**：echo 管道调 `initialize` / `tools/list` / tools/call，
+   验证返回结构与 AI 可读性；确认不触发任何写操作；import 边界守护（维护指南 §4.1）。
+4. **[ ] dsh 联调**：在 dsh 会话里调 `graph.roam("成吉思汗")` / `graph.relation` /
+   `graph.random`，确认端到端可用。
 
-## 8. 决策留待开工时确认
+## 8. 决策已定 / 留待
 
-- Go SDK vs 自实现薄协议（§2，倾向自实现保零依赖）；
-- 是否允许 `graph.roam` 带 `from`（锚点种子）以外的写类参数（默认不允许）；
-- 多库形态（v2）。
+- **[定] Go SDK vs 自实现薄协议**：采纳自实现（§2 倾向）——仅 initialize / tools/list /
+  tools/call，零第三方依赖，单二进制不变；若 SDK 生态成熟度明显更高再权衡。
+- **[定] MCP 留在主二进制**（用户确认 2026-08-23）：子命令=独立进程已隔离 + import
+  边界守护，"不影响本体"已达成；不拆独立二进制（破坏单二进制 + 同一内核原则）。
+- [待定] 是否允许 `graph.roam` 带 `from`（锚点种子）以外的写类参数（默认不允许）；
+- [待定] 多库形态（v2）。

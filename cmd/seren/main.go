@@ -51,6 +51,9 @@
 //	        一次给出；roll 取舍：质量门槛过滤 + deg^α 加权 + 防重复 + 可复现种子。
 //	v0.1.8  serve 安全前置（roadmap M0-0.1）：--token 指定 / 自动生成 + 页面注入；
 //	        Host 校验（仅回环）+ API token 鉴权；README 徽章化美化。
+//	v0.1.9  MCP server（第四个入口，roadmap M0-0.3）：seren mcp 子命令——stdio
+//	        JSON-RPC 2.0 自实现薄协议（零第三方依赖），只读四件套 tools
+//	        （stats/roam/random/relation）；只 import 纯库不碰 web/watch。
 //
 // ============================================================================
 package main
@@ -71,6 +74,7 @@ import (
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
+	"serendipity-engine/internal/mcp"
 	"serendipity-engine/internal/roam"
 	"serendipity-engine/internal/store"
 	"serendipity-engine/internal/sync"
@@ -79,7 +83,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.8"
+const version = "v0.1.9"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -97,6 +101,8 @@ func main() {
 		cmdRefresh(os.Args[2:])
 	case "profile-detect":
 		cmdProfileDetect(os.Args[2:])
+	case "mcp":
+		cmdMCP(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Printf("Serendipity Engine %s\n", version)
 	case "help", "-h", "--help":
@@ -115,6 +121,7 @@ func usage() {
   seren serve <vault|OrcaNote.db> [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新）
   seren refresh <vault|OrcaNote.db> [flags] 对账刷新：重解析 + 与上次持久化状态 diff
   seren profile-detect <vault>          扫描 vault，提出解析画像 YAML（新库 onboarding）
+  seren mcp <vault> [--db <store>]       MCP stdio server（只读四件套，AI 入口）
   seren version                         打印版本
 flags:
   --top N        输出条数 (默认 15)
@@ -676,6 +683,28 @@ func cmdProfileDetect(args []string) {
 		fatal("序列化失败: %v", err)
 	}
 	fmt.Print(out)
+}
+
+// cmdMCP 启动 MCP stdio server（第四个入口，v0.1.9，roadmap M0-0.3）。
+// 只读四件套 tools（stats/roam/random/relation）；只 import 纯库，不碰 web/watch。
+// stdout 只承载 JSON-RPC 协议；启动提示一律写 stderr（避免污染协议流）。
+func cmdMCP(args []string) {
+	pos, flags := parseArgs(args)
+	if len(pos) < 1 {
+		fatal("用法: seren mcp <vault> [--db <store.sqlite>]（库来源同 roam；--db 读持久化存储免重解析）")
+	}
+	vault := pos[0]
+	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
+	if err != nil {
+		fatal("画像加载失败: %v", err)
+	}
+	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
+	fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation（AI 通道）\n",
+		src, g.Stats().Nodes)
+	srv := mcp.New(g, p, version)
+	if err := srv.Serve(os.Stdin, os.Stdout); err != nil {
+		fatal("MCP 服务失败: %v", err)
+	}
 }
 
 func sortStrings(ss []string) {

@@ -2,7 +2,7 @@
 
 > 图谱漫游：给个人笔记的双链装上激活引擎——**你问一个点，它给你一片。**
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.8-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.9-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
 [![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod)
@@ -18,7 +18,7 @@
 - **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，凭据表绝不碰）
 - **对账刷新**：`seren refresh` / Web ↻ / 自动监听三路同步增删改（节流合并，克制防跑飞）
 - **关系查询**：任意两节点的最短路径 + 双向 PPR 强度 + 证据链（white-box）
-- **三入口**：CLI / REST + Web UI / MCP（规划中）
+- **四入口**：CLI / REST + Web UI / MCP（`seren mcp`，AI 通道）
 
 ## 设计哲学
 
@@ -63,6 +63,9 @@ go build -o seren.exe ./cmd/seren
 
 # 对账刷新（增删改后同步，输出 增/删/改 明细）
 .\seren.exe refresh <vault> --store <file.sqlite>
+
+# MCP（AI 通道，只读四件套；给 dsh/agent 配 stdio MCP 指向此命令）
+.\seren.exe mcp <vault> --db <file.sqlite>
 ```
 
 ## 文档
@@ -70,6 +73,7 @@ go build -o seren.exe ./cmd/seren
 | 文档 | 说明 |
 |---|---|
 | [`docs/architecture/`](docs/architecture/) | 架构文档（维护者向）：总览 / 数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南 / MCP 研究 |
+| [`docs/api-contract.md`](docs/api-contract.md) | API 契约：7 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |
 | [`docs/roadmap.md`](docs/roadmap.md) | 路线图：M0 安全前置 + MCP / M1 核心完善 / M2 插件薄壳 |
 | [`docs/frontend-issues.md`](docs/frontend-issues.md) | 前端问题记录与交接（前端专项 session 先读这里） |
 | [`docs/design.md`](docs/design.md) | 设计过程记录（评审决策 + spike 实测） |

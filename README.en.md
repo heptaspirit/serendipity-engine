@@ -2,7 +2,7 @@
 
 > Graph roaming: an activation engine on top of your personal wiki's backlinks — **ask a point, get a cluster.**
 
-[![Version](https://img.shields.io/badge/version-v0.1.8-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![Version](https://img.shields.io/badge/version-v0.1.9-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
 [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod)
@@ -18,7 +18,7 @@ English · [简体中文](README.md)
 - **Two data sources**: Obsidian vault (file parsing) + Orca Note (SQLite snapshot read; the credentials table is **never** touched)
 - **Reconciliation**: `seren refresh` / Web ↻ / auto-watch keep the graph in sync with add/edit/delete (throttled merging — deliberately restrained against feedback loops)
 - **Relation query**: shortest path + bidirectional PPR strength + evidence chain between any two nodes (white-box)
-- **Three entry points**: CLI / REST + Web UI / MCP (planned)
+- **Four entry points**: CLI / REST + Web UI / MCP (`seren mcp`, AI channel)
 
 ## Design Philosophy
 
@@ -64,6 +64,9 @@ go build -o seren.exe ./cmd/seren
 
 # Reconcile (sync after add/edit/delete; prints added/updated/deleted)
 .\seren.exe refresh <vault> --store <file.sqlite>
+
+# MCP (AI channel, read-only tools; point a stdio MCP client at this)
+.\seren.exe mcp <vault> --db <file.sqlite>
 ```
 
 ## Docs
@@ -71,6 +74,7 @@ go build -o seren.exe ./cmd/seren
 | Doc | Description |
 |---|---|
 | [`docs/architecture/`](docs/architecture/) | Architecture docs (for maintainers): overview / data model / adapters / engine / sync / web / maintenance / MCP study |
+| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 7 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
 | [`docs/roadmap.md`](docs/roadmap.md) | Roadmap: M0 security + MCP / M1 core polish / M2 plugin shells |
 | [`docs/design.md`](docs/design.md) | Design process record (review decisions + spike findings) |
 

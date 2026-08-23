@@ -29,15 +29,15 @@
 
 ### 0.2 API 契约文档
 
-- [ ] `docs/api-contract.md`：现有 7 端点（stats / hot / roam / relation / config / refresh / touch）的请求/响应结构 + `version`/`revision` 字段说明。**这是插件仓库与引擎的唯一共享物**；改 API 必须同步本文（列入维护指南）。
+- [x] `docs/api-contract.md`（v0.1.9）：现有 7 端点（stats / hot / roam / relation / config / refresh / touch）的请求/响应结构 + `version`/`revision` 字段说明 + **鉴权**（X-Seren-Token / ?token=）。**这是插件仓库与引擎的唯一共享物**；改 API 必须同步本文（列入维护指南 §5）。
 
-### 0.3 MCP server v3（研究稿 `docs/architecture/07-mcp.md` 已就绪）
+### 0.3 MCP server v3（研究稿 `docs/architecture/07-mcp.md`）
 
-- [ ] 最小 stdio JSON-RPC：`initialize` / `tools/list` / `tools/call`（倾向自实现薄协议，保持零第三方依赖；若 SDK 生态明显成熟再权衡）
-- [ ] `seren mcp` 子命令：`--db <store.sqlite>` 启动建图；只 import `internal/{graph,roam,adapter,store,score,sync}` 纯库，**不碰** `internal/web` / `internal/watch`（不影响本体）
-- [ ] 只读四件套 tools：`graph.stats` / `graph.roam` / `graph.random`（随机漫步，v0.1.7 已铺路）/ `graph.relation`（白盒输出，全部只读，不写 touch、不触发 refresh）
-- [ ] dsh 联调：MCP 配置指向 `seren mcp --db <store>`，验证 `graph.roam` / `graph.relation` 返回可读
-- [ ] 文档与发布：07-mcp.md 更新为"已落地"，补 README 入口 + 版本记录
+- [x] 最小 stdio JSON-RPC（v0.1.9）：`initialize` / `tools/list` / `tools/call`（+ ping），自实现薄协议，零第三方依赖（`internal/mcp`）
+- [x] `seren mcp` 子命令：`--db <store.sqlite>` 启动建图；只 import `internal/{graph,roam,adapter,store,score,sync}` 纯库，**不碰** `internal/web` / `internal/watch`（不影响本体，边界守护见维护指南 §4.1）
+- [x] 只读四件套 tools：`graph.stats` / `graph.roam` / `graph.random`（随机漫步，v0.1.7 已铺路）/ `graph.relation`（白盒输出，全部只读，不写 touch、不触发 refresh）
+- [ ] dsh 联调：MCP 配置指向 `seren mcp --db <store>`，验证 `graph.roam` / `graph.relation` / `graph.random` 返回可读
+- [x] 文档与发布：07-mcp.md 更新为"已落地"，补 README 入口 + 版本记录（v0.1.9）
 
 ## M1：引擎核心完善（M0 之后）
 
