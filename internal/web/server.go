@@ -8,6 +8,8 @@
 //	  GET  /api/stats    规模统计（节点/边/版本）
 //	  GET  /api/hot      热门节点（初始页漂浮气泡池，跳过结构类型与目录枢纽）
 //	  GET  /api/roam?q=  查询漫游（与 CLI 同一 roam.Compute 管线）
+//	  GET  /api/relation?from=&to=  两节点关系查询（v0.1.5：最短路径+双向
+//	       PPR 强度+证据链，white-box；from/to 接受 ID 或标题）
 //	  POST /api/refresh  对账刷新（v0.1.2，见下）
 //	  GET  /             嵌入的可视化页面（go:embed static/index.html）
 //
@@ -44,6 +46,8 @@
 //	v0.1.2  POST /api/refresh 对账刷新；RWMutex 图保护；刷新闭包注入。
 //	v0.1.3  / 响应 Cache-Control: no-store（防浏览器缓存旧页面）。
 //	v0.1.4  虎鲸跳转 orca-note://；POST /api/touch；ReplaceGraph + revision。
+//	v0.1.5  GET /api/relation 关系查询（最短路径+双向 PPR+证据链）；
+//	        /api/refresh 响应补充 renamed/renames（改名迁移，修订 #8）。
 //
 // ============================================================================
 package web
@@ -117,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/hot", s.handleHot)
 	mux.HandleFunc("/api/roam", s.handleRoam)
+	mux.HandleFunc("/api/relation", s.handleRelation)
 	if s.Refresh != nil {
 		mux.HandleFunc("/api/refresh", s.handleRefresh)
 	}
@@ -165,10 +170,12 @@ type refreshResp struct {
 	Added      int              `json:"added"`
 	Updated    int              `json:"updated"`
 	Deleted    int              `json:"deleted"`
+	Renamed    int              `json:"renamed"` // v0.1.5：改名迁移（修订 #8）
 	Unchanged  int              `json:"unchanged"`
 	DurationMS int64            `json:"duration_ms"`
 	Nodes      int              `json:"nodes"`
 	Changes    []syncpkg.Change `json:"changes"`
+	Renames    []syncpkg.Rename `json:"renames"`
 }
 
 // handleRefresh POST /api/refresh：调用刷新闭包 → 替换内存图 → 返回 diff 摘要。
@@ -189,11 +196,52 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if len(changes) > limit {
 		changes = changes[:limit]
 	}
+	renames := res.Renames
+	if len(renames) > limit {
+		renames = renames[:limit]
+	}
 	writeJSON(w, refreshResp{
 		Added: res.Added, Updated: res.Updated, Deleted: res.Deleted,
-		Unchanged: res.Unchanged, DurationMS: res.DurationMS,
-		Nodes: g.Stats().Nodes, Changes: changes,
+		Renamed: res.Renamed, Unchanged: res.Unchanged, DurationMS: res.DurationMS,
+		Nodes: g.Stats().Nodes, Changes: changes, Renames: renames,
 	})
+}
+
+// handleRelation GET /api/relation?from=&to=：两节点关系查询（v0.1.5）。
+// from/to 接受节点 ID 或标题（经 Resolve 锚定，取首个命中）。输出 white-box
+// 关系：最短路径 + 双向 PPR 强度（对称 affinity）+ 激活值 + 证据链。
+// 为未来 MCP 暴露（graph.relation）铺路——AI 可据此判断两实体关联强度。
+func (s *Server) handleRelation(w http.ResponseWriter, r *http.Request) {
+	fromQ := r.URL.Query().Get("from")
+	toQ := r.URL.Query().Get("to")
+	if fromQ == "" || toQ == "" {
+		writeJSON(w, map[string]string{"error": "from/to required"})
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	from := s.resolveID(fromQ)
+	to := s.resolveID(toQ)
+	if from == "" || to == "" {
+		writeJSON(w, map[string]string{"error": "node not found"})
+		return
+	}
+	rel := s.G.ComputeRelation(from, to, 0.7)
+	if rel == nil {
+		writeJSON(w, map[string]string{"error": "node not found"})
+		return
+	}
+	writeJSON(w, rel)
+}
+
+// resolveID 把查询词解析为节点 ID：精确 ID > title > 别名 > 标签 > LIKE
+// （Resolve 按级别降序返回，取首个）。
+func (s *Server) resolveID(q string) string {
+	ms := s.G.Resolve(q)
+	if len(ms) == 0 {
+		return ""
+	}
+	return ms[0].ID
 }
 
 type statsResp struct {

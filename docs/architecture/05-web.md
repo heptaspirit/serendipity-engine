@@ -10,7 +10,8 @@
 | `/api/stats` | GET | 节点/边/版本/**revision**（图版本号，自动/手动刷新 +1，前端轮询提示更新） |
 | `/api/hot?n=` | GET | 热门节点（按度降序，跳过结构类型 + 目录枢纽），初始页气泡池 |
 | `/api/roam?q=&top=` | GET | 查询漫游（与 CLI 同一 `roam.Compute`） |
-| `/api/refresh` | POST | 对账刷新（`RefreshFunc` 非空时注册）→ diff 摘要（limit 截断） |
+| `/api/relation?from=&to=` | GET | 两节点关系查询（v0.1.5）：BFS 最短路径 + 双向 PPR 强度（对称 affinity）+ 激活值 + 证据链；from/to 接受 ID 或标题（`resolveID` 锚定）。white-box 输出，为未来 MCP 暴露（`graph.relation`）铺路 |
+| `/api/refresh` | POST | 对账刷新（`RefreshFunc` 非空时注册）→ diff 摘要（limit 截断；含 renamed/renames 明细，v0.1.5） |
 | `/api/touch` | POST | 反馈埋点 `{target, from}`（`TouchFunc` 非空时注册） |
 | `/` | GET | 嵌入页面（`go:embed static/index.html`，`no-store`） |
 

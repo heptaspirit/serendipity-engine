@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.4** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
+> **v0.1.5** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
 > An activation engine (query-anchored PPR + spreading activation + hop-quota) bolted onto the
 > bi-directional links of your notes, so the wiki "actually comes alive".
 > English README; [中文](README.md).
@@ -26,6 +26,11 @@
   credentials table is **never** touched)
 - **Reconciliation**: `seren refresh` / Web `↻` / **auto-watch** keep the graph in sync with
   add/edit/delete (60s throttled merging — deliberately restrained against feedback loops)
+- **Rename migration** (v0.1.5): renaming an Obsidian note no longer breaks links — detected via
+  content-hash + path similarity, refs are redirected, touch telemetry is migrated (persistent
+  `renames` table)
+- **Relation query** (v0.1.5): `GET /api/relation?from=&to=` — shortest path + bidirectional PPR
+  strength + evidence chain for any two nodes (white-box; groundwork for a future MCP server)
 - **Feedback telemetry**: clicks are recorded as touches (dedicated table, capped size; **v1 does
   NOT evolve edge weights**, cutting off runaway feedback at the source)
 - **Jump back**: Obsidian `obsidian://` / Orca `orca-note://` URIs on cards
@@ -107,9 +112,10 @@ go build -o seren.exe ./cmd/seren
 
 ## Status
 
-v0.1.4 (2026-08-21): reconciliation, auto-watch, touch telemetry, and Orca jump-back are done.
-Next: feedback-loop observation (touch data), qualitative validation with a real query set,
-Playwright frontend test automation, MCP server.
+v0.1.5 (2026-08-22): rename migration (revision #8, including the directed-links store fix),
+the relation query API (`/api/relation`), and qualitative validation on a real query set
+(decision #6 wrap-up) are done.
+Next: feedback-loop observation (touch data), Playwright frontend test automation, MCP server (v3).
 
 ## License
 

@@ -12,7 +12,15 @@
 //	默认路径 <vault>/.serendipity/db-<库路径 hash12>.sqlite（DBPath），多库各一文件，
 //	便携闭环（库在哪图在哪，见设计 §6.8）。两张表：
 //	  documents(id PK, title, type, path, mtime, size, tags, aliases, text)
-//	  links(a, b, weight, PK(a,b)) —— 无向边，pair 去重（Save 内 seen 集合）
+//	  links(a, b, weight, PK(a,b)) —— 有向引用行（v0.1.5 修正）
+//
+// ▍links 的方向性（v0.1.5 修正，对账收敛的前提）
+//   Document.Refs 是有向的（本文档链接谁）；对账 diff 按 ID 逐文档比较 Refs，
+//   因此存储必须保方向。v0.1.5 前 Save 用排序 pairKey 去重（无向对，如
+//   (张三,李四) 恒按字典序），Load 只把 b 追加到 a 的 Refs——字典序较大的
+//   端点回读后 Refs 为空，每次刷新都报虚假 "refs +1"，永不收敛。修正后：
+//   Save 按精确 (a,b) 去重（每文档自己的 Refs 无重复），Load 原样回读；
+//   无向语义只在 graph.Build 层体现（双方入邻接表）。
 //
 // ▍与对账的关系（v0.1.2）
 //   - Load 对不存在的文件返回空列表（nil, nil）：对账刷新"首次"场景等价全新增；
@@ -30,6 +38,8 @@
 //	v0.1.2  Load 支持不存在的存储文件（首次对账全新增）；补充模块头注释。
 //	v0.1.3  Load 兼容"存在但从未写入"的空库文件（无 documents 表 → 无旧状态）。
 //	v0.1.4  AppendTouch/TouchCount（反馈埋点，独立表 + 容量上限）。
+//	v0.1.5  RenameTouch（改名迁移，修订 #8：touch 旧 ID → 新 ID，两阶段占位防链式）；
+//	        links 改有向引用行（修正回读丢方向的虚假 refs+1 对账不收敛）。
 //
 // ============================================================================
 package store
@@ -94,6 +104,138 @@ func TouchCount(dbPath string) (int, error) {
 	return n, nil
 }
 
+// LoadRenames 读回改名迁移映射（v0.1.5，修订 #8）：renames 表 = 持久化的
+// 身份迁移层（old_id → new_id）。documents/links 存文件真相（原始 Refs），
+// 图构建时叠加本映射重定向——改名是持久身份事实，不能只在下一次刷新生效。
+// 表不存在（旧库/从未改名）→ 返回空映射。
+func LoadRenames(dbPath string) (map[string]string, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	var tbl string
+	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='renames'`).Scan(&tbl); err != nil {
+		return map[string]string{}, nil
+	}
+	rows, err := db.Query(`SELECT old_id, new_id FROM renames`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var o, n string
+		if err := rows.Scan(&o, &n); err != nil {
+			return nil, err
+		}
+		out[o] = n
+	}
+	return out, rows.Err()
+}
+
+// SaveRenames 全量重写 renames 表（幂等；每次刷新后与 documents 一起落盘）。
+func SaveRenames(dbPath string, renames map[string]string) error {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS renames (
+		old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM renames`); err != nil {
+		return err
+	}
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO renames (old_id, new_id) VALUES (?,?)`)
+	if err != nil {
+		return err
+	}
+	defer ins.Close()
+	for o, n := range renames {
+		if _, err := ins.Exec(o, n); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// RenameTouch 把 touch 表里 target/src 为旧 ID 的埋点迁移到新 ID（v0.1.5，
+// 改名迁移，设计修订 #8）。两阶段占位（旧ID+"\x00"）防链式改名互踩；
+// 映射先做传递解析（旧→中→新 解到最终目标，与 ApplyRenames 语义一致）；
+// touch 表不存在（从未埋点）→ 静默跳过。documents/links 由 Save 全量
+// 重写重建，无需迁移。
+func RenameTouch(dbPath string, renames map[string]string) error {
+	if len(renames) == 0 {
+		return nil
+	}
+	// 传递解析：链式改名解到最终目标（持久化映射跨刷新累积成链）
+	resolved := map[string]string{}
+	for o := range renames {
+		seen := map[string]bool{o: true}
+		cur := o
+		for {
+			nid, ok := renames[cur]
+			if !ok {
+				break
+			}
+			if seen[nid] {
+				cur = o // 环防御：回到原始
+				break
+			}
+			seen[nid] = true
+			cur = nid
+		}
+		if cur != o {
+			resolved[o] = cur
+		}
+	}
+	if len(resolved) == 0 {
+		return nil
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var tbl string
+	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='touch'`).Scan(&tbl); err != nil {
+		return nil // 无埋点数据
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 阶段 1：旧 ID → 占位（\x00 不出现在真实 ID 中）
+	for oldID := range resolved {
+		ph := oldID + "\x00"
+		if _, err := tx.Exec(`UPDATE touch SET target=? WHERE target=?`, ph, oldID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE touch SET src=? WHERE src=?`, ph, oldID); err != nil {
+			return err
+		}
+	}
+	// 阶段 2：占位 → 新 ID
+	for oldID, newID := range resolved {
+		ph := oldID + "\x00"
+		if _, err := tx.Exec(`UPDATE touch SET target=? WHERE target=?`, newID, ph); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE touch SET src=? WHERE src=?`, newID, ph); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // DBPath 返回库的默认存储路径：<vault>/.serendipity/db-<路径hash>.sqlite
 // （设计 §6.8 多库：每库一 DB，便携闭环）。
 func DBPath(vault string) string {
@@ -144,6 +286,8 @@ func Save(dbPath string, docs []*adapter.Document) error {
 	}
 	defer insLink.Close()
 
+	// 有向引用行：d.Refs = 本文档链接谁；精确 (a,b) 去重（每文档 Refs 本身无重复，
+	// seen 仅防御性）。v0.1.5 修正：此前排序 pairKey 去重会丢方向（见文件头）。
 	seen := map[string]bool{}
 	for _, d := range docs {
 		tags, _ := json.Marshal(d.Tags)
@@ -156,7 +300,7 @@ func Save(dbPath string, docs []*adapter.Document) error {
 			if ref == d.ID {
 				continue
 			}
-			key := pairKey(d.ID, ref)
+			key := d.ID + "\x00" + ref
 			if seen[key] {
 				continue
 			}
@@ -210,6 +354,8 @@ func Load(dbPath string) ([]*adapter.Document, error) {
 	}
 	rows.Close()
 
+	// 有向引用行回读：a 链接 b → byID[a].Refs += b（v0.1.5 起 links 保方向，
+	// 无向语义由 graph.Build 层补全）
 	lrows, err := db.Query(`SELECT a, b FROM links`)
 	if err != nil {
 		return nil, err
@@ -225,11 +371,4 @@ func Load(dbPath string) ([]*adapter.Document, error) {
 		}
 	}
 	return docs, nil
-}
-
-func pairKey(a, b string) string {
-	if a < b {
-		return a + "\x00" + b
-	}
-	return b + "\x00" + a
 }

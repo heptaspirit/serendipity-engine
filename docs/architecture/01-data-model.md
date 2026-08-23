@@ -30,7 +30,11 @@ type Document struct {
   代价：`[[短名]]` 链接只匹配 basename 节点（已知限制）。
 - **虎鲸**：`ID = 块 ID（数字字符串）`，稳定不复用。`Path = "block/<id>"`——Web 端
   靠这个前缀识别虎鲸源（--db 回读时）。
-- **ID 变化语义**：Obsidian 改名 = 删一个 + 加一个（v1 不做改名迁移，评审 #8 后置）。
+- **ID 变化语义（v0.1.5 起支持改名迁移，修订 #8）**：Obsidian 改名在 diff 眼里
+  = 删一个 + 加一个；`sync.DetectRenames` 按"内容哈希（Text 相同）+ 路径相似度
+  （同目录优先）"把二者配对为 rename，从 deleted+added 中拆出（记 `Renamed`）。
+  虎鲸块 ID 数字稳定且改名不换 ID，永不配对（守卫见 `sync.isNumericID`）。
+  改名是**持久身份事实**：映射存 `renames` 表（见 §3），每次刷新合并应用。
 
 ## 2. 内存图（`internal/graph`）
 
@@ -55,16 +59,24 @@ type Graph struct {
 | 表 | 内容 | 写入方式 |
 |---|---|---|
 | `documents(id PK, title, type, path, mtime, size, tags, aliases, text)` | 图节点 | **Save 全量重写**（DELETE + INSERT 于一个事务，幂等） |
-| `links(a, b, weight, PK(a,b))` | 无向边（pair 去重） | 同上 |
+| `links(a, b, weight, PK(a,b))` | **有向引用行**（v0.1.5 修正：a 链接 b，保方向） | 同上 |
 | `touch(id AUTOINC, ts, target, src)` | 反馈埋点（点击记录） | **AppendTouch 增量**，Save 不清除；容量上限 5000 条（超限删最旧） |
+| `renames(old_id PK, new_id)` | 改名迁移映射（v0.1.5，修订 #8） | **SaveRenames 全量重写**（随每次刷新） |
 
 ### 关键语义
 
+- **links 有向（v0.1.5 修正，对账收敛前提）**：`Document.Refs` 有向（本文档链接谁），
+  diff 按文档逐一比较 Refs，存储必须保方向。v0.1.5 前用排序 pairKey 去重（无向对），
+  Load 只把 b 追加到 a 的 Refs——字典序较大的端点回读后 Refs 为空，每次刷新报
+  虚假 "refs +1" 永不收敛。修正后 Save 按精确 (a,b) 去重，Load 原样回读；
+  **无向语义只在 graph.Build 层体现**（双方入邻接表）。
 - **Save 幂等**：任何一次 refresh 后存储即最新状态，重复刷新无副作用。
 - **Load 容错**：文件不存在 → `nil, nil`（首次对账全新增）；文件存在但从未写入
   （无 documents 表）→ 同样视为无旧状态（v0.1.3）。
 - **touch 独立**：Save 只 DELETE documents/links，不动 touch——埋点数据跨刷新保留。
   `from` 列名避开了 SQL 保留字（曾用 `from` 导致语法错误，v0.1.4 改 `src`）。
+- **documents 存"文件真相"**：Save 写原始 Refs（不做改名重定向），对账 diff 才能
+  收敛；身份迁移（改名）在**建图层**叠加（`redirectForGraph`），由 renames 表驱动。
 
 ## 4. 对账 diff（`internal/sync`）
 
@@ -73,6 +85,9 @@ type Graph struct {
 - 旧有新无 → `deleted`；新有旧无 → `added`；两边都有 → 比较内容指纹
   （Title/Type/Path/Tags/Aliases/Text/Refs，**不含 MTime/Size**——内容即真相，
   touch 不改内容不算更新）。
+- **改名（v0.1.5）**：deleted × added 按内容哈希 + 路径相似度配对 → `renamed`，
+  从 deleted/added 计数中拆出（`Result.Renamed/Renames`）；拿不准（并列候选）
+  宁可不判，退回 deleted+added。
 - **规范化**：Tags/Aliases/Refs 比较前排序——adapter 输出顺序受 map 遍历/SQL 行序
   影响，不排序会误报 updated。
 - 字段级变化明细（`Change.Fields`）+ 引用增减（`AddedRefs/RemovedRefs`）。

@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.4** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
+> **v0.1.5** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
 > 给个人笔记的双链装上激活引擎（查询锚定 PPR + 激活扩散 + 跳数配额），让"wiki 真正跑起来"。
 > 中文 README；[English](README.en.md)。
 
@@ -18,6 +18,8 @@
 - **解析规则抽离**：VaultProfile 库画像（title/别名/标签/类型规则 YAML 化）+ `profile-detect` 新库自动探测——换库不改代码；Google OKF 通用格式入默认解析
 - **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，Repo 凭据表绝不碰）
 - **对账刷新**：`seren refresh` / Web `↻` / **自动监听**三路同步增删改（60s 节流合并，克制防正反馈）
+- **改名迁移**（v0.1.5）：Obsidian 改名不再断链——内容哈希+路径相似度识别、他人链接重定向、touch 埋点迁移（持久化 renames 表）
+- **关系查询**（v0.1.5）：`GET /api/relation?from=&to=`——两节点最短路径 + 双向 PPR 强度 + 证据链（white-box，为未来 MCP 暴露铺路）
 - **反馈埋点**：点击记录 touch（独立表、容量上限；v1 不演化边权，杜绝跑飞）
 - **跳回原软件**：Obsidian `obsidian://` / 虎鲸 `orca-note://` 跳转
 - **三入口**：CLI / REST + Web UI / （未来 MCP）
@@ -90,8 +92,9 @@ go build -o seren.exe ./cmd/seren
 
 ## 状态
 
-v0.1.4（2026-08-21）：对账刷新、自动监听、反馈埋点、虎鲸跳转已完成。
-下一步：反馈闭环观察（touch 数据）、真实查询集定性验证、Playwright 前端自动化测试、MCP server。
+v0.1.5（2026-08-22）：改名迁移（修订 #8，含 links 有向化修复）、关系查询
+`/api/relation`、真实查询集定性验证（决策 #6 收尾）已完成。
+下一步：反馈闭环观察（touch 数据）、Playwright 前端自动化测试、MCP server（v3）。
 
 ## License
 

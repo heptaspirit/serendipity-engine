@@ -1,6 +1,6 @@
-# 同步层 · 对账刷新 / 自动监听 / 反馈埋点
+# 同步层 · 对账刷新 / 自动监听 / 反馈埋点 / 改名迁移
 
-> 面向未来维护者：这三块是 v0.1.2-v0.1.4 陆续加入的"保持图与笔记软件一致"的机制。
+> 面向未来维护者：这些是 v0.1.2-v0.1.5 陆续加入的"保持图与笔记软件一致"的机制。
 > **克制设计是硬约束**（用户拍板）：任何改动不得引入正反馈循环或资源耗尽。
 
 ## 1. 对账刷新（`internal/sync` + `cmd refresh` + `/api/refresh`）
@@ -16,17 +16,42 @@
 ### 流程（`refreshFunc`，CLI 与 serve 共用）
 
 ```
-store.Load(storePath)     旧状态（无 → 空，等价首次全新增）
-→ parseSource(...)         全量重解析（虎鲸：快照 → ParseOrcaDB）
-→ sync.Diff(old, cur)      按 ID 对齐，规范化比较
-→ store.Save(storePath)    幂等全量重写
-→（serve）ReplaceGraph     内存图替换 + revision++
+store.Load(storePath)        旧状态（无 → 空，等价首次全新增）
+→ store.LoadRenames(storePath)  持久化改名映射（v0.1.5，修订 #8）
+→ parseSource(...)           全量重解析（虎鲸：快照 → ParseOrcaDB）
+→ sync.Diff(old, cur)        按 ID 对齐，规范化比较（含改名配对）
+→ sync.MergeRenames(stored, fresh, cur)  合并映射：旧名重现即失效
+→ store.SaveRenames + RenameTouch        持久化映射 + 迁移埋点旧 ID
+→ store.Save(storePath)      幂等全量重写（写原始 Refs = 文件真相）
+→（serve）ReplaceGraph       内存图替换（建图叠加重定向）+ revision++
 ```
 
 ### 边际情况（已实测，见 design.md §6.8 落地表）
 
 首次全新增 / 增删改字段级明细 / 引用增减（页内自环丢弃）/ 归属变化（双文档
 updated）/ 删除被引用块（deleted + 引用方 refs-1 + 子块变链顶 added）/ 幂等。
+
+## 1.5 改名迁移（修订 #8，v0.1.5）
+
+**动机**：Obsidian 文件名即 ID，改名 = 删一个 + 加一个——被引用节点的链接会悬空、
+touch 埋点断在旧 ID 上。
+
+**判定**（`sync.DetectRenames`）：旧有新无 × 新有旧无 配对，双信号——
+内容哈希（Text 相同；Refs/Path/Title 不参与，改名时它们可能变）+ 路径相似度
+（同目录优先，basename 公共前缀次级）。**并列候选宁可不判**（退回 deleted+added）。
+虎鲸守卫：两侧 ID 均纯数字 → 跳过（块 ID 稳定，删+增是"真删除 + 新块"）。
+
+**落地**（三层，缺一不可）：
+
+| 层 | 机制 | 说明 |
+|---|---|---|
+| 持久化 | `renames` 表（`store.LoadRenames/SaveRenames`） | 改名是持久身份事实，映射跨刷新保留；`MergeRenames` 在"旧名重现于当前批次"时失效该条 |
+| 建图 | `redirectForGraph`（`sync.ApplyRenames`，传递解析链式改名） | documents 存原始 Refs（文件真相，diff 收敛）；图/展示层叠加重定向——他人 `[[旧名]]` 不悬空 |
+| 埋点 | `store.RenameTouch` | touch 表 target/src 旧 ID → 新 ID；两阶段占位防链式互踩，先传递解析 |
+
+**验证**：单测（内容变不判、并列跳过、跨目录不判、虎鲸不误判、链式传递、merge
+失效、touch 迁移）；E2E（index → 改名 → refresh → refresh 幂等收敛；悬空链接 0；
+touch target/src 双列迁移成功）。
 
 ## 2. 自动监听（`internal/watch`，v0.1.4）
 

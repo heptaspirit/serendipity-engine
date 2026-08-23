@@ -43,6 +43,8 @@
 //	v0.1.3  虎鲸空壳页面清理（过滤 + container 类型化，见 adapter/orca.go）。
 //	v0.1.4  自动监听（watch 轮询+节流，默认开）、反馈埋点（/api/touch，
 //	        仅记录不演化）、虎鲸跳转（--repo → orca-note://）。
+//	v0.1.5  改名迁移（修订 #8：Diff 识别 rename + Refs 重定向 + touch 迁移）、
+//	        关系查询 /api/relation（权重+路径+证据，为 MCP 铺路）。
 //
 // ============================================================================
 package main
@@ -68,7 +70,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.4"
+const version = "v0.1.5"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -146,14 +148,37 @@ func parseArgs(args []string) (pos []string, flags map[string]string) {
 	return pos, flags
 }
 
-// loadSource 统一加载：显式存储(--db) > 虎鲸库(.db 自动识别，先拷贝再读) > Obsidian vault。
-// loadSource 统一加载（fatal 版）：显式存储(--db) > 虎鲸库(.db 自动识别，先快照再读) > Obsidian vault。
-func loadSource(vault string, p *adapter.VaultProfile, dbFile string) (*graph.Graph, []*adapter.Document, string) {
+// loadSource 统一加载：显式存储(--db) > 虎鲸库(.db 自动识别，先快照再读) > Obsidian vault。
+// 返回 图 + 原始文档 + 源描述。图构建叠加改名重定向（store renames 表，
+// v0.1.5 修订 #8：存储存文件真相，图层做身份迁移，见 redirectForGraph）。
+func loadSource(vault string, p *adapter.VaultProfile, dbFile, storeFlag string) (*graph.Graph, []*adapter.Document, string) {
 	docs, src, err := parseSource(vault, p, dbFile)
 	if err != nil {
 		fatal("%v", err)
 	}
-	return graph.Build(docs), docs, src
+	// 改名映射来源：--db 时 renames 在同一个存储文件里；vault 解析时在
+	// storePathFor 对应的默认存储里（无 → 空映射，全新构建无需迁移）。
+	var renames map[string]string
+	if dbFile != "" {
+		renames, _ = store.LoadRenames(dbFile)
+	} else {
+		renames, _ = store.LoadRenames(storePathFor(vault, storeFlag))
+	}
+	return graph.Build(redirectForGraph(docs, renames)), docs, src
+}
+
+// redirectForGraph 返回 Refs 重定向后的文档副本（用于建图）。不改动原始 docs：
+// 存储始终写原始 Refs（文件真相），对账 diff 才能收敛；身份迁移（改名）只
+// 在图/展示层生效，由持久化的 renames 表驱动。
+func redirectForGraph(docs []*adapter.Document, renames map[string]string) []*adapter.Document {
+	out := make([]*adapter.Document, len(docs))
+	for i, d := range docs {
+		cp := *d
+		cp.Refs = append([]string(nil), d.Refs...)
+		out[i] = &cp
+	}
+	sync.ApplyRenames(out, renames)
+	return out
 }
 
 // parseSource 统一加载（error 版，供 refresh 复用）：返回 Document 列表与源描述。
@@ -213,11 +238,25 @@ func cmdRefresh(args []string) {
 	if err != nil {
 		fatal("读旧状态失败: %v", err)
 	}
+	storedRenames, err := store.LoadRenames(storePath)
+	if err != nil {
+		fatal("读改名映射失败: %v", err)
+	}
 	docs, src, err := parseSource(vault, p, flags["db"])
 	if err != nil {
 		fatal("%v", err)
 	}
 	res := sync.Diff(old, docs)
+	// 改名迁移（v0.1.5，修订 #8）：持久化映射合并（含本次新检测）→ 存 renames
+	// 表 + touch 迁移。documents 存原始 Refs（文件真相，diff 收敛）；
+	// 重定向只在建图时叠加（见 refreshFunc/loadSource 的 redirectForGraph）。
+	merged := sync.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
+	if err := store.SaveRenames(storePath, merged); err != nil {
+		fatal("改名映射持久化失败: %v", err)
+	}
+	if err := store.RenameTouch(storePath, merged); err != nil {
+		fatal("touch 迁移失败: %v", err)
+	}
 	if err := store.Save(storePath, docs); err != nil {
 		fatal("持久化失败: %v", err)
 	}
@@ -225,16 +264,28 @@ func cmdRefresh(args []string) {
 	fmt.Printf("source: %s\n", src)
 	fmt.Printf("画像: %s\n", p.Name)
 	fmt.Printf("store: %s\n", storePath)
-	fmt.Printf("对账: 新增 %d / 更新 %d / 删除 %d / 未变 %d  （耗时 %dms）\n",
-		res.Added, res.Updated, res.Deleted, res.Unchanged, res.DurationMS)
+	fmt.Printf("对账: 新增 %d / 更新 %d / 删除 %d / 改名 %d / 未变 %d  （耗时 %dms）\n",
+		res.Added, res.Updated, res.Deleted, res.Renamed, res.Unchanged, res.DurationMS)
 	limit := fint(flags, "top", 50)
 	show := 0
-	for _, c := range res.Changes {
+	next := func() bool {
 		if show >= limit {
-			fmt.Printf("  … 其余 %d 条略（--top 调整）\n", len(res.Changes)-show)
-			break
+			fmt.Printf("  … 其余 %d 条略（--top 调整）\n", len(res.Changes)+len(res.Renames)-show)
+			return false
 		}
 		show++
+		return true
+	}
+	for _, r := range res.Renames {
+		if !next() {
+			break
+		}
+		fmt.Printf("  ↦ 改名   %-10s → %-10s %s [%s]\n", r.OldID, r.NewID, r.Title, r.Type)
+	}
+	for _, c := range res.Changes {
+		if !next() {
+			break
+		}
 		switch c.Kind {
 		case sync.KindAdded:
 			fmt.Printf("  + 新增   %-10s %s [%s]\n", c.ID, c.Title, c.Type)
@@ -260,7 +311,7 @@ func cmdIndex(args []string) {
 	if err != nil {
 		fatal("画像加载失败: %v", err)
 	}
-	g, docs, src := loadSource(vault, p, flags["db"])
+	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
 	fmt.Printf("vault: %s\n", vault)
 	fmt.Printf("source: %s\n", src)
 	fmt.Printf("画像: %s\n", p.Name)
@@ -332,7 +383,7 @@ func cmdRoam(args []string) {
 	if err != nil {
 		fatal("画像加载失败: %v", err)
 	}
-	g, _, src := loadSource(vault, p, flags["db"])
+	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
 	out := roam.Compute(g, p, query, roam.Options{
 		Top: top, Hops: hops, Lambda: lambda, Theta: theta,
 		Alpha: alpha, Beta: beta, FilterStructural: true,
@@ -381,7 +432,7 @@ func cmdServe(args []string) {
 	if err != nil {
 		fatal("画像加载失败: %v", err)
 	}
-	g, docs, src := loadSource(vault, p, flags["db"])
+	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
 	isOrca := adapter.IsOrcaDB(vault)
 	if flags["db"] != "" {
 		// 存储回读：按路径形态推断源（orca 节点 path = block/<id>）
@@ -435,8 +486,8 @@ func cmdServe(args []string) {
 				return err
 			}
 			srv.ReplaceGraph(ng)
-			log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d（revision=%d）",
-				res.Added, res.Updated, res.Deleted, srv.Revision())
+			log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d / 改名 %d（revision=%d）",
+				res.Added, res.Updated, res.Deleted, res.Renamed, srv.Revision())
 			return nil
 		})
 		fmt.Printf("自动监听: 开（轮询 %v，刷新节流 %v；--watch-off 关闭）\n", interval, throttle)
@@ -459,8 +510,9 @@ func cmdServe(args []string) {
 	}
 }
 
-// refreshFunc 构造 Web 端的刷新闭包：重解析 → 对账 diff → 写回存储 → 返回
-// diff 结果与刷新后的新图（供 /api/refresh 替换内存图）。Store 路径与 CLI refresh 一致。
+// refreshFunc 构造 Web 端的刷新闭包：重解析 → 对账 diff → 改名迁移（合并持久化
+// 映射 + touch 迁移 + renames 落盘）→ 写回存储（原始 Refs）→ 返回 diff 结果与
+// 刷新后的新图（建图叠加重定向）。Store 路径与 CLI refresh 一致。
 func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string) web.RefreshFunc {
 	storePath := storePathFor(vault, flags["store"])
 	return func() (*sync.Result, *graph.Graph, error) {
@@ -468,16 +520,38 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err != nil {
 			return nil, nil, fmt.Errorf("读旧状态失败: %w", err)
 		}
+		storedRenames, err := store.LoadRenames(storePath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("读改名映射失败: %w", err)
+		}
 		docs, _, err := parseSource(vault, p, flags["db"])
 		if err != nil {
 			return nil, nil, err
 		}
 		res := sync.Diff(old, docs)
+		// 改名迁移（v0.1.5，修订 #8）：见 cmdRefresh 同段注释
+		merged := sync.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
+		if err := store.SaveRenames(storePath, merged); err != nil {
+			return nil, nil, fmt.Errorf("改名映射持久化失败: %w", err)
+		}
+		if err := store.RenameTouch(storePath, merged); err != nil {
+			return nil, nil, fmt.Errorf("touch 迁移失败: %w", err)
+		}
 		if err := store.Save(storePath, docs); err != nil {
 			return nil, nil, fmt.Errorf("持久化失败: %w", err)
 		}
-		return res, graph.Build(docs), nil
+		return res, graph.Build(redirectForGraph(docs, merged)), nil
 	}
+}
+
+// renamesMap 从对账结果的改名明细构建 旧ID→新ID 映射（ApplyRenames /
+// RenameTouch 的入参形态）。
+func renamesMap(rs []sync.Rename) map[string]string {
+	m := make(map[string]string, len(rs))
+	for _, r := range rs {
+		m[r.OldID] = r.NewID
+	}
+	return m
 }
 
 // printTextHits 打印全文检索命中（roam.Compute 已按模式过滤）。

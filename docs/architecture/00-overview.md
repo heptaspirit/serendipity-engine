@@ -56,13 +56,14 @@
 │  Compute：锚定→PPR+激活→排除（种子/枢纽/结构类型）→融合→降级 │
 └───────────────┬─────────────────────────────────────────────┘
                 ▼
-┌── internal/store（SQLite 持久化） internal/sync（对账 diff）─┐
-│  documents/links/touch 表（全量重写幂等；touch 独立+容量上限）│
-└───────────────┬─────────────────────────────────────────────┘
+┌── internal/store（SQLite 持久化） internal/sync（对账 diff + 改名迁移）┐
+│  documents/links/touch/renames 表（全量重写幂等；touch 独立+容量上限；  │
+│  links 有向引用行 v0.1.5）                                              │
+└───────────────┬─────────────────────────────────────────────────────────┘
                 ▼
 ┌── internal/watch（自动监听） internal/web（REST + 前端）─────┐
 │  轮询+节流合并 · 排除自身产物 · 失败节流重试                 │
-│  /api/stats hot roam refresh touch · go:embed index.html    │
+│  /api/stats hot roam relation refresh touch · go:embed       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,9 +75,12 @@
 - **index**：解析 → `graph.Build` → 统计 →（可选 `store.Save` 持久化）
 - **roam**：`loadSource` → `roam.Compute`（锚定 → PPR+激活 → 排除 → 融合+跳数配额 → 降级兜底）
 - **serve**：启动加载图 → REST 服务；`/api/refresh`（手动）与 watch（自动）共用同一
-  `refreshFunc`：重解析 → `sync.Diff` 与上次状态比对 → `store.Save` → `ReplaceGraph`（revision+1）
+  `refreshFunc`：重解析 → `sync.Diff` 与上次状态比对 → 改名迁移（renames 落盘 +
+  touch 迁移）→ `store.Save`（原始 Refs）→ `ReplaceGraph`（建图叠加重定向，revision+1）
 - **watch**：轮询变化 → 节流窗口合并 → 触发上面的 refreshFunc
 - **touch**：Web 点击 → `POST /api/touch` → store.touch 表（仅记录，不演化）
+- **relation**（v0.1.5）：`GET /api/relation?from=&to=` → BFS 最短路径 + 双向 PPR
+  强度（对称 affinity）+ 激活值 + 证据链（white-box，为 MCP 暴露铺路）
 
 ## 5. 目录结构
 
@@ -102,5 +106,6 @@ docs/                design.md（设计过程）/ architecture/（维护文档�
 | v0.1.2 | 对账刷新（seren refresh + /api/refresh）；快照双路径 |
 | v0.1.3 | 虎鲸空壳页面清理（container 类型化）；前端点击加固 |
 | v0.1.4 | 自动监听、反馈埋点（touch）、虎鲸跳转（orca-note://） |
+| v0.1.5 | 改名迁移（修订 #8：renames 表 + Refs 重定向 + touch 迁移）；links 改有向引用行（修复虚假 refs+1）；关系查询 /api/relation（权重+路径+证据） |
 
 详细历史见 `PROGRESS_LOG.md`（本地，不入库）。
