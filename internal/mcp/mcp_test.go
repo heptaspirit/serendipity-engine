@@ -88,6 +88,10 @@ func TestMCPLifecycle(t *testing.T) {
 	if init["serverInfo"].(map[string]any)["name"] != "serendipity-engine" {
 		t.Fatalf("initialize serverInfo 错误: %v", init["serverInfo"])
 	}
+	// 客户端未带 protocolVersion → 用兜底 2024-11-05
+	if init["protocolVersion"] != "2024-11-05" {
+		t.Fatalf("initialize 兜底 protocolVersion 应为 2024-11-05, got %v", init["protocolVersion"])
+	}
 
 	// id=2 tools/list → 4 个 tools，含 graph.random
 	var tl struct{ Tools []struct{ Name string } }
@@ -183,5 +187,19 @@ func TestMCPLifecycle(t *testing.T) {
 	// 解析错误 → -32700
 	if resps[9].Error == nil || resps[9].Error.Code != -32700 {
 		t.Fatalf("解析错误应 -32700, got %+v", resps[9].Error)
+	}
+}
+
+// initialize 回显客户端请求的 protocolVersion —— 修复 SDK 客户端版本不匹配导致
+// 断连→重连→反复 spawn（DSH 控制台反复刷横幅的根因）。
+func TestInitializeEchoesProtocolVersion(t *testing.T) {
+	resps := runServe(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"1"}}}`)
+	if len(resps) != 1 {
+		t.Fatalf("应 1 个响应, got %d", len(resps))
+	}
+	var init map[string]any
+	json.Unmarshal(resps[0].Result, &init)
+	if init["protocolVersion"] != "2025-06-18" {
+		t.Fatalf("应回显客户端 protocolVersion 2025-06-18, got %v", init["protocolVersion"])
 	}
 }

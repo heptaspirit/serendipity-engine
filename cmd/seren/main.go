@@ -54,6 +54,8 @@
 //	v0.1.9  MCP server（第四个入口，roadmap M0-0.3）：seren mcp 子命令——stdio
 //	        JSON-RPC 2.0 自实现薄协议（零第三方依赖），只读四件套 tools
 //	        （stats/roam/random/relation）；只 import 纯库不碰 web/watch。
+//	v0.1.10 MCP 集成修复：initialize 回显客户端 protocolVersion（修复 SDK 客户端
+//	         版本不匹配→断连重连→反复 spawn）；启动横幅仅 TTY 打印（DSH spawn 静默）。
 //
 // ============================================================================
 package main
@@ -83,7 +85,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.9"
+const version = "v0.1.10"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -699,12 +701,26 @@ func cmdMCP(args []string) {
 		fatal("画像加载失败: %v", err)
 	}
 	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
-	fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation（AI 通道）\n",
-		src, g.Stats().Nodes)
+	// 启动横幅仅在交互式终端（stdout 是 TTY）打印——DSH 等 MCP 客户端 spawn 时
+	// stdout 是管道，静默（否则每次重连/respawn 都在宿主控制台刷一行）。
+	if isTerminal(os.Stdout) {
+		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation\n",
+			src, g.Stats().Nodes)
+	}
 	srv := mcp.New(g, p, version)
 	if err := srv.Serve(os.Stdin, os.Stdout); err != nil {
 		fatal("MCP 服务失败: %v", err)
 	}
+}
+
+// isTerminal 判断 f 是否为交互式终端（字符设备）。MCP 客户端 spawn 时 stdout 是
+// 管道/重定向，非字符设备 → 静默；手动在终端跑 seren mcp 才打印横幅。
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func sortStrings(ss []string) {

@@ -85,11 +85,7 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 func (s *Server) handle(req rpcRequest) rpcResponse {
 	switch req.Method {
 	case "initialize":
-		return okResp(req.ID, map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "serendipity-engine", "version": s.version},
-		})
+		return okResp(req.ID, s.initializeResult(req.Params))
 	case "ping":
 		return okResp(req.ID, map[string]any{})
 	case "tools/list":
@@ -98,6 +94,29 @@ func (s *Server) handle(req rpcRequest) rpcResponse {
 		return s.callTool(req)
 	default:
 		return errResp(req.ID, -32601, "method not found: "+req.Method)
+	}
+}
+
+// initializeResult 回显客户端请求的 protocolVersion，避免版本不匹配导致 SDK 客户端
+// 断连→重连→反复 spawn（曾导致 DSH 控制台反复打印启动横幅）。我们只用稳定消息
+// （initialize/tools/list/tools/call/ping），可声称客户端任一版本都兼容；capabilities
+// 仅声明 tools（起步三消息之外一律不承诺，保持克制）。带 DSH SDK 客户端时回显它自己的
+// protocolVersion，握手必然通过。
+func (s *Server) initializeResult(params json.RawMessage) map[string]any {
+	v := "2024-11-05" // 兜底：未请求 / 解析失败
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(params) > 0 {
+		_ = json.Unmarshal(params, &p)
+		if p.ProtocolVersion != "" {
+			v = p.ProtocolVersion
+		}
+	}
+	return map[string]any{
+		"protocolVersion": v,
+		"capabilities":    map[string]any{"tools": map[string]any{}},
+		"serverInfo":      map[string]any{"name": "serendipity-engine", "version": s.version},
 	}
 }
 

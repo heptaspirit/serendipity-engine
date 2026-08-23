@@ -33,6 +33,9 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 
 - **MCP 规范**：JSON-RPC 2.0；本地 agent 用 **stdio transport**（agent 启动子进程，
   走 stdin/stdout）——与引擎"本地工具、单二进制、无网络出口"的定位一致。
+  **initialize 回显客户端请求的 protocolVersion**（v0.1.10）——我们只用稳定消息
+  （initialize/tools/list/tools/call/ping），声称客户端任一版本兼容；避免 SDK 客户端
+  版本不匹配→断连→重连→反复 spawn。（启动横幅仅 TTY 打印，DSH spawn 时静默。）
 - **Go 实现两条路**：
   - 官方 SDK（`modelcontextprotocol/go-sdk`）：成熟、省事，但引入第三方依赖
     （本仓库目前仅 yaml.v3 + modernc sqlite，依赖极简是卖点）；

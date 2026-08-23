@@ -2,7 +2,7 @@
 
 > Graph roaming: an activation engine on top of your personal wiki's backlinks — **ask a point, get a cluster.**
 
-[![Version](https://img.shields.io/badge/version-v0.1.9-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![Version](https://img.shields.io/badge/version-v0.1.10-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
 [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod)

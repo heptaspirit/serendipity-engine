@@ -2,7 +2,7 @@
 
 > 图谱漫游：给个人笔记的双链装上激活引擎——**你问一个点，它给你一片。**
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.9-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.10-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
 [![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod)

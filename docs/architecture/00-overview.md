@@ -111,5 +111,6 @@ docs/                design.md（设计过程）/ architecture/（维护文档�
 | v0.1.7 | 随机漫步（🎲：随机 roll 起点 + 它的簇，`roam --random` / `/api/roam?random=1`）；roll 取舍（质量门槛 + deg^α 加权 + 防重复 + seed 可复现）；Rank 并列分按 ID 稳定破序；裸布尔旗标解析修复 |
 | v0.1.8 | serve 安全前置（roadmap M0-0.1）：Host 校验（仅回环）+ API token 鉴权（自动生成/--token + 页面注入，防 CSRF/DNS rebinding）；README 徽章化美化 + 特别鸣谢；MCP 研究稿补 `graph.random` 工具 |
 | v0.1.9 | MCP server（第四个入口，roadmap M0-0.3）：`seren mcp` 子命令——stdio JSON-RPC 2.0 自实现薄协议（零第三方依赖，单二进制不变），只读四件套 tools（stats/roam/random/relation），只 import 纯库不碰 web/watch（边界守护见维护指南 §4.1）；API 契约文档 api-contract.md（M0-0.2） |
+| v0.1.10 | MCP 集成修复：initialize **回显客户端 protocolVersion**（修复 SDK 客户端版本不匹配→断连→重连→反复 spawn）；启动横幅仅 TTY 打印（DSH 等 MCP 客户端 spawn 时静默） |
 
 详细历史见 `PROGRESS_LOG.md`（本地，不入库）。
