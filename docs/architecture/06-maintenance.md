@@ -87,6 +87,21 @@ go build -o scratch/seren.exe ./cmd/seren
 
 ## 5. 版本与发布
 
-- `version` 常量在 `cmd/seren/main.go`；发布时同步 git tag（如 v0.1.4）。
-- 推送需要用户终端（沙箱无法做 GitHub 认证：GCM 路径失效 + askpass 无法建信号管道）。
-- 版本脉络见 00-overview §6；详细过程见 PROGRESS_LOG.md（本地）。
+发布清单（每版按序走）：
+
+1. `version` 常量在 `cmd/seren/main.go`，bump 到新版本号。
+2. **README 徽章版本号同步**（README.md / README.en.md 顶部 shields.io 徽章里的
+   `vX.Y.Z`——与 version 常量同值，改 README 时一并改）。
+3. 文档同步：00-overview §6 版本行 + 相关 architecture 文档 + PROGRESS_LOG.md。
+4. `git tag vX.Y.Z`（与 version 常量一致；tag 缺失会导致后续 push 报
+   "src refspec 不匹配"）。
+5. 推送（沙箱内无法用 credential helper/askpass——git 强制走 sh 且沙箱禁 sh 信号
+   管道；用 URL 内嵌 token）：
+   ```powershell
+   $tok = gh auth token
+   git push "https://x-access-token:$tok@github.com/heptaspirit/serendipity-engine.git" main
+   git push "https://x-access-token:$tok@github.com/heptaspirit/serendipity-engine.git" --tags
+   git fetch "https://x-access-token:$tok@github.com/heptaspirit/serendipity-engine.git" main:refs/remotes/origin/main
+   ```
+   用户终端里普通 `git push` 不受此限制。
+6. 版本脉络见 00-overview §6；详细过程见 PROGRESS_LOG.md（本地）。

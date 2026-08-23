@@ -49,12 +49,16 @@
 //	        （ParseVaultIncremental：mtime/size 复用未变文件，只重解析变更）。
 //	v0.1.7  随机漫步（roam --random）：随机 roll 起点 + 它的簇——"节点 + 簇"
 //	        一次给出；roll 取舍：质量门槛过滤 + deg^α 加权 + 防重复 + 可复现种子。
+//	v0.1.8  serve 安全前置（roadmap M0-0.1）：--token 指定 / 自动生成 + 页面注入；
+//	        Host 校验（仅回环）+ API token 鉴权；README 徽章化美化。
 //
 // ============================================================================
 package main
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -74,8 +78,8 @@ import (
 	"serendipity-engine/internal/web"
 )
 
-// version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.7"
+// version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
+const version = "v0.1.8"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -123,6 +127,8 @@ flags:
   --random       随机漫步：随机 roll 起点 + 它的簇（可省略 query）
   --seed N       随机种子（默认 0=随机；固定 N 可复现同一漫步，便于分享/测试）
   --rand-alpha X 随机起点度加权指数：0=均匀（惊喜），1=偏丰富簇（默认 0.5）
+安全 (v0.1.8):
+  --token <t>    serve API 鉴权 token（默认自动生成并打印；页面自动注入）
 画像/存储:
   --profile <file.yaml>       显式画像文件
   --profile-name <name>       内置画像名 (default-obsidian / okf / example-wiki)
@@ -532,6 +538,19 @@ func cmdServe(args []string) {
 	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
 	srv.OrcaRepo = orcaRepo
 
+	// API 鉴权（v0.1.8 安全前置）：--token 指定；否则自动生成 32 位 hex 并打印。
+	// 前端页面由服务端注入 token（外部页面拿不到）；curl 用 X-Seren-Token 头或
+	// ?token= 查询参数。重启后 token 变化 → 浏览器重新 GET / 即拿到新 token。
+	token := flags["token"]
+	if token == "" {
+		buf := make([]byte, 16)
+		if _, err := cryptorand.Read(buf); err != nil {
+			fatal("token 生成失败: %v", err)
+		}
+		token = hex.EncodeToString(buf)
+	}
+	srv.Token = token
+
 	// 自动监听（v0.1.4，克制设计见 internal/watch）：默认开启，--watch-off 关闭。
 	// 轮询间隔 --watch-interval 秒（默认 10s）；刷新节流 --watch-throttle 秒
 	// （默认 60s，合并窗口——连续编辑吸收为窗口内一次刷新）。
@@ -562,6 +581,7 @@ func cmdServe(args []string) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	fmt.Printf("Serendipity Engine %s Web UI: http://%s  (source: %s, 节点 %d)\n",
 		version, addr, src, g.Stats().Nodes)
+	fmt.Printf("API 鉴权: 开（token=%s；页面已自动注入，curl 用 X-Seren-Token 头或 ?token=；--token 可指定固定值）\n", token)
 	switch {
 	case orcaRepo != "":
 		fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", orcaRepo)

@@ -55,6 +55,9 @@
 //	v0.1.7  随机漫步 GET /api/roam?random=1（服务端 roll 随机起点 + 簇；
 //	        ?seed=N 固定种子可复现、跳过防重复；?rand_alpha= 度加权指数；
 //	        内置 32 个"最近起点"ring 防连续撞车）。
+//	v0.1.8  安全前置（roadmap M0-0.1）：Handler 包 auth 中间件——Host 校验
+//	        （仅回环地址）+ API token 鉴权（X-Seren-Token 头 / ?token=，
+//	        常量时间比较）；页面注入 token（__SEREN_TOKEN__ 占位符）。
 //
 // ============================================================================
 package web
@@ -100,6 +103,7 @@ type Server struct {
 	Version   string
 	Refresh   RefreshFunc // 非空时注册 POST /api/refresh
 	Touch     TouchFunc   // 非空时注册 POST /api/touch（反馈埋点）
+	Token     string      // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
 	revision  int         // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
 
 	// 随机漫步状态（v0.1.7）：randMu 保护 rng 与 recent（rand.Rand 非并发安全）。
@@ -133,7 +137,8 @@ func (s *Server) Revision() int {
 	return s.revision
 }
 
-// Handler 返回路由。
+// Handler 返回路由（v0.1.8 安全前置：整体包 auth 中间件——Host 校验 + API
+// token 鉴权，见 auth.go；页面响应注入 token 供前端 fetch 携带）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -147,18 +152,23 @@ func (s *Server) Handler() http.Handler {
 	if s.Touch != nil {
 		mux.HandleFunc("/api/touch", s.handleTouch)
 	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		// 禁用缓存：前端迭代频繁，避免浏览器缓存旧页面导致"点了没反应"
-		w.Header().Set("Cache-Control", "no-store")
-		b, _ := staticFS.ReadFile("static/index.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(b)
-	})
-	return mux
+	mux.HandleFunc("/", s.handleIndex)
+	return s.auth(mux)
+}
+
+// handleIndex 返回嵌入页面；把 API token 注入 __SEREN_TOKEN__ 占位符
+// （index.html 的 const __API_TOKEN__，fetch 包装自动携带）。
+// 禁用缓存：前端迭代频繁，避免浏览器缓存旧页面导致"点了没反应"。
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	b, _ := staticFS.ReadFile("static/index.html")
+	out := strings.ReplaceAll(string(b), "__SEREN_TOKEN__", s.Token)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(out))
 }
 
 // handleTouch POST /api/touch：反馈埋点（点击节点 = touch）。

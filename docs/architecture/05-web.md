@@ -19,6 +19,20 @@
 
 - `Server.mu sync.RWMutex` 保护 `G` 与 `revision`：读接口（stats/hot/roam）持 RLock；
   刷新（手动/自动）持 Lock 整体替换（`ReplaceGraph`）。本地单用户，够用。
+- 随机漫步状态（v0.1.7）：`Server.randMu` 保护 `rng` 与 `recent`（rand.Rand 非并发安全）。
+
+### 安全前置（v0.1.8，roadmap M0-0.1，`auth.go`）
+
+- **Host 校验**：只接受回环地址（127.0.0.1 / localhost / ::1，带不带端口均可），
+  其余 403——防 DNS rebinding / Host 头欺骗。
+- **API token 鉴权**：所有 `/api/*` 必须带 `X-Seren-Token` 头或 `?token=` 查询参数，
+  与 `Server.Token` 常量时间比较（crypto/subtle）。token 由 `handleIndex` 注入页面
+  （`__SEREN_TOKEN__` 占位符替换），前端 fetch 包装自动携带；外部页面受同源策略
+  限制读不到 → 防 CSRF 调写接口（refresh/touch）与读取本地笔记。
+- 来源：`--token` 指定，否则 `cmd/seren` 自动生成 32 位 hex 并打印；重启后 token
+  变化，浏览器重新 GET / 即拿到新 token。`Server.Token` 为空 = 未配置鉴权（嵌入式
+  用法），cmd/seren 永远生成非空。
+- curl 用法：`curl -H "X-Seren-Token: <token>" http://127.0.0.1:8910/api/stats`。
 
 ### 跳转 URI
 

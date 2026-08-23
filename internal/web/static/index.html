@@ -35,6 +35,8 @@
             深跳节点 score≤0 展示修复；接入 /api/relation 关系查询；交互与可用性优化
     v0.1.7  🎲 随机漫步按钮（/api/roam?random=1）；随机起点标签 + 空簇提示；
             设置抽屉新增"随机漫步·度加权"滑块（rand_alpha）
+    v0.1.8  安全前置：服务端注入 API token（__SEREN_TOKEN__），fetch 包装自动携带
+            X-Seren-Token 头——外部页面读不到 token，无法 CSRF 调用
 -->
 <html lang="zh">
 <head>
@@ -277,6 +279,17 @@
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
+
+// ---- API 鉴权（v0.1.8 安全前置）：服务端注入 token，包装 fetch 自动携带 ----
+// 占位符 __SEREN_TOKEN__ 由 server.handleIndex 替换为真实 token；外部页面
+// 受同源策略限制读不到 → 拿不到 token → 无法调用 /api/*（防 CSRF）。
+const __API_TOKEN__ = '__SEREN_TOKEN__';
+const __origFetch = window.fetch;
+window.fetch = (url, opts) => {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'X-Seren-Token': __API_TOKEN__ }, opts.headers || {});
+  return __origFetch(url, opts);
+};
 
 // ---- 可调参数状态（默认来自 /api/config，localStorage 记忆）----
 let params = {};        // {key: value}

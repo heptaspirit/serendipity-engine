@@ -1,36 +1,31 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.7** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
-> 给个人笔记的双链装上激活引擎（查询锚定 PPR + 激活扩散 + 跳数配额），让"wiki 真正跑起来"。
-> 中文 README；[English](README.en.md)。
+> 图谱漫游：给个人笔记的双链装上激活引擎——**你问一个点，它给你一片。**
 
-> 🙏 **灵感来源**：本项目的图谱增强哲学（**结构 × 激活**、激活扩散、白盒原则等）与
-> [dsh-mneme](https://github.com/modusensus/dsh-mneme) 一脉相承——这套哲学出自我在参与
-> mneme 图谱增强设计时的沉淀思考。当时突发奇想：同一套激活引擎，换个载体、换个人当消费者，
-> 就是"让笔记导航活过来"。于是做了这套给人用的工具。与 mneme 同哲学、不同领域：
-> mneme 管 agent 记忆，本引擎管**人的笔记导航**。
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.8-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
+[![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod)
+
+[English](README.en.md) · 简体中文
 
 ## 特性
 
 - **查询驱动漫游**：输入笔记名 / 标签 / 任意词 → 输出一批筛选、排序、可解释的相关节点簇（带激活路径）
-- **🎲 随机漫步**（v0.1.7）：不想打字时"随便逛逛"——随机 roll 一个起点 + 它的簇（"节点 + 簇"一次给出）；roll 取舍：质量门槛过滤（结构/空标题/孤立/枢纽）+ deg^α 度加权（0=均匀惊喜，1=偏丰富簇）+ 防重复 + `--seed` 可复现分享
-- **serendipity 机制**：跳数配额混合（1:2:3-hop = 50/30/20），保证"我没想到但确实相关"的深跳惊喜节点稳定出现
+- **🎲 随机漫步**：不想打字时"随便逛逛"——随机起点 + 它的簇一次给出（质量门槛过滤 + 度加权 + 防重复 + 可复现种子）
+- **serendipity 机制**：跳数配额混合（1:2:3-hop = 50/30/20），"我没想到但确实相关"的深跳惊喜稳定出现
 - **白盒可干预**：每条推荐可解释（激活路径）、可点击续漫游、可跳回原笔记软件
-- **解析规则抽离**：VaultProfile 库画像（title/别名/标签/类型规则 YAML 化）+ `profile-detect` 新库自动探测——换库不改代码；Google OKF 通用格式入默认解析
-- **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，Repo 凭据表绝不碰）
-- **对账刷新**：`seren refresh` / Web `↻` / **自动监听**三路同步增删改（60s 节流合并，克制防正反馈）；v0.1.6 起 Obsidian 源**快照增量解析**（只重解析变更文件）
-- **改名迁移**（v0.1.5）：Obsidian 改名不再断链——内容哈希+路径相似度识别、他人链接重定向、touch 埋点迁移（持久化 renames 表）
-- **关系查询**（v0.1.5）：`GET /api/relation?from=&to=`——两节点最短路径 + 双向 PPR 强度 + 证据链（white-box，为未来 MCP 暴露铺路）
-- **反馈埋点**：点击记录 touch（独立表、容量上限；v1 不演化边权，杜绝跑飞）
-- **跳回原软件**：Obsidian `obsidian://` / 虎鲸 `orca-note://` 跳转
-- **三入口**：CLI / REST + Web UI / （未来 MCP）
+- **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，凭据表绝不碰）
+- **对账刷新**：`seren refresh` / Web ↻ / 自动监听三路同步增删改（节流合并，克制防跑飞）
+- **关系查询**：任意两节点的最短路径 + 双向 PPR 强度 + 证据链（white-box）
+- **三入口**：CLI / REST + Web UI / MCP（规划中）
 
 ## 设计哲学
 
 1. **结构 × 激活**：图结构提供"可能相关"，激活机制提供"此刻相关"——只有结构没有激活的 wiki 是死的。
 2. **白盒原则**：每条推荐可解释、可干预、可跳回原软件，不做黑盒。
-3. **解析抽离**："解析方案不是放之四海皆准"——通用语法代码固定，语义映射（title/类型规则等）YAML 画像化。
-4. **克制设计**：监听轮询+节流合并、排除自身产物；埋点只记录不演化——任何"点击→边权→结果"的正反馈循环都在源头切断，本地工具优先稳定。
+3. **解析抽离**：通用语法固定，语义映射（title/类型规则）YAML 画像化，换库不改代码。
+4. **克制设计**：监听节流合并、埋点只记录不演化——任何"点击→边权→结果"的正反馈循环在源头切断，本地工具优先稳定。
 5. **安全红线**：虎鲸凭据表绝不读取；活库先一致性快照再读；个人数据不进 git。
 
 ## 架构总览
@@ -50,7 +45,7 @@ store（SQLite: documents/links/touch） · sync（对账 diff） · watch（自
 ```
 
 依赖极简：标准库 + `gopkg.in/yaml.v3` + `modernc.org/sqlite`（纯 Go 零 CGO），无网络出口。
-**面向维护者的架构文档在 `docs/architecture/`**（数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南）。
+维护者向架构文档在 `docs/architecture/`。
 
 ## 快速开始
 
@@ -59,50 +54,31 @@ store（SQLite: documents/links/touch） · sync（对账 diff） · watch（自
 go build -o seren.exe ./cmd/seren
 
 # 漫游
-.\seren.exe roam <vault> "寻找"               # Obsidian 库
-.\seren.exe roam "D:\...\OrcaNote.db" "历史"    # 虎鲸库（.db 自动识别）
-.\seren.exe roam <vault> --random --seed 42      # 🎲 随机漫步：随机起点+簇（--seed 可复现）
+.\seren.exe roam <vault> "寻找"                  # Obsidian 库
+.\seren.exe roam "D:\...\OrcaNote.db" "历史"       # 虎鲸库（.db 自动识别）
+.\seren.exe roam <vault> --random --seed 42         # 🎲 随机漫步（--seed 可复现）
 
-# Web UI（初始页漂浮热门节点，点击即漫游；自动监听默认开）
+# Web UI（自动监听默认开；Obsidian 加 --vault-name、虎鲸自动 orca-note:// 跳转）
 .\seren.exe serve <vault> --port 8080
-#   Obsidian 加 --vault-name 启用卡片「打开 ↗」跳回笔记软件
-#   虎鲸库自动用 orca-note:// 跳转（--repo 可覆盖库名）
-#   --watch-off 关闭自动监听；--watch-interval / --watch-throttle 调频率
 
-# 对账刷新（使用者增删改后同步，输出 增/删/改 明细）
+# 对账刷新（增删改后同步，输出 增/删/改 明细）
 .\seren.exe refresh <vault> --store <file.sqlite>
-
-# 新库 onboarding
-.\seren.exe profile-detect <陌生库>            # 自动产出画像 YAML
-
-# 持久化（防重解析）
-.\seren.exe index <vault> --persist
-.\seren.exe roam <vault> "可乐" --db <store>
 ```
 
 ## 文档
 
 | 文档 | 说明 |
 |---|---|
-| **`docs/architecture/`** | **架构文档（面向未来维护者）**：00 总览与哲学 / 01 数据模型 / 02 适配器 / 03 引擎 / 04 同步 / 05 Web / 06 维护指南 / 07 MCP 架构研究 |
-| [`docs/design.md`](docs/design.md) | 设计文档（修订版 v2，含评审决策 + spike 实测 + VaultProfile）——作者设计过程记录 |
-| [`docs/frontend-issues.md`](docs/frontend-issues.md) | **前端问题记录与交接**（Web UI 历史问题/修复/验证 + 遗留待办 + 测试方法；前端专项 session 先读这里） |
-| [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) | 设计评审 13 条决策（已全部接受） |
-| [`docs/spike-report.md`](docs/spike-report.md) | Spike 验证报告（机制结论 / 参数重测，示例内容已脱敏） |
-| [`docs/product-form.md`](docs/product-form.md) | 产品形态决策（跳回软件 vs 插件 vs MCP） |
-| [`docs/roadmap.md`](docs/roadmap.md) | **引擎设计路线图**（M0 插件前置+MCP / M1 核心完善 / M2 插件薄壳） |
-| [`docs/plugin-evaluation.md`](docs/plugin-evaluation.md) | 插件化调研与决策（Obsidian/虎鲸薄壳，不做移植，移动端坦诚声明） |
+| [`docs/architecture/`](docs/architecture/) | 架构文档（维护者向）：总览 / 数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南 / MCP 研究 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 路线图：M0 安全前置 + MCP / M1 核心完善 / M2 插件薄壳 |
+| [`docs/frontend-issues.md`](docs/frontend-issues.md) | 前端问题记录与交接（前端专项 session 先读这里） |
+| [`docs/design.md`](docs/design.md) | 设计过程记录（评审决策 + spike 实测） |
 
-> 开发日志与遗留问题见本地 `PROGRESS_LOG.md`（不入库）。
+## 特别鸣谢
 
-## 状态
-
-v0.1.7（2026-08-23）：🎲 随机漫步（随机 roll 起点 + 它的簇；质量门槛 + deg^α 加权 +
-防重复 + seed 可复现；CLI `--random` / Web 🎲 按钮）、Rank 并列分稳定破序（同 seed 同簇）
-已完成；v0.1.6 的桶内归一化、快照增量解析、MCP 架构研究（07-mcp.md，未开工）在列。
-下一步：M0——serve 安全前置（token 鉴权 + Host 校验）、API 契约文档、MCP server v3（提前），
-见 [`docs/roadmap.md`](docs/roadmap.md)。
+- **[dsh-mneme](https://github.com/modusensus/dsh-mneme)** —— 激活引擎哲学源头：结构 × 激活、激活扩散、白盒原则。同一套引擎换个载体、换个人当消费者，就是本项目的起点。
+- **[恐龙工具箱](https://github.com/hqweay/orca-hqweay-go)（虎鲸笔记插件）** —— SRS 复习漫游与随机漫步交互的灵感来源。
 
 ## License
 
-MIT License — 见 [LICENSE](LICENSE)。
+MIT License —— see [LICENSE](LICENSE).

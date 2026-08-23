@@ -41,13 +41,18 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 - **接入 dsh**：dsh 支持配置 MCP server（stdio），指向 `seren mcp --db <store>`；
   dsh-mneme 类 agent 即可调用。这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
 
-## 3. Tools 设计（只读三件套起步）
+## 3. Tools 设计（只读四件套起步）
 
 | tool | 入参 | 复用内核 | 说明 |
 |---|---|---|---|
 | `graph.stats` | 无 | `Graph.Stats()` | 库规模/连通/枢纽——AI 先摸库 |
 | `graph.roam` | `q, top, lambda, theta, hops` | `roam.Compute` | 查询漫游 → 节点簇（锚点+路径+分数） |
+| `graph.random` | `top, seed, rand_alpha` | `roam.ComputeRandom` | 🎲 随机漫步（v0.1.7）：随机起点 + 簇——AI 无明确目标时的"随便逛逛"入口；`seed` 固定可复现 |
 | `graph.relation` | `from, to` | `Graph.ComputeRelation` | 两节点：最短路径 + 双向 PPR + 证据链（v0.1.5 已铺路） |
+
+> 2026-08-23 用户指示：把随机漫游也加进 MCP（灵感：恐龙工具箱 SRS 的 roam /
+> 随机漫步交互）。`graph.random` 与 `graph.roam` 共用同一簇管线（clusterFromSeeds），
+> 只是起点从查询锚定换成 roll——实现成本几乎为零。
 
 原则：
 - **全部只读**；不暴露 refresh / touch / 配置写接口。
@@ -91,7 +96,7 @@ cmd/seren 子命令:
 1. **协议实验**：Go 里实现 `initialize` / `tools/list` / `tools/call` 的最小
    stdio JSON-RPC 服务，用 dsh 的 MCP 配置接入验证链路通。
 2. **`seren mcp` 子命令**：解析 `--db`（复用 storePathFor / loadSource 逻辑），
-   启动时建图，注册三件套 tools。
+   启动时建图，注册四件套 tools（stats / roam / random / relation）。
 3. **联调**：在 dsh 会话里调 `graph.roam("成吉思汗")` / `graph.relation`，
    验证返回结构与 AI 可读性；确认不触发任何写操作。
 4. **文档与发布**：更新本文为"已落地"，补 README 入口 + 版本记录。
