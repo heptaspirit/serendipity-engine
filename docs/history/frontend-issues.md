@@ -1,8 +1,10 @@
 # 前端问题记录与交接（Web UI 测试）
 
+> ⚠️ **历史记录（已归档）**：本文记录了 v0.1.3–v0.1.6 前端 Web UI 的历史问题、根因、修复与验证，以及遗留待办。文档主体已迁移为 [`docs/frontend.md`](../frontend.md)（前瞻计划 + 测试速查），测试方法速查表与已知环境限制已在其中折叠保留。
+
 > 面向后续**前端专项 session**（可能是新开的独立会话，无本会话上下文）：
 > 本文件记录 Web UI 的历史问题、根因、修复与验证状态，以及遗留待办与测试方法。
-> 配合 [`docs/architecture/05-web.md`](architecture/05-web.md) 阅读——那是架构视角，
+> 配合 [`docs/architecture/05-web.md`](../architecture/05-web.md) 阅读——那是架构视角，
 > 本文是**问题 / 测试视角**。前端源码：`internal/web/static/index.html`（单文件，
 > 零依赖原生 JS，go:embed 嵌入）。
 

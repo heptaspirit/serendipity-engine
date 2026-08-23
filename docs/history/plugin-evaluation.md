@@ -1,9 +1,11 @@
 # 插件化调研与决策：Obsidian / 虎鲸薄壳（不做移植）
 
+> ⚠️ **历史记录（已归档）**：本文是 2026-08-23「插件化」调研与拍板记录（D1–D8 + 薄壳工作清单）。决策已由 [`docs/roadmap.md`](../roadmap.md) M2 承接（两个独立仓库、零构建时依赖、唯一共享物 = [`docs/api-contract.md`](../api-contract.md)）。保留本文作完整决策与平台调研依据。
+
 > 日期：2026-08-23
 > 起因：评估"把引擎做成笔记插件"——需要做什么工作？什么形式更合适？多平台怎么解？
 > 结论：**插件薄壳，两个独立新仓库，引擎零改动；不做 TS/WASM 移植（拒绝双重维护）；移动端坦诚不支持；MCP 提前。**
-> 关联：[product-form.md](product-form.md)（产品形态分层）· [architecture/07-mcp.md](architecture/07-mcp.md)（MCP 研究稿）· [roadmap.md](roadmap.md)（引擎路线图）
+> 关联：[product-form.md](product-form.md)（产品形态分层）· [architecture/07-mcp.md](../architecture/07-mcp.md)（MCP 研究稿）· [roadmap.md](../roadmap.md)（引擎路线图）
 
 ---
 
@@ -112,6 +114,6 @@
 ## 九、相关文档
 
 - [product-form.md](product-form.md)：产品形态分层（跳回软件 > 插件薄壳 > MCP）——本文是其"② 插件薄壳"的细化与拍板
-- [roadmap.md](roadmap.md)：引擎路线图（M0 安全前置 + MCP / M1 核心完善 / M2 插件化）
-- [architecture/07-mcp.md](architecture/07-mcp.md)：MCP 架构研究稿（seren mcp 子命令、只读三件套）
-- [architecture/00-overview.md](architecture/00-overview.md)：架构总览
+- [roadmap.md](../roadmap.md)：总路线图（阶段 A/B/C；插件化 M2 在阶段 C）
+- [architecture/07-mcp.md](../architecture/07-mcp.md)：MCP 架构研究稿（seren mcp 子命令、只读三件套）
+- [architecture/00-overview.md](../architecture/00-overview.md)：架构总览

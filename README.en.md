@@ -73,10 +73,15 @@ go build -o seren.exe ./cmd/seren
 
 | Doc | Description |
 |---|---|
+| [`docs/README.md`](docs/README.md) | Doc navigation (topic-layered index) |
 | [`docs/architecture/`](docs/architecture/) | Architecture docs (for maintainers): overview / data model / adapters / engine / sync / web / maintenance / MCP study |
+| [`docs/design.md`](docs/design.md) | Core design: graph-roaming mechanics, 4-dimension scoring (PPR + activation + hop quota), stack & product form |
+| [`docs/positioning.md`](docs/positioning.md) | Strategic positioning: notes-as-agent-memory "activation layer", LLM Wiki complementarity, boundaries & non-goals |
+| [`docs/roadmap.md`](docs/roadmap.md) | Master roadmap: Phase A pre-release polish / B engine core / C ecosystem & release, with dependency chain & status |
+| [`docs/frontend.md`](docs/frontend.md) | Frontend plan (Web UI): plugin prep + UI/UX polish spec + test quick-reference |
+| [`docs/backend-backlog.md`](docs/backend-backlog.md) | Backend backlog: perf optimizations, similar/export/touch stats, CLI & MCP polish |
 | [`docs/api-contract.md`](docs/api-contract.md) | API contract: 7 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
-| [`docs/roadmap.md`](docs/roadmap.md) | Roadmap: M0 security + MCP / M1 core polish / M2 plugin shells |
-| [`docs/design.md`](docs/design.md) | Design process record (review decisions + spike findings) |
+| [`docs/history/`](docs/history/) | Archived decisions/verifications (content absorbed into design/roadmap; full narrative retained) |
 
 ## Special Thanks
 

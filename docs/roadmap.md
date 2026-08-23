@@ -1,66 +1,91 @@
-# 引擎设计路线图（Serendipity Engine）
+# Serendipity Engine · 总路线图（Master Roadmap）
 
-> 建立：2026-08-23。面向未来维护者；取代 README「状态」里零散的"下一步"。
-> 原则（用户拍板 2026-08-23）：**先完善引擎核心；插件化是远期可选分发形态，不锁架构**（design §6.8）。
-> 决策背景见 [plugin-evaluation.md](plugin-evaluation.md)。
+> 建立：2026-08-23（升级为**项目总路线图**——单一权威，把引擎 / 前端 / 发布安排进同一张表）。
+> 原则（用户拍板 2026-08-23）：**先完善整个项目、让自己用起来；发布与推广推迟到 M2（插件薄壳）之后**——当前几乎只有后端的引擎对外偏「硬核」，插件化（对外可用）是发布前提。
+> 分工：本文件管**阶段 / 依赖 / 状态**；细分计划在 [`backend-backlog.md`](backend-backlog.md)（后端）与 [`frontend.md`](frontend.md)（前端 + UI 规范）；战略定位 [`positioning.md`](positioning.md)；设计 [`design.md`](design.md)；契约 [`api-contract.md`](api-contract.md)。
+> 发布/推广的**战术动作**不在本仓库（见本地 `docs-local/promotion.md`，已 git-ignore）；这里只保留作为**产品计划**的依赖与顺序。
 
 ---
 
+## 顶层目标
+
+> 定位（positioning 一句话）：把用户笔记库变成 agent 的记忆——本引擎是记忆的「激活层」。
+> **落地目标**：先让作者本人把「阅读 + 漫游」用起来（引擎 + Web UI 顺手）；再做插件让它对别人可用、不硬核；最后才发布与推广。
+
+## 当前状态快照（2026-08-23）
+
+- 引擎 **v0.1.10**；**M0 已落地**（serve 安全前置 + API 契约 + MCP v3）；**36 单测绿**；Obsidian + 虎鲸真实库验证通过（双数据源、对账刷新、自动监听）。
+- **现状判断**：目前几乎是「只有后端的引擎」——Web UI 只是「漫游工具」，缺让非技术用户可用的插件/入口，对外偏硬核。
+- 未完成：引擎核心缺口（similar / node / export / touch…）、Web UI 完善、插件薄壳、发布准备（**推迟到 M2 后**）。
+
 ## 里程碑总览
 
-| 里程碑 | 内容 | 状态 |
-|---|---|---|
-| **M0** | 插件前置（serve 安全）+ API 契约 + **MCP v3 提前** | 下一步，一起做 |
-| **M1** | 引擎核心完善（测试 / 反馈观察 / 性能） | M0 之后 |
-| **M2** | 插件薄壳（两个独立仓库，远期） | 核心完善后 |
+| 里程碑 | 内容 | 阶段 | 状态 |
+|---|---|---|---|
+| **M0** | 插件前置（serve 安全）+ API 契约 + MCP v3 | — | ✅ 已落地 |
+| **M1** | 引擎核心 + Web UI 完善（作者自用） | 阶段 1 | 进行 |
+| **M2** | 插件薄壳（对外可用 + 发布前提） | 阶段 2 | 待做 |
 
-## M0：插件前置 + MCP（2026-08-23 拍板提前）
+---
 
-> 缘由：插件薄壳已拍板（远期），但它的上线前提——serve 鉴权、API 契约——与 MCP v3 都属于"引擎侧自己的事"，提前做掉，互不阻塞、也为远期插件铺路。
+## 阶段计划（实施顺序）
 
-### 0.1 serve 安全前置（薄壳上线前提，也提升 Web 安全性）
+### 阶段 1 · 引擎核心 + Web UI 完善（优先，作者自用）
 
-- [x] **token 鉴权**（v0.1.8）：`--token` 指定或自动生成 32 位 hex；前端页面注入
-  （`__SEREN_TOKEN__` 占位符替换），API 校验 X-Seren-Token 头 / `?token=` 查询参数
-  （常量时间比较）。未做"持久化到本地文件"——重启即换 token，页面重新 GET / 拿到新值，
-  对本地工具更简单安全（见 05-web §安全前置）。
-- [x] **Host 头校验**（v0.1.8，防 DNS rebinding）：仅回环地址（127.0.0.1 / localhost / ::1）。
-- [x] localhost 绑定已就绪：`cmd/seren/main.go` 固定 `127.0.0.1:<port>`（L516）。
+> 目标：本体自己用得顺。做完后作者开箱即地把「阅读 + 漫游」跑起来；**本阶段不对外**。
 
-### 0.2 API 契约文档
+| # | 任务 | 落点 | 说明 |
+|---|---|---|---|
+| 1 | **similar 结构相似**（Jaccard 孪生） | [backend-backlog](backend-backlog.md) §3.1 | 最高价值；解锁 `graph.similar` + Web 相似面板；白盒替代语义缺口 |
+| 2 | **graph.node**（MCP + 前端节点详情，一次双端） | [backend-backlog](backend-backlog.md) §6 · [frontend](frontend.md) #3 | MCP 最缺的「确认这是什么」 |
+| 3 | **export 漫游导出** | [backend-backlog](backend-backlog.md) §3.2 · [frontend](frontend.md) | 漫游发现能沉淀进笔记 |
+| 4 | **touch 统计 API**（只读） | [backend-backlog](backend-backlog.md) §3.3 | 反馈闭环只读第一步 |
+| 5 | 性能：PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | [backend-backlog](backend-backlog.md) §二 | 数万节点规模（等信号） |
+| 6 | 风险修复：renames 中间环 + WAL autocheckpoint | [backend-backlog](backend-backlog.md) §四 | 防无限增长 |
+| 7 | **Web UI 完善**：hero 改静态（P0.5）、节点详情、相似/统计/导出面板、易用性（P1）、侧滑抽屉（§九） | [frontend](frontend.md) §三/§九 | 从「漫游工具」→「阅读 + 漫游工具」 |
+| 8 | 前端测试：**JSON 契约测试**（优先）+ Playwright 前端自动化（**可选/按需**，用户后装环境） | [frontend](frontend.md) 附录 | 质量门槛 |
 
-- [x] `docs/api-contract.md`（v0.1.9）：现有 7 端点（stats / hot / roam / relation / config / refresh / touch）的请求/响应结构 + `version`/`revision` 字段说明 + **鉴权**（X-Seren-Token / ?token=）。**这是插件仓库与引擎的唯一共享物**；改 API 必须同步本文（列入维护指南 §5）。
+### 阶段 2 · 插件薄壳（M2；对外可用 + 发布前提）
 
-### 0.3 MCP server v3（研究稿 `docs/architecture/07-mcp.md`）
+> 目标：让产品对非技术用户可用——当前后端引擎对外偏硬核，**插件化是「拿出来给别人」的关键**。
 
-- [x] 最小 stdio JSON-RPC（v0.1.9）：`initialize` / `tools/list` / `tools/call`（+ ping），自实现薄协议，零第三方依赖（`internal/mcp`）
-- [x] `seren mcp` 子命令：`--db <store.sqlite>` 启动建图；只 import `internal/{graph,roam,adapter,store,score,sync}` 纯库，**不碰** `internal/web` / `internal/watch`（不影响本体，边界守护见维护指南 §4.1）
-- [x] 只读四件套 tools：`graph.stats` / `graph.roam` / `graph.random`（随机漫步，v0.1.7 已铺路）/ `graph.relation`（白盒输出，全部只读，不写 touch、不触发 refresh）
-- [ ] dsh 联调：MCP 配置指向 `seren mcp --db <store>`（已在 cordis.patch.yml 注册 mcp-seren
-  stdio 实例），验证 `graph.roam` / `graph.relation` / `graph.random` 返回可读（**待 DSH web
-  重启后验证**，见 07-mcp.md §7.4）
-- [x] 文档与发布：07-mcp.md 更新为"已落地"，补 README 入口 + 版本记录（v0.1.9）
+| # | 任务 | 落点 | 说明 |
+|---|---|---|---|
+| 1 | 前端 P0（紧凑嵌入 + postMessage 桥 + 节点详情） | [frontend](frontend.md) §二 | 插件化前置 |
+| 2 | 插件薄壳 repos（`serendipity-obsidian` / `serendipity-orca`，两个独立仓库，零构建时依赖） | [history/plugin-evaluation](history/plugin-evaluation.md) | 对外可用 |
+| 3 | 插件市场发布 | [history/plugin-evaluation](history/plugin-evaluation.md) §六 | Obsidian 社区目录 / 虎鲸 zip |
 
-## M1：引擎核心完善（M0 之后）
+### 阶段 3 · 发布与推广（M2 之后）
 
-- [ ] Playwright 前端自动化测试（原 README「下一步」）
-- [ ] JSON 契约测试（曾因 Go 结构体缺 json tag 导致 Web 全 undefined——大小写问题）
-- [ ] 反馈闭环观察（touch 已埋点；"越用越准"是否演化边权——继续观察，不承诺，克制原则优先）
-- [ ] 性能/规模（v1.5 关注）：数万节点（虎鲸块级）加载时间与 PPR 迭代耗时验证；SQLite 全量写放大 → 启动对账 + 增量写
-- [ ] 更多查询集定性记录（决策 #6，真实工作流 10 个查询累积）
-- [ ] 锚点同级别排序稳定（Resolve 同 level 依赖 map 遍历序，低优先级）
+> 目标：插件就绪后再做发布门槛与推广——降低对外「硬核感」，并卡位生态（具体战术见本地 promotion，不入库）。
 
-## M2：插件薄壳（远期，核心完善后；方案与工作清单见 plugin-evaluation.md）
+| # | 任务 | 落点 | 说明 |
+|---|---|---|---|
+| 1 | **CLI 三件套**（子命令 help / `--json` / 退出码语义化） | [backend-backlog](backend-backlog.md) §5 | 发布前 onboarding；agent 次级通道 |
+| 2 | **重建 `seren.exe`**（当前仓库根是 v0.1.5 旧二进制） | — | 发布二进制正确 |
+| 3 | **README 定位定稿**（positioning §三）+ 公开 demo 库 + 录屏 | [positioning](positioning.md) §三 | 对外叙事 + 第一张牌 |
+| 4 | **MCP 目录登记** | [backend-backlog](backend-backlog.md) §6 | graph.node 落地后 |
+| 5 | 推广战术动作 | 本地 `docs-local/promotion.md`（不追踪） | 渠道/节奏，不入库 |
 
-- [ ] `serendipity-obsidian` 独立仓库：ItemView iframe + 探测/拉起 seren + `openLinkText` 跳回 + 事件节流刷新 + `isDesktopOnly: true`；tag + Actions 发布
-- [ ] `serendipity-orca` 独立仓库：ViewPanel iframe + `invokeBackend` 跳回；zip 发布
-- [ ] 两个仓库与引擎关系：**运行时契约引用、零构建时依赖**；唯一共享物 = `docs/api-contract.md`（插件内 `seren-api.d.ts` 手写副本注明以契约为准）
+---
 
-## 明确不做（坦诚声明）
+## 依赖链（发布链条）
 
-- **TS 移植 / Go→WASM**：双重维护风险 > 收益，否决（2026-08-23）
-- **移动端（iOS/Android）**：无 sidecar 环境；唯一干净解是 TS 移植（已否决）。插件 `isDesktopOnly` + README 声明，欢迎 fork 移植
-- **远程/云模式**：踩"个人数据不出本机"安全红线，除非用户显式要求
+```
+引擎核心 + Web UI → 作者自用闭环（阶段 1）
+前端 P0（紧凑嵌入 + postMessage）→ 插件薄壳 → 插件市场（阶段 2，对外可用）
+插件就绪 + CLI 三件套 + README + demo + 重建二进制 → 发布/推广（阶段 3）
+graph.node → MCP 目录登记（阶段 3-4）
+```
+
+**发布前提**：阶段 1、阶段 2（插件）完成 + 阶段 3 的发布门槛项（CLI 三件套 / 重建二进制 / README / demo）。**发布在 M2 之后**，不再前置为「阶段 A 完成即可公开」。
+
+---
+
+## 明确不做（仓库级）
+
+- TS / WASM / 移动端；GraphRAG / LLM 建图；embedding 内置 / 在线 API；图数据库；SaaS / 远程 / 云。
+- 发布/推广的**战术动作**（Show HN 文案、渠道清单、节奏）→ 本地 `docs-local/promotion.md`（git-ignore），不入库。
 
 ---
 
@@ -68,4 +93,6 @@
 
 | 日期 | 变更 |
 |---|---|
-| 2026-08-23 | 建立；M0（安全前置 + 契约 + MCP 提前）、M1（核心完善）、M2（插件薄壳）；决策背景见 plugin-evaluation.md |
+| 2026-08-23 | 建立；M0（安全前置 + 契约 + MCP 提前）、M1（核心完善）、M2（插件薄壳）。 |
+| 2026-08-23 | 升级为总路线图（阶段 + 依赖链 + 状态快照）。 |
+| 2026-08-23 | 按用户拍板**重排优先级**：优先完善项目自用（阶段 1）→ 插件薄壳（阶段 2，M2）→ 发布/推广（阶段 3，M2 后）；**发布不再前置**。 |

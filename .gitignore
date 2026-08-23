@@ -18,6 +18,9 @@ seren.exe
 docs/vault-survey.md
 internal/adapter/profiles/novel-wiki.yaml
 
+# 本地/不限库文档（推广等具体操作用，不走 git）
+/docs-local/
+
 # OS noise
 .DS_Store
 Thumbs.db

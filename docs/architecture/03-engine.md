@@ -1,7 +1,7 @@
 # 引擎层 · 图 / 打分 / 漫游管线
 
 > 面向未来维护者：漫游管线是产品的核心（`internal/roam`），图与打分是它的零件。
-> 改算法前先读本文件 + `docs/spike-report.md`（参数实测来源）。
+> 改算法前先读本文件 + `docs/history/spike-report.md`（参数实测来源）。
 
 ## 1. 漫游管线（`roam.Compute`）—— 全流程
 

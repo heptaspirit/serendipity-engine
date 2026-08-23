@@ -72,11 +72,15 @@ go build -o seren.exe ./cmd/seren
 
 | 文档 | 说明 |
 |---|---|
+| [`docs/README.md`](docs/README.md) | 文档导航（按主题分层索引） |
 | [`docs/architecture/`](docs/architecture/) | 架构文档（维护者向）：总览 / 数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南 / MCP 研究 |
+| [`docs/design.md`](docs/design.md) | 核心设计：图谱漫游机制、四维打分（PPR + 激活 + 跳数配额）、技术栈与产品形态 |
+| [`docs/positioning.md`](docs/positioning.md) | 战略定位：笔记库 = agent 记忆的「激活层」、LLM Wiki 互补、边界与明确不做 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 总路线图：阶段 A 发布前打磨 / B 引擎核心完善 / C 生态卡位 + 发布，含依赖链与状态 |
+| [`docs/frontend.md`](docs/frontend.md) | 前端计划（Web UI）：插件化前置 + UI/UX 打磨规范 + 测试速查与交接 |
+| [`docs/backend-backlog.md`](docs/backend-backlog.md) | 后端积压清单：性能优化、similar/export/touch 统计、CLI/MCP 打磨 |
 | [`docs/api-contract.md`](docs/api-contract.md) | API 契约：7 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |
-| [`docs/roadmap.md`](docs/roadmap.md) | 路线图：M0 安全前置 + MCP / M1 核心完善 / M2 插件薄壳 |
-| [`docs/frontend-issues.md`](docs/frontend-issues.md) | 前端问题记录与交接（前端专项 session 先读这里） |
-| [`docs/design.md`](docs/design.md) | 设计过程记录（评审决策 + spike 实测） |
+| [`docs/history/`](docs/history/) | 历史决策/验证归档（内容已吸收进 design/roadmap，保留完整叙事） |
 
 ## 特别鸣谢
 
