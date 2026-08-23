@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.5** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
+> **v0.1.6** · Graph roaming: query-driven navigation over your personal notes — **ask a point, get a cluster.**
 > An activation engine (query-anchored PPR + spreading activation + hop-quota) bolted onto the
 > bi-directional links of your notes, so the wiki "actually comes alive".
 > English README; [中文](README.md).
@@ -25,7 +25,8 @@
 - **Two data sources**: Obsidian vault (file parsing) + Orca Note (SQLite snapshot read; the Repo
   credentials table is **never** touched)
 - **Reconciliation**: `seren refresh` / Web `↻` / **auto-watch** keep the graph in sync with
-  add/edit/delete (60s throttled merging — deliberately restrained against feedback loops)
+  add/edit/delete (60s throttled merging — deliberately restrained against feedback loops);
+  since v0.1.6 Obsidian vaults use **snapshot incremental parsing** (only changed files are re-parsed)
 - **Rename migration** (v0.1.5): renaming an Obsidian note no longer breaks links — detected via
   content-hash + path similarity, refs are redirected, touch telemetry is migrated (persistent
   `renames` table)
@@ -112,10 +113,11 @@ go build -o seren.exe ./cmd/seren
 
 ## Status
 
-v0.1.5 (2026-08-22): rename migration (revision #8, including the directed-links store fix),
-the relation query API (`/api/relation`), and qualitative validation on a real query set
-(decision #6 wrap-up) are done.
-Next: feedback-loop observation (touch data), Playwright frontend test automation, MCP server (v3).
+v0.1.6 (2026-08-23): bucket-normalized scoring (fixes the misleading score=0 on deep-hop
+nodes), snapshot incremental parsing (Obsidian re-parses only changed files), and an MCP
+architecture study (`docs/architecture/07-mcp.md`, not started) are done; the obsidian://
+jump was manually verified by the user.
+Next: Playwright frontend test automation, MCP server (v3, study ready), feedback-loop observation.
 
 ## License
 

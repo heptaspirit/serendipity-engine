@@ -45,6 +45,8 @@
 //	        仅记录不演化）、虎鲸跳转（--repo → orca-note://）。
 //	v0.1.5  改名迁移（修订 #8：Diff 识别 rename + Refs 重定向 + touch 迁移）、
 //	        关系查询 /api/relation（权重+路径+证据，为 MCP 铺路）。
+//	v0.1.6  打分桶内归一化（修复深跳 score=0 误导）；快照增量解析
+//	        （ParseVaultIncremental：mtime/size 复用未变文件，只重解析变更）。
 //
 // ============================================================================
 package main
@@ -70,7 +72,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag。
-const version = "v0.1.5"
+const version = "v0.1.6"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -209,6 +211,19 @@ func parseSource(vault string, p *adapter.VaultProfile, dbFile string) ([]*adapt
 	return docs, "obsidian:" + vault, nil
 }
 
+// refreshParse 刷新专用解析（v0.1.6 快照增量优化）：
+//   Obsidian 源且已有旧状态 → ParseVaultIncremental（复用 mtime/size 未变文件，
+//   只重解析变更/新增；返回 reused 计数供日志）；其余（--db 回读 / 虎鲸 /
+//   首次全量）→ parseSource。语义与全量解析等价（见 adapter/obsidian.go）。
+func refreshParse(vault string, p *adapter.VaultProfile, flags map[string]string, old []*adapter.Document) (docs []*adapter.Document, reused int, src string, err error) {
+	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
+		docs, reused, err = adapter.ParseVaultIncremental(vault, p, old)
+		return docs, reused, "obsidian:" + vault, err
+	}
+	docs, src, err = parseSource(vault, p, flags["db"])
+	return docs, 0, src, err
+}
+
 // storePathFor 计算默认持久化路径（与 cmdIndex 一致：虎鲸库取库所在目录）。
 func storePathFor(vault string, storeFlag string) string {
 	if storeFlag != "" {
@@ -242,7 +257,7 @@ func cmdRefresh(args []string) {
 	if err != nil {
 		fatal("读改名映射失败: %v", err)
 	}
-	docs, src, err := parseSource(vault, p, flags["db"])
+	docs, reused, src, err := refreshParse(vault, p, flags, old)
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -264,6 +279,11 @@ func cmdRefresh(args []string) {
 	fmt.Printf("source: %s\n", src)
 	fmt.Printf("画像: %s\n", p.Name)
 	fmt.Printf("store: %s\n", storePath)
+	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
+		fmt.Printf("解析: %d 文档（快照增量：复用 %d / 重解析 %d）\n", len(docs), reused, len(docs)-reused)
+	} else {
+		fmt.Printf("解析: %d 文档（全量）\n", len(docs))
+	}
 	fmt.Printf("对账: 新增 %d / 更新 %d / 删除 %d / 改名 %d / 未变 %d  （耗时 %dms）\n",
 		res.Added, res.Updated, res.Deleted, res.Renamed, res.Unchanged, res.DurationMS)
 	limit := fint(flags, "top", 50)
@@ -524,7 +544,7 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err != nil {
 			return nil, nil, fmt.Errorf("读改名映射失败: %w", err)
 		}
-		docs, _, err := parseSource(vault, p, flags["db"])
+		docs, _, _, err := refreshParse(vault, p, flags, old)
 		if err != nil {
 			return nil, nil, err
 		}

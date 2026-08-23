@@ -1,6 +1,6 @@
 # Serendipity Engine · 奇遇记引擎
 
-> **v0.1.5** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
+> **v0.1.6** · 图谱漫游：查询驱动的笔记导航——**你问一个点，它给你一片。**
 > 给个人笔记的双链装上激活引擎（查询锚定 PPR + 激活扩散 + 跳数配额），让"wiki 真正跑起来"。
 > 中文 README；[English](README.en.md)。
 
@@ -17,7 +17,7 @@
 - **白盒可干预**：每条推荐可解释（激活路径）、可点击续漫游、可跳回原笔记软件
 - **解析规则抽离**：VaultProfile 库画像（title/别名/标签/类型规则 YAML 化）+ `profile-detect` 新库自动探测——换库不改代码；Google OKF 通用格式入默认解析
 - **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，Repo 凭据表绝不碰）
-- **对账刷新**：`seren refresh` / Web `↻` / **自动监听**三路同步增删改（60s 节流合并，克制防正反馈）
+- **对账刷新**：`seren refresh` / Web `↻` / **自动监听**三路同步增删改（60s 节流合并，克制防正反馈）；v0.1.6 起 Obsidian 源**快照增量解析**（只重解析变更文件）
 - **改名迁移**（v0.1.5）：Obsidian 改名不再断链——内容哈希+路径相似度识别、他人链接重定向、touch 埋点迁移（持久化 renames 表）
 - **关系查询**（v0.1.5）：`GET /api/relation?from=&to=`——两节点最短路径 + 双向 PPR 强度 + 证据链（white-box，为未来 MCP 暴露铺路）
 - **反馈埋点**：点击记录 touch（独立表、容量上限；v1 不演化边权，杜绝跑飞）
@@ -82,7 +82,7 @@ go build -o seren.exe ./cmd/seren
 
 | 文档 | 说明 |
 |---|---|
-| **`docs/architecture/`** | **架构文档（面向未来维护者）**：00 总览与哲学 / 01 数据模型 / 02 适配器 / 03 引擎 / 04 同步 / 05 Web / 06 维护指南 |
+| **`docs/architecture/`** | **架构文档（面向未来维护者）**：00 总览与哲学 / 01 数据模型 / 02 适配器 / 03 引擎 / 04 同步 / 05 Web / 06 维护指南 / 07 MCP 架构研究 |
 | [`docs/design.md`](docs/design.md) | 设计文档（修订版 v2，含评审决策 + spike 实测 + VaultProfile）——作者设计过程记录 |
 | [`docs/frontend-issues.md`](docs/frontend-issues.md) | **前端问题记录与交接**（Web UI 历史问题/修复/验证 + 遗留待办 + 测试方法；前端专项 session 先读这里） |
 | [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) | 设计评审 13 条决策（已全部接受） |
@@ -93,9 +93,10 @@ go build -o seren.exe ./cmd/seren
 
 ## 状态
 
-v0.1.5（2026-08-22）：改名迁移（修订 #8，含 links 有向化修复）、关系查询
-`/api/relation`、真实查询集定性验证（决策 #6 收尾）已完成。
-下一步：反馈闭环观察（touch 数据）、Playwright 前端自动化测试、MCP server（v3）。
+v0.1.6（2026-08-23）：打分桶内归一化（修复深跳 score=0 误导）、快照增量解析
+（Obsidian 只重解析变更文件）、MCP 架构研究（07-mcp.md，未开工）已完成；
+obsidian:// 真机跳转用户手动验证通过。
+下一步：Playwright 前端自动化测试、MCP server（v3，研究稿已就绪）、反馈闭环观察。
 
 ## License
 

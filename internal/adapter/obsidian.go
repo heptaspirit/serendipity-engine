@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -88,6 +89,79 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 		return nil
 	})
 	return docs, err
+}
+
+// ParseVaultIncremental 增量解析（v0.1.6，快照增量优化）：复用 mtime/size
+// 未变的旧文档，只对变更/新增文件调 ParseFile。
+//
+// ▍语义与全量一致
+//   返回的 Document 列表与 ParseVault 等价（含同名消歧、ID 分配）——复用只是
+//   跳过"未变文件"的读取 + 正则解析（Obsidian 解析的主要开销）；消歧仍在
+//   扫描循环里统一跑（复用的旧文档 ID 先重置为 basename，还原未消歧形态）。
+//   删除检测天然成立：文件系统里消失的文件不会被扫描到，自然不在返回列表里
+//   （diff 报 deleted）。
+//
+// ▍已知限制（v1.5 接受）
+//   mtime/size 相同但内容被改回（秒级精度 + 同字节数）会漏检——概率极低；
+//   文件系统 touch（改 mtime 不改内容）只会多触发一次重解析，无害。
+//
+// ▍返回值
+//   (docs, reused, err)：reused = 复用的旧文档数（调用方可用于日志/统计）。
+func ParseVaultIncremental(root string, p *VaultProfile, old []*Document) ([]*Document, int, error) {
+	oldByPath := map[string]*Document{}
+	for _, d := range old {
+		oldByPath[d.Path] = d
+	}
+	var docs []*Document
+	reused := 0
+	seen := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() != "." && containsStr(p.ExcludedDirs, d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+
+		var doc *Document
+		if od, ok := oldByPath[rel]; ok {
+			// mtime/size 快照命中 → 复用。注意：存储只保存秒级 mtime
+			// （Save 用 d.MTime.Unix()），而内存解析的 MTime 带纳秒（os.Stat），
+			// 文件系统 ModTime 也可能带纳秒（NTFS 100ns）——比较前双方都
+			// 截断到秒，否则永远不匹配（v0.1.6 实测抓出）。
+			if fi, err := d.Info(); err == nil &&
+				fi.ModTime().Truncate(time.Second).Equal(od.MTime.Truncate(time.Second)) &&
+				fi.Size() == od.Size {
+				// 文件未变 → 复用旧解析结果；ID 重置为 basename（还原未消歧
+				// 形态，统一跑消歧保证与全量一致）
+				cp := *od
+				cp.ID = strings.TrimSuffix(filepath.Base(rel), ".md")
+				doc = &cp
+				reused++
+			}
+		}
+		if doc == nil {
+			if doc, err = ParseFile(path, root, p); err != nil {
+				return err
+			}
+		}
+		if prev, dup := seen[doc.ID]; dup {
+			doc.ID = strings.TrimSuffix(doc.Path, ".md")
+			_ = prev
+		}
+		seen[doc.ID] = doc.Path
+		docs = append(docs, doc)
+		return nil
+	})
+	return docs, reused, err
 }
 
 // ParseFile 解析单篇 markdown：frontmatter（title/别名/标签/类型）+ 双链 + OKF 元数据。

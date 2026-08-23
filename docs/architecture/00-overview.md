@@ -107,5 +107,6 @@ docs/                design.md（设计过程）/ architecture/（维护文档�
 | v0.1.3 | 虎鲸空壳页面清理（container 类型化）；前端点击加固 |
 | v0.1.4 | 自动监听、反馈埋点（touch）、虎鲸跳转（orca-note://） |
 | v0.1.5 | 改名迁移（修订 #8：renames 表 + Refs 重定向 + touch 迁移）；links 改有向引用行（修复虚假 refs+1）；关系查询 /api/relation（权重+路径+证据） |
+| v0.1.6 | 打分桶内归一化（修复深跳 score=0）；快照增量解析（Obsidian 只重解析变更文件）；MCP 架构研究（07-mcp.md，未开工） |
 
 详细历史见 `PROGRESS_LOG.md`（本地，不入库）。

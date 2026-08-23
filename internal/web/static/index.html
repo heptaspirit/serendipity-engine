@@ -1,26 +1,36 @@
 <!DOCTYPE html>
 <!--
   文件：internal/web/static/index.html（go:embed，Web 入口的可视化页面）
-  模块：Serendipity Engine 图谱漫游 UI（纯前端，零依赖）
+  模块：Serendipity Engine 图谱漫游 UI（纯前端，零依赖原生 JS）
+
+  ▍设计语言（v0.1.6 换肤）
+    采用 dsh web 同款 design language（Tokyo Night 风格暗色）：
+      背景 #181926 · 面板 #1e2030 · 浮起面板 #24273a · 交互按钮 #363a4f
+      正文 #cad3f5 · 弱化 #6e738d · 强调蓝 #7aa2f7 · 边界 rgba(255,255,255,.06/.12)
+    保留原有 1/2/3-hop 配色（金/蓝/紫），整体更克制、贴近 dsh web。
 
   ▍功能
     - 初始页：热门节点漂浮气泡（/api/hot），点击气泡开始漫游
     - 搜索框：查询漫游（/api/roam），锚点按 match 级别/度展示前 5 个
+    - 设置抽屉 ⚙：暴露安全可调参数（/api/config 白名单：top/hops/lambda/theta/
+      alpha/beta），范围/步长/默认来自服务端，localStorage 记忆，可一键重置
+    - 关系查询（/api/relation，v0.1.5）：两节点最短路径 + 双向 PPR + 证据链
     - 卡片：点击任意卡片 = 从该节点继续漫游（探索路径，push 历史栈）
     - 历史栈与浏览器 history 同步：后退/前进键可用（?q= URL 同步）
-    - Obsidian 源：卡片「打开 ↗」跳转 obsidian://（server 端拼 URI）
-    - 刷新按钮 ↻（v0.1.2）：POST /api/refresh 对账同步增删改，展示
-      新增/更新/删除摘要并重渲染当前视图
+    - 打开跳转：卡片「打开 ↗」→ obsidian:// 或 orca-note://（server 端拼 URI）
+    - 反馈埋点：点击上报 /api/touch（独立表，仅记录不演化）
+    - 自动监听提示：轮询 /api/stats 对比 revision
+    - 深跳节点（score≤0）：不显示无意义的 0 分，改用「深跳」标签（serendipity 机制保留）
 
   ▍修改记录
     v0.1.0  初版：漫游/锚点/卡片/历史栈/回退/初始页气泡
     v0.1.1  页面与画像改动无涉本文件
     v0.1.2  刷新按钮 + diff 摘要展示
-    v0.1.3  锚点可点击（从锚点继续漫游）；点击卡片输入框显示标题而非 ID；
-            孤立节点显示醒目"这个节点到头了"提示；请求失败显示错误；
-            事件委托统一点击（卡片/气泡/锚点，杜绝漏绑定）；window.onerror 可见
-    v0.1.4  点击上报反馈埋点（POST /api/touch，不阻塞）；轮询 stats 对比
-            revision，库被自动监听刷新时提示"库已自动更新"
+    v0.1.3  锚点可点击；点击显示标题；孤立节点"到头了"提示；事件委托；onerror 可见
+    v0.1.4  反馈埋点 /api/touch；轮询 stats 提示"库已自动更新"
+    v0.1.5  关系查询 URI（后端）；本文件未涉
+    v0.1.6  dsh web 设计语言换肤；设置抽屉暴露安全参数（/api/config + clamp）；
+            深跳节点 score≤0 展示修复；接入 /api/relation 关系查询；交互与可用性优化
 -->
 <html lang="zh">
 <head>
@@ -29,135 +39,358 @@
 <title>Serendipity Engine · 图谱漫游</title>
 <style>
   :root {
-    --bg: #16181d; --panel: #1e2128; --border: #2c313b;
-    --text: #e8e6e3; --muted: #9aa0ab; --accent: #d9a441;
-    --hop1: #d9a441; --hop2: #6fb3d9; --hop3: #9b8fd9;
+    /* dsh web 同款设计语言（Tokyo Night） */
+    --bg: #181926; --panel: #1e2030; --surface: #24273a; --elevated: #363a4f;
+    --text: #cad3f5; --muted: #6e738d; --border: rgba(255,255,255,.06);
+    --border-strong: rgba(255,255,255,.12); --accent: #7aa2f7; --accent-2: #6384ff;
+    --primary: #677fb5; --primary-hover: #7a90cc;
+    --hop1: #e0af68; --hop2: #7aa2f7; --hop3: #bb9af7;
+    --danger: #ed8796; --warn: #e0af68; --ok: #9ece6a;
+    --radius: 12px; --radius-sm: 8px; --radius-pill: 999px;
+    --shadow: 0 6px 20px rgba(0,0,0,.35);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
-           display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  header h1 { font-size: 17px; margin: 0; color: var(--accent); cursor: pointer; }
-  header h1:hover { text-decoration: underline; }
-  header .sub { color: var(--muted); font-size: 12px; }
-  #back, #home, #refresh { background: var(--panel); border: 1px solid var(--border); color: var(--text);
-    border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 14px;
-    align-self: center; }
-  #back:disabled, #refresh:disabled { opacity: .35; cursor: default; }
-  #back:not(:disabled):hover, #home:hover, #refresh:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font);
+         font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  button { font-family: var(--font); }
+  a { color: var(--accent); text-decoration: none; }
 
-  /* ---- 初始页：漂浮气泡 ---- */
-  .hero { position: relative; height: 56vh; min-height: 380px;
-    border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
-    background: radial-gradient(ellipse at 30% 20%, #23262e 0%, var(--bg) 70%); }
-  .hero-title { text-align: center; padding-top: 32px; font-size: 26px;
-    font-weight: 700; color: var(--accent); }
-  .hero-sub { text-align: center; color: var(--muted); font-size: 13px; margin-top: 6px; }
+  /* ---- 顶栏 ---- */
+  header { position: sticky; top: 0; z-index: 10; padding: 12px 20px;
+    border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 88%, #000);
+    display: flex; align-items: center; gap: 12px; backdrop-filter: blur(6px); }
+  .header-left, .header-right { display: flex; align-items: center; gap: 6px; }
+  .header-right { margin-left: auto; }
+  .brand { font-size: 16px; font-weight: 700; color: var(--text); margin: 0;
+    cursor: pointer; letter-spacing: .2px; display: flex; align-items: center; gap: 8px; }
+  .brand:hover { color: var(--accent); }
+  .brand .tag { font-size: 11px; font-weight: 500; color: var(--muted);
+    border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+    padding: 1px 8px; }
+
+  .icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center;
+    justify-content: center; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-sm); cursor: pointer; font-size: 15px; }
+  .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .icon-btn:disabled { opacity: .35; cursor: default; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 16px; border-radius: var(--radius-pill); font-size: 14px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--border-strong); background: var(--surface);
+    color: var(--text); transition: background .15s, border-color .15s, transform .05s; }
+  .btn:hover { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--primary); color: #0e0f17; border-color: transparent; }
+  .btn.primary:hover { background: var(--primary-hover); }
+  .btn.ghost { background: transparent; }
+  .btn.sm { padding: 4px 12px; font-size: 12.5px; font-weight: 500; }
+
+  main { max-width: 920px; margin: 0 auto; padding: 20px 20px 48px; }
+
+  /* ---- 搜索 ---- */
+  .search { display: flex; gap: 10px; margin-bottom: 10px; }
+  .search input { flex: 1; background: var(--surface); border: 1px solid var(--border-strong);
+    color: var(--text); padding: 12px 16px; border-radius: var(--radius); font-size: 15px;
+    outline: none; }
+  .search input::placeholder { color: var(--muted); }
+  .search input:focus { border-color: var(--accent); }
+  .search .btn { padding: 12px 22px; }
+
+  .source-line { color: var(--muted); font-size: 12.5px; margin: 2px 0 8px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .source-line .tag { color: var(--muted); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 1px 6px; font-size: 11.5px; }
+
+  /* ---- 折叠面板（关系查询 / 参数设置） ---- */
+  .panel { background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px;
+    animation: fade .12s ease; }
+  .panel.hidden { display: none; }
+  @keyframes fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+  /* 关系查询 */
+  .rel-inputs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .rel-inputs input { flex: 1; min-width: 160px; background: var(--surface);
+    border: 1px solid var(--border-strong); color: var(--text); padding: 10px 12px;
+    border-radius: var(--radius-sm); font-size: 14px; outline: none; }
+  .rel-inputs input:focus { border-color: var(--accent); }
+  .rel-x { color: var(--muted); font-size: 16px; }
+  .rel-result { margin-top: 12px; font-size: 13.5px; color: var(--text); }
+  .rel-result .rel-path { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .rel-node { background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  .rel-node:hover { border-color: var(--accent); color: var(--accent); }
+  .rel-arrow { color: var(--muted); }
+  .rel-stats { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
+  .rel-empty { color: var(--muted); }
+
+  /* 设置抽屉 */
+  .cfg-head { display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px; font-weight: 600; font-size: 14px; color: var(--text); }
+  .cfg-group-label { color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: .5px; margin: 12px 0 6px; }
+  .cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px 20px; }
+  .cfg-field { display: flex; flex-direction: column; gap: 4px; }
+  .cfg-field .row { display: flex; align-items: center; justify-content: space-between; }
+  .cfg-field .lbl { font-size: 13.5px; color: var(--text); }
+  .cfg-field .val { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .cfg-field .hint { font-size: 11.5px; color: var(--muted); }
+  .cfg-field input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+
+  /* ---- 元信息 ---- */
+  .meta { color: var(--muted); font-size: 13px; margin: 6px 0 12px; min-height: 18px; }
+  .anchors { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .anchor { background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 5px 11px; font-size: 12.5px; color: var(--muted);
+    cursor: pointer; }
+  .anchor:hover { border-color: var(--accent); color: var(--accent); }
+  .anchor.more { cursor: default; color: var(--muted); }
+  .anchor.more:hover { border-color: var(--border-strong); color: var(--muted); }
+
+  /* ---- 卡片 ---- */
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 13px 16px; margin-bottom: 8px; cursor: pointer;
+    transition: border-color .15s, transform .08s, background .15s; }
+  .card:hover { border-color: var(--accent); transform: translateX(3px); }
+  .card .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card .rank { color: var(--accent); font-weight: 700; min-width: 24px; font-size: 14px; }
+  .card .title { font-size: 15px; font-weight: 600; }
+  .card .id { color: var(--muted); font-size: 12px; }
+  .card .type { font-size: 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 1px 8px; color: var(--muted); }
+  .card .hop { font-size: 11px; border-radius: var(--radius-sm); padding: 1px 8px; font-weight: 700; }
+  .hop-1 { color: var(--hop1); border: 1px solid color-mix(in srgb, var(--hop1) 45%, transparent); }
+  .hop-2 { color: var(--hop2); border: 1px solid color-mix(in srgb, var(--hop2) 45%, transparent); }
+  .hop-3 { color: var(--hop3); border: 1px solid color-mix(in srgb, var(--hop3) 45%, transparent); }
+  .hop.deep { color: var(--muted); border-color: var(--border-strong); }
+  .card .open { margin-left: auto; font-size: 12.5px; color: var(--accent);
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px 9px; }
+  .card .open:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .card .meta-line { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.6; }
+  .card .path { color: var(--muted); font-size: 12px; margin-top: 5px; word-break: break-all; }
+  .card .scores { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+
+  /* ---- 初始页 hero / 气泡 ---- */
+  .hero { position: relative; height: 56vh; min-height: 400px; margin-top: 14px;
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    background: radial-gradient(ellipse at 30% 20%, var(--panel) 0%, var(--bg) 72%); }
+  .hero-title { text-align: center; padding-top: 40px; font-size: 30px; font-weight: 800;
+    color: var(--text); letter-spacing: .5px; }
+  .hero-title .accent { color: var(--accent); }
+  .hero-sub { text-align: center; color: var(--muted); font-size: 13.5px; margin-top: 8px; }
   .bubbles { position: absolute; inset: 0; }
-  .bubble { position: absolute; border-radius: 50%; display: flex;
+  .bubble { position: absolute; border-radius: var(--radius-pill); display: flex;
     align-items: center; justify-content: center; cursor: pointer;
-    border: 1px solid var(--border); background: var(--panel); color: var(--text);
-    font-size: 12px; text-align: center; padding: 6px; box-sizing: border-box;
-    box-shadow: 0 4px 18px rgba(0,0,0,.35); overflow: hidden; text-overflow: ellipsis;
-    animation: floaty var(--dur) ease-in-out infinite alternate; user-select: none; }
-  .bubble:hover { border-color: var(--accent); z-index: 2; }
+    border: 1px solid var(--border-strong); background: var(--panel); color: var(--text);
+    font-size: 12.5px; text-align: center; padding: 6px 14px; font-weight: 500;
+    max-width: 160px; box-shadow: var(--shadow); overflow: hidden; text-overflow: ellipsis;
+    animation: floaty var(--dur) ease-in-out infinite alternate; user-select: none; white-space: nowrap; }
+  .bubble:hover { border-color: var(--accent); color: var(--accent); z-index: 2; }
   @keyframes floaty {
     from { transform: translate(0, 0); }
     to { transform: translate(var(--dx), var(--dy)); }
   }
-  .type-人物 { border-color: #d9a44166; color: #e8c77a; }
-  .type-设定 { border-color: #6fb3d966; color: #9cc9e0; }
-  .type-线索 { border-color: #9b8fd966; color: #c0b7e8; }
-  .type-ADR  { border-color: #7fbf7f66; color: #a8d8a8; }
-  .type-doc  { border-color: #6fb3d966; color: #9cc9e0; }
-  .type-block{ border-color: #d9a44133; color: #c9c3b8; }
-  main { max-width: 900px; margin: 0 auto; padding: 20px; }
-  .search { display: flex; gap: 8px; margin-bottom: 16px; }
-  .search input { flex: 1; background: var(--panel); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 15px; }
-  .search button { background: var(--accent); border: 0; color: #16181d;
-    padding: 10px 20px; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }
-  .meta { color: var(--muted); font-size: 12.5px; margin: 8px 0 14px; }
-  .anchors { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-  .anchor { background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    padding: 4px 10px; font-size: 12.5px; color: var(--muted); }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px 16px; margin-bottom: 8px; cursor: pointer;
-    transition: border-color .15s, transform .1s; }
-  .card:hover { border-color: var(--accent); transform: translateX(2px); }
-  .card .top { display: flex; align-items: baseline; gap: 10px; }
-  .card .rank { color: var(--accent); font-weight: 700; min-width: 26px; }
-  .card .title { font-size: 15px; font-weight: 600; }
-  .card .id { color: var(--muted); font-size: 12px; }
-  .card .type { font-size: 11px; border: 1px solid var(--border); border-radius: 4px;
-    padding: 1px 7px; color: var(--muted); }
-  .card .hop { font-size: 11px; border-radius: 4px; padding: 1px 7px; font-weight: 600; }
-  .hop-1 { color: var(--hop1); } .hop-2 { color: var(--hop2); } .hop-3 { color: var(--hop3); }
-  .card .open { margin-left: auto; font-size: 12px; color: var(--accent);
-    text-decoration: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; }
-  .card .open:hover { border-color: var(--accent); }
-  .card .path { color: var(--muted); font-size: 12px; margin-top: 5px; word-break: break-all; }
-  .card .scores { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
-  .fallback { background: #2a2417; border: 1px solid #4a3d1e; border-radius: 8px;
-    padding: 10px 14px; color: #d9b36a; font-size: 13px; margin-bottom: 12px; }
-  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
-  /* v0.1.3：漫游到头的醒目提示（孤立节点/无关联内容） */
-  .deadend { background: #3a2a12; border: 2px solid var(--accent); color: #ffd77a;
-    border-radius: 10px; padding: 24px 18px; text-align: center; font-size: 17px;
+  .type-人物 { border-color: color-mix(in srgb, var(--hop1) 55%, transparent); color: var(--hop1); }
+  .type-设定 { border-color: color-mix(in srgb, var(--hop2) 55%, transparent); color: var(--hop2); }
+  .type-线索 { border-color: color-mix(in srgb, var(--hop3) 55%, transparent); color: var(--hop3); }
+  .type-ADR  { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); }
+  .type-doc  { border-color: color-mix(in srgb, var(--hop2) 55%, transparent); color: var(--hop2); }
+  .type-block{ border-color: color-mix(in srgb, var(--muted) 45%, transparent); color: var(--muted); }
+
+  .fallback { background: color-mix(in srgb, var(--warn) 12%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--radius-sm);
+    padding: 10px 14px; color: var(--warn); font-size: 13px; margin-bottom: 12px; }
+  .empty { color: var(--muted); text-align: center; padding: 48px 0; font-size: 14px; }
+  .deadend { background: color-mix(in srgb, var(--warn) 16%, var(--panel));
+    border: 2px solid var(--warn); color: var(--warn);
+    border-radius: var(--radius); padding: 26px 18px; text-align: center; font-size: 17px;
     font-weight: 700; margin-bottom: 12px; }
   .deadend-sub { font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; }
-  .hint { color: var(--muted); font-size: 12px; margin-top: 20px; text-align: center; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 24px; text-align: center; }
+
+  /* 加载态 */
+  .loading { color: var(--muted); text-align: center; padding: 24px 0; font-size: 13px; }
+
+  @media (max-width: 560px) {
+    .brand .tag { display: none; }
+    .header-right .btn .txt { display: none; }
+    .rel-inputs { flex-direction: column; align-items: stretch; }
+    .rel-x { text-align: center; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <button id="home" title="回到初始页">⌂</button>
-  <button id="back" disabled title="上一步">←</button>
-  <button id="refresh" title="对账刷新：重新解析并同步增删改">↻</button>
-  <h1 id="brand">Serendipity Engine</h1>
-  <span class="sub" id="source">—</span>
+  <div class="header-left">
+    <button id="home" class="icon-btn" title="回到初始页">⌂</button>
+    <button id="back" class="icon-btn" disabled title="上一步">←</button>
+    <button id="refresh" class="icon-btn" title="对账刷新：重新解析并同步增删改">↻</button>
+  </div>
+  <h1 id="brand" class="brand">Serendipity Engine <span class="tag" id="ver"></span></h1>
+  <div class="header-right">
+    <button id="rel-toggle" class="btn ghost sm" title="两节点关系查询"><span class="txt">关系</span></button>
+    <button id="cfg-toggle" class="btn ghost sm" title="调整漫游参数">⚙ <span class="txt">参数</span></button>
+  </div>
 </header>
 <main>
   <div class="search">
-    <input id="q" placeholder="输入笔记名 / 标签 / 任意词…" autofocus>
-    <button id="go">漫游</button>
+    <input id="q" placeholder="输入笔记名 / 标签 / 任意词…" autocomplete="off" autofocus>
+    <button id="go" class="btn primary">漫游</button>
   </div>
+  <div id="source" class="source-line"></div>
+
+  <!-- 关系查询（可折叠） -->
+  <div id="rel-panel" class="panel hidden">
+    <div class="rel-inputs">
+      <input id="rel-from" placeholder="节点 A（名称/ID）">
+      <span class="rel-x">↔</span>
+      <input id="rel-to" placeholder="节点 B（名称/ID）">
+      <button id="rel-go" class="btn primary">查关系</button>
+    </div>
+    <div id="rel-result" class="rel-result"></div>
+  </div>
+
+  <!-- 参数设置抽屉（可折叠） -->
+  <div id="cfg-panel" class="panel hidden">
+    <div class="cfg-head">
+      <span>漫游参数</span>
+      <button id="cfg-reset" class="btn ghost sm">重置默认</button>
+    </div>
+    <div id="cfg-fields"></div>
+  </div>
+
   <div id="meta" class="meta"></div>
   <div id="anchors" class="anchors"></div>
   <div id="fallback"></div>
   <div id="list"></div>
-  <div class="hint">点击任意卡片 → 从该节点继续漫游（探索路径）· <span id="ver"></span></div>
+  <div class="hint">点击任意卡片 → 从该节点继续漫游（探索路径）· 点击「⚙ 参数」可调整漫游设置</div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
 
-// 显示版本（/api/stats）
-fetch('/api/stats').then(r => r.json()).then(s => {
-  if (s.version && $('#ver')) $('#ver').textContent = 'Serendipity Engine ' + s.version;
-}).catch(() => {});
+// ---- 可调参数状态（默认来自 /api/config，localStorage 记忆）----
+let params = {};        // {key: value}
+let paramDefs = [];     // /api/config 返回的白名单定义
+const PARAMS_KEY = 'seren.params';
 
-// ---- 漫游历史栈（与浏览器 history 同步，后退/前进键可用）----
+function loadSavedParams() {
+  try { return JSON.parse(localStorage.getItem(PARAMS_KEY) || '{}'); }
+  catch (e) { return {}; }
+}
+function saveParams() {
+  try { localStorage.setItem(PARAMS_KEY, JSON.stringify(params)); } catch (e) {}
+}
+// 把当前参数拼成 /api/roam 的 query 后缀
+function paramQS() {
+  return Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
+}
+
+// 从配置文件填充 params（localStorage 覆盖默认值；只认识白名单内的 key）
+function initParams(cfg) {
+  paramDefs = cfg.params || [];
+  const saved = loadSavedParams();
+  params = {};
+  for (const d of paramDefs) {
+    params[d.key] = (saved[d.key] !== undefined) ? +saved[d.key] : +d.default;
+  }
+  renderCfg();
+}
+
+// 渲染设置抽屉的滑块/输入
+function renderCfg() {
+  const box = $('#cfg-fields');
+  if (!box) return;
+  const groups = {};
+  for (const d of paramDefs) {
+    (groups[d.group || '其他'] = groups[d.group || '其他'] || []).push(d);
+  }
+  let html = '';
+  for (const g of Object.keys(groups)) {
+    html += '<div class="cfg-group-label">' + esc(g) + '</div><div class="cfg-grid">';
+    for (const d of groups[g]) {
+      const v = params[d.key];
+      const val = d.type === 'int' ? Math.round(v) : (+v).toFixed(d.step < 0.05 ? 2 : 1);
+      html += '<div class="cfg-field">' +
+        '<div class="row"><span class="lbl">' + esc(d.label) + '</span>' +
+        '<span class="val" id="cfg-val-' + esc(d.key) + '">' + val + '</span></div>' +
+        '<input type="range" min="' + d.min + '" max="' + d.max + '" step="' + d.step +
+        '" value="' + v + '" data-key="' + esc(d.key) + '">' +
+        '<span class="hint">' + esc(d.hint || '') + '</span></div>';
+    }
+    html += '</div>';
+  }
+  box.innerHTML = html;
+  $$('#cfg-fields input[type=range]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const d = defFor(inp.dataset.key);
+      const v = d.type === 'int' ? Math.round(+inp.value) : +inp.value;
+      params[inp.dataset.key] = v;
+      const el = $('#cfg-val-' + inp.dataset.key);
+      if (el) el.textContent = d.type === 'int' ? v : (+v).toFixed(d.step < 0.05 ? 2 : 1);
+      saveParams();
+      reRoamDebounced();   // 松手后再真正重查（防拖动刷爆 API）
+    });
+  });
+}
+function defFor(key) { return paramDefs.find(d => d.key === key); }
+
+// 重置参数为默认并重查
+function resetParams() {
+  for (const d of paramDefs) params[d.key] = +d.default;
+  saveParams();
+  renderCfg();
+  reRoam();
+}
+
+let reRoamTimer = null;
+function reRoamDebounced() {
+  clearTimeout(reRoamTimer);
+  reRoamTimer = setTimeout(reRoam, 350);
+}
+// 重新执行当前查询（应用新参数）；空查询则回初始页
+function reRoam() {
+  const q = $('#q').value.trim();
+  if (q) roam(q, 'replace'); else renderHome();
+}
+
+// ---- 显示版本 & 源信息（/api/config + /api/stats）----
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  initParams(cfg);
+  if (cfg.version && $('#ver')) $('#ver').textContent = cfg.version;
+  if (cfg.source) $('#source').innerHTML = '<span class="tag">源</span> ' + esc(cfg.source) +
+    '<span class="tag">节点 ' + cfg.nodes + '</span><span class="tag">边 ' + cfg.edges + '</span>';
+}).catch(() => {
+  // 降级：即便 config 失败也不阻塞，用默认值
+  fetch('/api/stats').then(r => r.json()).then(s => {
+    if (s.version && $('#ver')) $('#ver').textContent = s.version;
+  }).catch(() => {});
+});
+
+// ---- 漫游历史栈（与浏览器 history 同步）----
 let stack = [];
 let pos = -1;
 
 async function roam(query, mode, display) {
   let d;
   try {
-    const r = await fetch('/api/roam?q=' + encodeURIComponent(query) + '&top=15');
+    const qs = paramQS();
+    const url = '/api/roam?q=' + encodeURIComponent(query) + (qs ? '&' + qs : '');
+    const r = await fetch(url);
     d = await r.json();
   } catch (e) {
-    // v0.1.3：请求失败也要可见（避免点击"静默没反应"）
     $('#meta').textContent = '请求失败: ' + e.message;
     return;
   }
-  $('#source').textContent = 'source: ' + d.source;
   $('#q').value = display || query;
   if (display && mode === 'push') {
     $('#meta').textContent = '从「' + display + '」继续漫游';
   }
 
-  // URL 同步 + 历史栈
   if (mode === 'push') {
     stack = stack.slice(0, pos + 1);
     stack.push(query);
@@ -168,24 +401,22 @@ async function roam(query, mode, display) {
   }
   $('#back').disabled = pos <= 0;
 
-  // ---- 锚点：按 match 级别降序、同级别按度降序，只显示前 5 个"重的"；
-  //      锚点也可点击（v0.1.3：点击 = 从该锚点继续漫游，与卡片一致）----
+  // ---- 锚点：按 match 级别降序、同级别按度降序，只显示前 5 个"重的" ----
   const anchors = (d.anchors || []).slice().sort((a, b) => (b.match - a.match) || (b.deg - a.deg));
   const shownA = anchors.slice(0, 5);
   $('#anchors').innerHTML = '';
   if (shownA.length) {
     $('#anchors').innerHTML = shownA.map(a =>
       `<span class="anchor" data-id="${esc(a.id)}" data-title="${esc(a.title)}"
-         title="点击从该节点继续漫游" style="cursor:pointer">锚: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
+         title="点击从该节点继续漫游">锚: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
     if (anchors.length > shownA.length) {
       const more = document.createElement('span');
-      more.className = 'anchor';
+      more.className = 'anchor more';
       more.textContent = '… 共 ' + anchors.length + ' 个锚点';
       $('#anchors').appendChild(more);
     }
   }
 
-  // fallback notice
   $('#fallback').innerHTML = '';
   if (d.fallback === 1) {
     $('#fallback').innerHTML = '<div class="fallback">锚定失败 → 全文检索降级（搜索式）</div>';
@@ -193,18 +424,14 @@ async function roam(query, mode, display) {
     $('#fallback').innerHTML = '<div class="fallback">查询点无/少链接 → 全文检索降级</div>';
   }
 
-  // list
   const list = $('#list');
-  if (!query) {
-    renderHome();
-    return;
-  }
+  if (!query) { renderHome(); return; }
+
   const cards = (d.results || []).concat((d.fallback_hits || []).map(h => ({
     id: h.id, title: h.title, type: h.type, hops: 0,
     path: h.id, note: '全文命中 ' + h.count + ' 次'
   })));
   if (!cards.length) {
-    // v0.1.3：漫游到头（fallback=2 且全文也无命中）→ 醒目提示，避免"点了没反应"
     if (d.fallback === 2) {
       list.innerHTML = `<div class="deadend">⚠ 这个节点到头了
         <div class="deadend-sub">它没有关联的节点——试试搜索其他关键词，或点左上角「⌂」回初始页</div></div>`;
@@ -213,37 +440,56 @@ async function roam(query, mode, display) {
     }
     return;
   }
-  list.innerHTML = cards.map((c, i) => {
-    const hopCls = c.hops === 1 ? 'hop-1' : c.hops === 2 ? 'hop-2' : c.hops >= 3 ? 'hop-3' : '';
-    const hopLabel = c.hops ? c.hops + '-hop' : '';
-    const openLink = c.uri ? `<a class="open" href="${esc(c.uri)}" onclick="event.stopPropagation()" title="在笔记软件中打开">打开 ↗</a>` : '';
-    return `<div class="card" data-id="${esc(c.id)}" data-title="${esc(c.title)}">
-      <div class="top">
-        <span class="rank">${i + 1}</span>
-        <span class="title">${esc(c.title)}</span>
-        <span class="id">${esc(c.id)}</span>
-        <span class="type">${esc(c.type)}</span>
-        <span class="hop ${hopCls}">${hopLabel}</span>
-        ${openLink}
-      </div>
-      <div class="path">${esc(c.path || '')}</div>
-      <div class="scores">${c.note || 'score=' + c.score.toFixed(3) + ' ppr=' + c.ppr.toFixed(4) + ' act=' + c.act.toFixed(3)}</div>
-    </div>`;
-  }).join('');
+  list.innerHTML = cards.map((c, i) => cardHTML(c, i)).join('');
+}
+
+// 深跳节点分数展示：score≤0 时 min-max 归一化后分数无区分度，
+// 显示 "score=0.000" 难看且误导 → 改用「深跳」标签（serendipity 机制本身保留）。
+function scoreLine(c) {
+  if (c.note) return c.note; // 全文降级命中
+  const parts = [];
+  if (c.score !== undefined && c.score > 0) parts.push('score ' + (+c.score).toFixed(3));
+  if (c.ppr !== undefined && c.ppr > 0) parts.push('ppr ' + (+c.ppr).toFixed(4));
+  if (c.act !== undefined && c.act > 0) parts.push('act ' + (+c.act).toFixed(3));
+  return parts.join(' · ') || '深跳';
+}
+
+function cardHTML(c, i) {
+  const isDeep = c.hops >= 3 || (c.score !== undefined && c.score <= 0);
+  const hopCls = c.hops === 1 ? 'hop-1' : c.hops === 2 ? 'hop-2' : c.hops >= 3 ? 'hop-3' : '';
+  const hopLabel = c.hops ? c.hops + '-hop' : '';
+  const hopEl = hopLabel
+    ? `<span class="hop ${hopCls}${isDeep && c.hops >= 3 ? ' deep' : ''}">${hopLabel}${isDeep && c.score <= 0 ? ' 深跳' : ''}</span>`
+    : '';
+  const openLink = c.uri ? `<a class="open" href="${esc(c.uri)}" onclick="event.stopPropagation()" title="在笔记软件中打开">打开 ↗</a>` : '';
+  return `<div class="card" data-id="${esc(c.id)}" data-title="${esc(c.title)}">
+    <div class="top">
+      <span class="rank">${i + 1}</span>
+      <span class="title">${esc(c.title)}</span>
+      <span class="id">${esc(c.id)}</span>
+      <span class="type">${esc(c.type)}</span>
+      ${hopEl}
+      ${openLink}
+    </div>
+    <div class="path">${esc(c.path || '')}</div>
+    <div class="scores">${esc(scoreLine(c))}</div>
+  </div>`;
 }
 
 function esc(s) {
-  return String(s).replace(/[&<>"']/g, c =>
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// ---- 初始页：热门节点漂浮气泡（点击即漫游）----
+// ---- 初始页：热门节点漂浮气泡 ----
 async function renderHome() {
   $('#list').innerHTML = `<div class="hero">
-      <div class="hero-title">图谱漫游</div>
+      <div class="hero-title">图谱<span class="accent">漫游</span></div>
       <div class="hero-sub">你问一个点，它给你一片 —— 点击气泡开始漫游</div>
       <div class="bubbles" id="bubbles"></div>
     </div>`;
+  $('#anchors').innerHTML = '';
+  $('#meta').textContent = '';
   let hot = [];
   try {
     const r = await fetch('/api/hot?n=24');
@@ -257,12 +503,12 @@ async function renderHome() {
     return;
   }
   box.innerHTML = pool.map(b => {
-    const size = 64 + Math.random() * 44;
-    const style = 'left:' + (Math.random() * 86 + 5).toFixed(1) + '%;' +
-      'top:' + (Math.random() * 68 + 12).toFixed(1) + '%;' +
-      'width:' + size.toFixed(0) + 'px;height:' + size.toFixed(0) + 'px;' +
+    const w = 84 + Math.random() * 60;
+    const style = 'left:' + (Math.random() * 82 + 5).toFixed(1) + '%;' +
+      'top:' + (Math.random() * 62 + 26).toFixed(1) + '%;' +
+      'width:' + w.toFixed(0) + 'px;' +
       '--dx:' + (Math.random() * 60 - 30).toFixed(0) + 'px;' +
-      '--dy:' + (Math.random() * 44 - 22).toFixed(0) + 'px;' +
+      '--dy:' + (Math.random() * 40 - 20).toFixed(0) + 'px;' +
       '--dur:' + (8 + Math.random() * 8).toFixed(1) + 's;' +
       'animation-delay:' + (-Math.random() * 8).toFixed(1) + 's';
     return `<div class="bubble type-${esc(b.type)}" data-id="${esc(b.id)}" data-title="${esc(b.title)}"
@@ -270,14 +516,54 @@ async function renderHome() {
   }).join('');
 }
 
-// ---- 回到初始页（重置漫游历史）----
+// ---- 关系查询（/api/relation）----
+async function queryRelation() {
+  const from = $('#rel-from').value.trim();
+  const to = $('#rel-to').value.trim();
+  const box = $('#rel-result');
+  if (!from || !to) { box.innerHTML = '<div class="rel-empty">请输入两个节点名称或 ID</div>'; return; }
+  box.innerHTML = '<div class="loading">查询关系…</div>';
+  try {
+    const r = await fetch('/api/relation?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
+    const d = await r.json();
+    if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
+    // 最短路径 + 双向 PPR 强度 + 激活值（white-box）
+    let pathHtml = '';
+    const path = d.path || [];
+    const pathNodes = d.path_nodes || [];
+    if (Array.isArray(path) && path.length) {
+      // 优先用 path_nodes 的标题（web 层补全），否则退回 ID
+      const frags = path.map((id, idx) => {
+        const pn = pathNodes.find(n => n.id === id);
+        const title = pn ? pn.title : id;
+        return `<span class="rel-node" data-id="${esc(id)}" data-title="${esc(title)}">${esc(title)}</span>`;
+      });
+      pathHtml = '<div class="rel-path">' + frags.join('<span class="rel-arrow">→</span>') + '</div>';
+    } else {
+      pathHtml = '<div class="rel-empty">未找到连通路径</div>';
+    }
+    const stats = [];
+    if (d.affinity !== undefined) stats.push('affinity ' + (+d.affinity).toFixed(4));
+    if (d.activation !== undefined) stats.push('激活 ' + (+d.activation).toFixed(3) + (d.hops >= 0 ? ' (' + d.hops + '-hop)' : ''));
+    if (d.ppr_from_to !== undefined) stats.push('ppr→ ' + (+d.ppr_from_to).toFixed(4));
+    if (d.ppr_to_from !== undefined) stats.push('ppr← ' + (+d.ppr_to_from).toFixed(4));
+    const evi = (d.evidence || []).map(ev => (ev.witnesses || []).join('、')).filter(Boolean);
+    box.innerHTML = pathHtml +
+      (stats.length ? '<div class="rel-stats">' + stats.join(' · ') + '</div>' : '') +
+      (evi.length ? '<div class="rel-stats">证据: ' + esc(evi.join('；')) + '</div>' : '');
+  } catch (e) {
+    box.innerHTML = '<div class="rel-empty">查询失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+// ---- 回到初始页 ----
 function goHome() {
   stack = [''];
   pos = 0;
   roam('', 'replace');
 }
 
-// 浏览器前进/后退：从 history state 恢复对应查询（空查询也合法——回到初始页）
+// 浏览器前进/后退
 window.addEventListener('popstate', e => {
   const q = (e.state && e.state.q) || '';
   if (pos > 0 && stack[pos - 1] === q) { pos--; }
@@ -286,12 +572,17 @@ window.addEventListener('popstate', e => {
   roam(q, 'replace');
 });
 
-// ---- 事件委托：卡片 / 气泡 / 锚点 统一点击处理（v0.1.3）----
-// 任何时刻渲染出的节点都可点击（不依赖渲染时的绑定），杜绝"某类元素点了没反应"。
-// 点击瞬间 meta 区先给反馈（"漫游中…"），让操作立刻可感知。
-// v0.1.4：点击同时上报反馈埋点（POST /api/touch，fire-and-forget 不阻塞漫游）。
+// ---- 事件委托：卡片 / 气泡 / 锚点 / 关系节点 统一点击 ----
 document.addEventListener('click', e => {
   if (e.target.closest('a')) return; // 「打开 ↗」链接不拦截
+  const rel = e.target.closest('.rel-node');
+  if (rel && rel.dataset.id) {
+    // 关系节点点击 → 填入"从"并漫游
+    $('#rel-from').value = rel.dataset.title || rel.dataset.id;
+    $('#q').value = rel.dataset.title || rel.dataset.id;
+    roam(rel.dataset.id, 'push', rel.dataset.title || rel.dataset.id);
+    return;
+  }
   const el = e.target.closest('.card, .bubble, #anchors .anchor[data-id]');
   if (el && el.dataset.id) {
     $('#meta').textContent = '漫游中: ' + (el.dataset.title || el.title) + ' …';
@@ -303,7 +594,7 @@ document.addEventListener('click', e => {
   }
 });
 
-// ---- 自动监听提示（v0.1.4）：轮询 stats 对比 revision，库被自动刷新时提示 ----
+// ---- 自动监听提示（轮询 stats 对比 revision）----
 let lastRevision = null;
 setInterval(async () => {
   try {
@@ -317,19 +608,38 @@ setInterval(async () => {
   } catch (e) { /* 轮询失败静默 */ }
 }, 30000);
 
-// ---- 页面 JS 错误可见（诊断用）：出错显示在 meta 区，不再静默 ----
+// ---- 页面 JS 错误可见 ----
 window.addEventListener('error', e => {
   const m = $('#meta');
   if (m) m.textContent = '页面错误: ' + (e.message || 'unknown');
 });
 
+// ---- 交互绑定 ----
 $('#back').onclick = () => { if (pos > 0) history.back(); };
 $('#home').onclick = goHome;
 $('#brand').onclick = goHome;
 $('#go').onclick = () => { const q = $('#q').value.trim(); if (q) roam(q, 'push'); };
 $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+$('#rel-go').onclick = queryRelation;
+$('#rel-from').addEventListener('keydown', e => { if (e.key === 'Enter') queryRelation(); });
+$('#rel-to').addEventListener('keydown', e => { if (e.key === 'Enter') queryRelation(); });
+$('#cfg-reset').onclick = resetParams;
 
-// ---- 对账刷新：POST /api/refresh，同步增删改后重渲染当前视图 ----
+function toggle(id, btn) {
+  const el = $(id);
+  const on = el.classList.toggle('hidden');
+  if (btn && on) { btn.classList.add('active'); } else if (btn) { btn.classList.remove('active'); }
+  // 同时只开一个面板，避免页面堆叠
+  if (!el.classList.contains('hidden')) {
+    ['#rel-panel', '#cfg-panel'].forEach(o => {
+      if (o !== id) $(o).classList.add('hidden');
+    });
+  }
+}
+$('#rel-toggle').onclick = () => toggle('#rel-panel');
+$('#cfg-toggle').onclick = () => toggle('#cfg-panel');
+
+// ---- 对账刷新 ----
 $('#refresh').onclick = async () => {
   const btn = $('#refresh');
   btn.disabled = true;
@@ -342,6 +652,11 @@ $('#refresh').onclick = async () => {
     hint.textContent = '已刷新: 新增 ' + d.added + ' · 更新 ' + d.updated +
       ' · 删除 ' + d.deleted + ' · 未变 ' + d.unchanged +
       '（' + d.duration_ms + 'ms，节点 ' + d.nodes + '）';
+    // 刷新后源信息可能变化
+    fetch('/api/config').then(r => r.json()).then(c => {
+      if (c.source) $('#source').innerHTML = '<span class="tag">源</span> ' + esc(c.source) +
+        '<span class="tag">节点 ' + c.nodes + '</span><span class="tag">边 ' + c.edges + '</span>';
+    }).catch(() => {});
     const q = $('#q').value.trim();
     if (q) roam(q, 'replace'); else renderHome();
   } catch (e) {
@@ -351,7 +666,7 @@ $('#refresh').onclick = async () => {
   }
 };
 
-// 初始：把初始状态入栈（空查询也算一步，保证第一次搜索后就能回退）
+// 初始：把初始状态入栈
 const initQ = new URLSearchParams(location.search).get('q') || '';
 stack = [initQ];
 pos = 0;

@@ -10,6 +10,8 @@
 //	  GET  /api/roam?q=  查询漫游（与 CLI 同一 roam.Compute 管线）
 //	  GET  /api/relation?from=&to=  两节点关系查询（v0.1.5：最短路径+双向
 //	       PPR 强度+证据链，white-box；from/to 接受 ID 或标题）
+//	  GET  /api/config   前端可调参数白名单（top/hops/lambda/theta/alpha/beta
+//	       + 范围约束；前端据此渲染设置抽屉，见 tuneParams）
 //	  POST /api/refresh  对账刷新（v0.1.2，见下）
 //	  GET  /             嵌入的可视化页面（go:embed static/index.html）
 //
@@ -122,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/hot", s.handleHot)
 	mux.HandleFunc("/api/roam", s.handleRoam)
 	mux.HandleFunc("/api/relation", s.handleRelation)
+	mux.HandleFunc("/api/config", s.handleConfig)
 	if s.Refresh != nil {
 		mux.HandleFunc("/api/refresh", s.handleRefresh)
 	}
@@ -207,6 +210,19 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// relationNode 关系路径上单个节点的展示信息（web 层补充标题，供前端绘制可读路径）。
+type relationNode struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// relationResp 在 graph.Relation 基础上补充 path_nodes（路径节点 ID→标题），
+// 让前端不依赖图内部就能画出可读的最短路径链。
+type relationResp struct {
+	*graph.Relation
+	PathNodes []relationNode `json:"path_nodes"`
+}
+
 // handleRelation GET /api/relation?from=&to=：两节点关系查询（v0.1.5）。
 // from/to 接受节点 ID 或标题（经 Resolve 锚定，取首个命中）。输出 white-box
 // 关系：最短路径 + 双向 PPR 强度（对称 affinity）+ 激活值 + 证据链。
@@ -231,7 +247,16 @@ func (s *Server) handleRelation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "node not found"})
 		return
 	}
-	writeJSON(w, rel)
+	// 路径节点 ID→标题（white-box：路径可读可点击）
+	pathNodes := make([]relationNode, 0, len(rel.Path))
+	for _, id := range rel.Path {
+		t := id
+		if n, ok := s.G.Node(id); ok && n.Title != "" {
+			t = n.Title
+		}
+		pathNodes = append(pathNodes, relationNode{ID: id, Title: t})
+	}
+	writeJSON(w, relationResp{Relation: rel, PathNodes: pathNodes})
 }
 
 // resolveID 把查询词解析为节点 ID：精确 ID > title > 别名 > 标签 > LIKE
@@ -389,15 +414,22 @@ func nodePath(g *graph.Graph, id string) string {
 }
 
 func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	top := atoiDefault(r.URL.Query().Get("top"), 15)
+	query := r.URL.Query().Get("q")
+	vals := r.URL.Query()
 	s.mu.RLock()
-	out := roam.Compute(s.G, s.P, q, roam.Options{
-		Top: top, Hops: 3, Lambda: 0.7, Theta: 0.1,
-		Alpha: 0.5, Beta: 0.5, FilterStructural: true,
+	out := roam.Compute(s.G, s.P, query, roam.Options{
+		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
+		// （高阶内部项——跳数配额/PPR 阻尼/迭代次数——不对外暴露，保持默认）。
+		Top:    clampInt(vals, "top", 15, 1, 60),
+		Hops:   clampInt(vals, "hops", 3, 1, 5),
+		Lambda: clampFloat(vals, "lambda", 0.7, 0, 1),
+		Theta:  clampFloat(vals, "theta", 0.1, 0, 1),
+		Alpha:  clampFloat(vals, "alpha", 0.5, 0, 1),
+		Beta:   clampFloat(vals, "beta", 0.5, 0, 1),
+		FilterStructural: true,
 	})
 	resp := roamResp{
-		Query: q, Source: s.Source, Vault: s.VaultName,
+		Query: query, Source: s.Source, Vault: s.VaultName,
 		Anchors: out.Anchors, Fallback: int(out.Fallback),
 	}
 	if out.Fallback == 0 {
@@ -421,4 +453,79 @@ func atoiDefault(s string, def int) int {
 		return n
 	}
 	return def
+}
+
+// clampInt 解析可选整型参数并钳制到 [min,max]；非法/缺省用 def。
+// 前端可调参数的安全边界在服务端强制（白盒：即便恶意传值也翻不出范围）。
+func clampInt(v url.Values, key string, def, min, max int) int {
+	n, err := strconv.Atoi(v.Get(key))
+	if err != nil {
+		return def
+	}
+	if n < min {
+		n = min
+	}
+	if n > max {
+		n = max
+	}
+	return n
+}
+
+// clampFloat 解析可选浮点参数并钳制到 [min,max]；非法/缺省用 def。
+func clampFloat(v url.Values, key string, def, min, max float64) float64 {
+	f, err := strconv.ParseFloat(v.Get(key), 64)
+	if err != nil {
+		return def
+	}
+	if f < min {
+		f = min
+	}
+	if f > max {
+		f = max
+	}
+	return f
+}
+
+// TuneParam 描述一个可在前端调整的漫游参数（白盒：只暴露安全子集）。
+// 范围约束由 clampInt/clampFloat 在服务端强制，前端只做展示与提交，
+// 避免"高阶内部参数"（如跳数配额/PPR 阻尼/迭代次数）被用户误改成像风险。
+type TuneParam struct {
+	Key     string  `json:"key"`
+	Label   string  `json:"label"`
+	Type    string  `json:"type"` // int | float
+	Min     float64 `json:"min"`
+	Max     float64 `json:"max"`
+	Step    float64 `json:"step"`
+	Default float64 `json:"default"`
+	Group   string  `json:"group"`
+	Hint    string  `json:"hint"`
+}
+
+// tuneParams 前端可调参数白名单（与 CLI flags 一致的安全子集）。
+func tuneParams() []TuneParam {
+	return []TuneParam{
+		{Key: "top", Label: "结果条数", Type: "int", Min: 1, Max: 60, Step: 1, Default: 15, Group: "基础", Hint: "每屏展示的节点数（1-60）"},
+		{Key: "hops", Label: "最大跳数", Type: "int", Min: 1, Max: 5, Step: 1, Default: 3, Group: "基础", Hint: "激活扩散的最大跳数（1-5）"},
+		{Key: "lambda", Label: "激活衰减", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.7, Group: "算法", Hint: "激活值随跳数的衰减系数（0-1），越大扩散越浅"},
+		{Key: "theta", Label: "剪枝阈值", Type: "float", Min: 0, Max: 1, Step: 0.01, Default: 0.1, Group: "算法", Hint: "低于该值的激活路径被剪枝（0-1），越大结果越少"},
+		{Key: "alpha", Label: "结构分权重", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.5, Group: "融合", Hint: "PPR 结构分在融合中的权重（0-1）"},
+		{Key: "beta", Label: "激活分权重", Type: "float", Min: 0, Max: 1, Step: 0.05, Default: 0.5, Group: "融合", Hint: "激活分在融合中的权重（0-1）"},
+	}
+}
+
+// handleConfig GET /api/config：返回前端可调参数白名单 + 源信息。
+// 前端据此渲染设置抽屉（滑块/输入框），范围/步长/默认值来自服务端，
+// 保证前后端对"可调什么、边界在哪"保持一致。
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	st := s.G.Stats()
+	s.mu.RUnlock()
+	writeJSON(w, map[string]any{
+		"params":  tuneParams(),
+		"source":  s.Source,
+		"vault":   s.VaultName,
+		"version": s.Version,
+		"nodes":   st.Nodes,
+		"edges":   st.Edges,
+	})
 }

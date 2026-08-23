@@ -1,6 +1,9 @@
 // Package score 实现四维打分与归一化融合（设计 §3.2 + 修订 #3/#4/#13）。
 // v1 默认：α=β=0.5, γ=δ=0（无 heat、无依赖分混入导航排名）；每维先归一化。
 // spike 迭代：新增 种子/目录节点排除 + 跳数配额混合（serendipity 机制，见 docs/spike-report.md）。
+// v0.1.6：归一化改为**桶内**（按跳数分桶各自 min-max）——配额机制下候选是
+// "桶内排序、跨桶配额轮转"，全局归一化会让深跳桶整体趋 0（score=0 误导）；
+// min-max 单调不改桶内排序，输出序列不变。
 package score
 
 import (
@@ -41,30 +44,47 @@ type RankOpts struct {
 // Rank 把激活候选与 PPR 合并，min-max 归一化后线性融合，再按跳数配额混合取 topN。
 func Rank(g *graph.Graph, actMap map[string]graph.ActivationResult, pprMap map[string]float64, opts RankOpts) []Result {
 
-	// 1. 归一化 + 融合
+	// 1. 归一化 + 融合（桶内归一化 v0.1.6）：先按跳数分桶，每桶独立 min-max。
+	//    跳数配额机制下候选是"桶内排序、跨桶配额轮转"——跨桶分数本就无可比性；
+	//    全局归一化会让远锚点桶（深跳）整体趋 0（score=0 误导，v0.1.5 定性验证
+	//    发现：崖门 2 跳项 score=0）。min-max 单调，不改变桶内排序 → 输出序列
+	//    不变，只让分数在桶内有区分度（serendipity 深跳节点不被"标零"）。
 	type cand struct {
 		id       string
 		score    float64
 		ppr, act float64
 		hops     int
 	}
-	var all []cand
-	actVals := make([]float64, 0, len(actMap))
-	pprVals := make([]float64, 0, len(actMap))
+	hopBuckets := map[int][]cand{1: {}, 2: {}, 3: {}}
 	for id, r := range actMap {
 		if opts.Exclude != nil && opts.Exclude[id] {
 			continue
 		}
-		actVals = append(actVals, r.Score)
-		pprVals = append(pprVals, pprMap[id])
-		all = append(all, cand{id: id, ppr: pprMap[id], act: r.Score, hops: r.Hops})
+		h := r.Hops
+		if h > 3 {
+			h = 3
+		}
+		if h < 1 {
+			h = 1
+		}
+		hopBuckets[h] = append(hopBuckets[h], cand{id: id, ppr: pprMap[id], act: r.Score, hops: r.Hops})
 	}
-	minAct, maxAct := minMax(actVals)
-	minPPR, maxPPR := minMax(pprVals)
-	for i := range all {
-		nAct := norm(all[i].act, minAct, maxAct)
-		nPPR := norm(all[i].ppr, minPPR, maxPPR)
-		all[i].score = opts.Alpha*nPPR + opts.Beta*nAct + opts.Gamma*0 + opts.Delta*0
+	var all []cand
+	for h := 1; h <= 3; h++ {
+		actVals := make([]float64, 0, len(hopBuckets[h]))
+		pprVals := make([]float64, 0, len(hopBuckets[h]))
+		for _, c := range hopBuckets[h] {
+			actVals = append(actVals, c.act)
+			pprVals = append(pprVals, c.ppr)
+		}
+		minAct, maxAct := minMax(actVals)
+		minPPR, maxPPR := minMax(pprVals)
+		for i := range hopBuckets[h] {
+			nAct := norm(hopBuckets[h][i].act, minAct, maxAct)
+			nPPR := norm(hopBuckets[h][i].ppr, minPPR, maxPPR)
+			hopBuckets[h][i].score = opts.Alpha*nPPR + opts.Beta*nAct + opts.Gamma*0 + opts.Delta*0
+		}
+		all = append(all, hopBuckets[h]...)
 	}
 
 	// 2. 跳数配额混合（serendipity）：hop 越深越少，但保证出现

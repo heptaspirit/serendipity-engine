@@ -1,0 +1,103 @@
+# MCP 暴露架构研究（v3，未开工）
+
+> 状态：**研究稿**（2026-08-23，用户指示"先不开工，研究靠谱架构 + 不影响本体的
+> 接入方式"）。方向已在 design.md §6.10 拍板：**"AI 通道用 MCP 而非自定义
+> REST……REST 给 Web / CLI 自用，MCP 给 AI 用，同一个核心。"** 本文把形态、
+> 边界、tools、风险落成可执行方案；开工时按 §7 步骤走。
+
+## 0. 目标与硬约束
+
+- **目标**：让 AI（agent，含 dsh-mneme 类）能调用引擎能力——漫游、关系查询、
+  统计，把"结构信号"（多路径可达性、间接关联——LLM 单看文本推不出的）交给 AI。
+- **硬约束（用户）**：**不影响本体**——现有 CLI / REST / Web / 自动监听 / 反馈
+  埋点 / 对账全部零改动；MCP 是**第四个入口**，与 CLI/REST 平级，共享同一内核
+  （`internal` 纯库），而不是寄生在 serve 里。
+- **克制原则延续**：MCP 默认**只读**——不写 touch、不触发 refresh；AI 会话不该
+  有能力改动本地状态或触发全量刷新。
+
+## 1. 形态对比：独立入口（推荐）
+
+| 形态 | 优点 | 缺点 | 结论 |
+|---|---|---|---|
+| **独立入口 `seren mcp`**（新子命令，进程内复用 internal 包） | 进程隔离（MCP 崩了核心照跑）；零侵入现有 serve；单二进制分发不变 | 多一个进程入口 | ✅ 推荐 |
+| serve 内嵌 MCP（同一进程开 MCP 端点） | 少一个进程、少一次图加载 | 侵入现有服务生命周期；MCP 挂掉可能拖垮 Web；违反"不影响本体" | ❌ |
+| 独立 MCP server 进程（新二进制） | 解耦最彻底 | 破坏单二进制分发；多一个发布物 | ❌（过度） |
+
+**"不影响本体"的落点**：MCP 子命令只 `import internal/{graph, roam, adapter,
+store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 import
+`internal/web`（Web 是消费者不是内核）、`internal/watch`（监听是 serve 的事）**。
+本体代码零改动，MCP 只是复用同一批库函数的新壳。
+
+## 2. 传输与协议
+
+- **MCP 规范**：JSON-RPC 2.0；本地 agent 用 **stdio transport**（agent 启动子进程，
+  走 stdin/stdout）——与引擎"本地工具、单二进制、无网络出口"的定位一致。
+- **Go 实现两条路**：
+  - 官方 SDK（`modelcontextprotocol/go-sdk`）：成熟、省事，但引入第三方依赖
+    （本仓库目前仅 yaml.v3 + modernc sqlite，依赖极简是卖点）；
+  - **自实现薄协议层**：MCP 起步只需三个消息（`initialize` / `tools/list` /
+    `tools/call`），JSON-RPC 编解码标准库足够。**倾向自实现**（几十行，保持
+    零第三方依赖），若 SDK 生态成熟度明显更高再权衡。
+- **接入 dsh**：dsh 支持配置 MCP server（stdio），指向 `seren mcp --db <store>`；
+  dsh-mneme 类 agent 即可调用。这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
+
+## 3. Tools 设计（只读三件套起步）
+
+| tool | 入参 | 复用内核 | 说明 |
+|---|---|---|---|
+| `graph.stats` | 无 | `Graph.Stats()` | 库规模/连通/枢纽——AI 先摸库 |
+| `graph.roam` | `q, top, lambda, theta, hops` | `roam.Compute` | 查询漫游 → 节点簇（锚点+路径+分数） |
+| `graph.relation` | `from, to` | `Graph.ComputeRelation` | 两节点：最短路径 + 双向 PPR + 证据链（v0.1.5 已铺路） |
+
+原则：
+- **全部只读**；不暴露 refresh / touch / 配置写接口。
+- 输出用引擎现有 JSON 结构（roam.Outcome / graph.Relation 直接序列化），
+  白盒（带路径和证据），AI 可直接消费。
+- 未来可加：`vault.list`（多库切换）、`graph.neighbors`（局部邻域）——按需，不急。
+
+## 4. 数据加载（图生命周期）
+
+- `seren mcp --db <store.sqlite>`：从持久化存储加载图（复用 `store.Load` +
+  `graph.Build`，含改名重定向），**启动时加载一次**，会话期间持有内存图。
+- 与 serve 同构但**无自动监听**：AI 会话短、不需要实时；库更新了重开会话即可。
+  （若未来需要，加 `graph.refresh` tool 显式触发——默认不做，克制。）
+- 多库：v1 单库（启动参数定），多库用多个 MCP 实例或 tool 参数选库（v2 再定）。
+
+## 5. 与本体边界总结
+
+```
+cmd/seren 子命令:
+  index / roam / serve / refresh / profile-detect   ← 现有（不动）
+  mcp                                               ← 新增（v3）
+        │ 只 import internal 纯库
+        ▼
+  internal/{graph,roam,adapter,store,score,sync}    ← 内核（复用）
+        ▲
+  internal/{web,watch}                              ← 消费者（MCP 不碰）
+```
+
+对账 / 监听 / 埋点 / Web 全部不动；MCP 与它们**平行**，共享图与查询内核。
+
+## 6. 风险与克制
+
+- **AI 触发成本**：roam / relation 是内存计算，毫秒~秒级、无外部副作用——安全。
+- **只读防线**：tools 层面就不暴露写操作，防 AI 误改本地状态（库数据 / touch）。
+- **不触发刷新**：MCP 会话不跑 watch/refresh；避免 AI 循环调用导致频繁全量解析
+  （正反馈/资源风险，与既有克制原则一致）。
+- **凭证安全**：MCP 只读图数据；虎鲸 Repo 表红线不变（从不解析，见 02-adapters）。
+
+## 7. 落地步骤（开工时按此走）
+
+1. **协议实验**：Go 里实现 `initialize` / `tools/list` / `tools/call` 的最小
+   stdio JSON-RPC 服务，用 dsh 的 MCP 配置接入验证链路通。
+2. **`seren mcp` 子命令**：解析 `--db`（复用 storePathFor / loadSource 逻辑），
+   启动时建图，注册三件套 tools。
+3. **联调**：在 dsh 会话里调 `graph.roam("成吉思汗")` / `graph.relation`，
+   验证返回结构与 AI 可读性；确认不触发任何写操作。
+4. **文档与发布**：更新本文为"已落地"，补 README 入口 + 版本记录。
+
+## 8. 决策留待开工时确认
+
+- Go SDK vs 自实现薄协议（§2，倾向自实现保零依赖）；
+- 是否允许 `graph.roam` 带 `from`（锚点种子）以外的写类参数（默认不允许）；
+- 多库形态（v2）。
