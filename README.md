@@ -1,6 +1,8 @@
 # Serendipity Engine · 奇遇记引擎
 
 > 图谱漫游：给个人笔记的双链装上激活引擎——**你问一个点，它给你一片。**
+>
+> 白盒、本地、纯 Go 零依赖。一份结构信号，两个消费者：**人**在笔记库里漫游寻灵感，**agent** 免于闷头遍历、直接消费相关簇 / 证据链 / 权重分布。
 
 [![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.10-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
@@ -76,7 +78,7 @@ go build -o seren.exe ./cmd/seren
 | [`docs/architecture/`](docs/architecture/) | 架构文档（维护者向）：总览 / 数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南 / MCP 研究 |
 | [`docs/design.md`](docs/design.md) | 核心设计：图谱漫游机制、四维打分（PPR + 激活 + 跳数配额）、技术栈与产品形态 |
 | [`docs/positioning.md`](docs/positioning.md) | 战略定位：笔记库 = agent 记忆的「激活层」、LLM Wiki 互补、边界与明确不做 |
-| [`docs/roadmap.md`](docs/roadmap.md) | 总路线图：阶段 A 发布前打磨 / B 引擎核心完善 / C 生态卡位 + 发布，含依赖链与状态 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 总路线图：阶段 1 引擎核心 + Web UI 完善（作者自用）/ 2 插件薄壳（M2），含依赖链与状态 |
 | [`docs/frontend.md`](docs/frontend.md) | 前端计划（Web UI）：插件化前置 + UI/UX 打磨规范 + 测试速查与交接 |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | 后端积压清单：性能优化、similar/export/touch 统计、CLI/MCP 打磨 |
 | [`docs/api-contract.md`](docs/api-contract.md) | API 契约：7 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |

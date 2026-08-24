@@ -23,7 +23,7 @@
 
 | 文档 | 说明 |
 |---|---|
-| [`roadmap.md`](roadmap.md) | **总路线图（唯一权威）**：阶段 1 引擎核心+Web UI 完善(作者自用) / 2 插件薄壳(M2) / 3 发布+推广(M2 后)，含依赖链与状态快照。 |
+| [`roadmap.md`](roadmap.md) | **总路线图（唯一权威）**：阶段 1 引擎核心+Web UI 完善(作者自用) / 2 插件薄壳(M2)，含依赖链与状态快照。 |
 | [`frontend.md`](frontend.md) | **前端计划（Web UI）**：插件化前置、易用性、UI/UX 打磨规范 + 测试速查与交接。 |
 | [`backend-backlog.md`](backend-backlog.md) | **后端积压清单**：性能优化、功能缺口（similar/export/touch 统计）、CLI 三件套、MCP 工具扩展、风险红线与优先级。 |
 
@@ -51,8 +51,9 @@
 | [`history/product-form.md`](history/product-form.md) | 三层产品形态决策 → `design.md` §6.8 + `history/plugin-evaluation.md` + `roadmap.md` |
 | [`history/plugin-evaluation.md`](history/plugin-evaluation.md) | 插件薄壳决策（D1–D8 + 工作清单）→ `roadmap.md` M2 |
 | [`history/frontend-issues.md`](history/frontend-issues.md) | 前端问题/测试移交 → `frontend.md`（测试速查 + 防回归清单折叠保留） |
+| [`history/agent-memory-research.md`](history/agent-memory-research.md) | agent 记忆库研究（OpenViking/Graphiti/A-MEM）立场与借鉴 → `positioning.md` §六/§八 + `backend-backlog.md` §三/§七 |
 
 ## 目录约定
 
 - `architecture/` 与 `history/` 之外为**当前有效**文档，改动需同步本导航。
-- 属于具体推广操作、联调记录等本地敏感内容，放 `docs-local/`（已在 `.gitignore`，不入库）。
+- 属于联调记录等本地敏感内容，放 `docs-local/`（已在 `.gitignore`，不入库）。

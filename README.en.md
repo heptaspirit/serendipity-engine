@@ -1,6 +1,8 @@
 # Serendipity Engine
 
 > Graph roaming: an activation engine on top of your personal wiki's backlinks — **ask a point, get a cluster.**
+>
+> White-box, local, pure-Go zero-dependency. One structural signal, two consumers: **humans** roam for inspiration, **agents** skip the crawl and consume clusters / evidence chains / weight distributions directly.
 
 [![Version](https://img.shields.io/badge/version-v0.1.10-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
@@ -77,7 +79,7 @@ go build -o seren.exe ./cmd/seren
 | [`docs/architecture/`](docs/architecture/) | Architecture docs (for maintainers): overview / data model / adapters / engine / sync / web / maintenance / MCP study |
 | [`docs/design.md`](docs/design.md) | Core design: graph-roaming mechanics, 4-dimension scoring (PPR + activation + hop quota), stack & product form |
 | [`docs/positioning.md`](docs/positioning.md) | Strategic positioning: notes-as-agent-memory "activation layer", LLM Wiki complementarity, boundaries & non-goals |
-| [`docs/roadmap.md`](docs/roadmap.md) | Master roadmap: Phase A pre-release polish / B engine core / C ecosystem & release, with dependency chain & status |
+| [`docs/roadmap.md`](docs/roadmap.md) | Master roadmap: Phase 1 engine core + Web UI polish (self-use) / 2 plugin shells (M2), with dependency chain & status |
 | [`docs/frontend.md`](docs/frontend.md) | Frontend plan (Web UI): plugin prep + UI/UX polish spec + test quick-reference |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | Backend backlog: perf optimizations, similar/export/touch stats, CLI & MCP polish |
 | [`docs/api-contract.md`](docs/api-contract.md) | API contract: 7 endpoints + auth (the only shared artifact between the plugin repo and the engine) |

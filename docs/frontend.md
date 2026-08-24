@@ -48,6 +48,7 @@
 1. **需要动引擎的**：#3 节点详情 API（`/api/node?id=`，登记契约）+ similar/export/touch-stats 三个端点（与 [`docs/backend-backlog.md`](backend-backlog.md) §三 同批登记）。其余纯前端。且天然契合"Web 层留口子"——语义候选将来可出现在节点详情的"相似节点"区（见 [`docs/positioning.md`](positioning.md) §五）。
 2. **iframe token 已兼容**：v0.1.8 token 服务端注入页面，iframe 直接 GET / 即得，插件零透传工作。
 3. 多语言尽早做（P0）：文案抽离后，后续所有新功能直接带 key，避免二次返工。
+4. **〔2026-08-23 借鉴〕节点详情分级 L0/L1**（OpenViking，见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.2）：L0 = summary（Text 截断），L1 = overview（摘要 + 邻居导航）——#3 节点详情 API 天然分两级（默认截断摘要、展开给邻居清单）。同源还有「确定性排序」（稳定采样，印证锚点排序需稳定 = Resolve map 序）与「簇级导航」（按 hop 分组展示 roam 结果，远期可读性方向）。
 
 ## 七、后续动作
 

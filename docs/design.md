@@ -287,6 +287,8 @@ wiki 的原始承诺——知识通过链接自组织、词条之间互相引路
 - 用户可干预：忽略 / 删除链接 / 调优先级，全部走审计留痕
 - 自动产生的"推荐理由"是防噪声的第一道闸——用户需要知道它为何在此
 
+**〔2026-08-23 补〕源数据权威原则（与白盒/克制并列）**：索引可重建、源数据不可丢——**宁可搜不到，不要搜到坏结果**。图 = 真实链接；若数据源是 LLM 生成的二手物（无事实锚点），白盒承诺、可信度、GIGO 三条全部崩塌。这正是「官方不做 LLM 生成记忆库兼容」的根源（见 [`docs/positioning.md`](positioning.md) §六）。
+
 ### 6.5 人工旋钮（从 Roaming 偷的设计）
 
 一维人工可调项（如"兴趣"或"难度"）作为四维打分的修正系数：机器管结构 / 激活 / 时效，人管意图。可拖拽调整，反馈立即影响后续漫游。
@@ -458,13 +460,15 @@ v1 已能回答"图谱漫游有没有增量价值"这个核心问题，Python �
 | 层 | 内容 | 形式 |
 |---|---|---|
 | 通用语法 | `[[...]]` 链接、标准 Markdown 链接（OKF）、frontmatter 块、H1 提取 | 代码固定 |
-| **VaultProfile** | title_keys / alias_keys / tag_keys / excluded_dirs / 类型推断规则（目录/键/前缀/后缀）/ type_field / description_keys / resource_keys / structural_types | **YAML 画像**，内置默认 + 按库覆盖 |
+| **VaultProfile** | title_keys / alias_keys / tag_keys / excluded_dirs / excluded_files / 类型推断规则（目录/键/前缀/后缀）/ type_field / description_keys / resource_keys / structural_types | **YAML 画像**，内置默认 + 按库覆盖 |
 | 适配器 | 非 Obsidian 软件（虎鲸等） | 独立 adapter（§6.9） |
 
 - **画像载体**：`<vault>/.serendipity/profile.yaml` 跟库走（§6.8 配置分层收口）；缺失字段用通用默认补齐（防御性校验）。
 - **新库 onboarding**：`seren profile-detect <vault>` 自动产出画像骨架（frontmatter 键普查 / 目录结构 / 文件名前缀统计 / 结构类型猜测），人工微调类型名后保存——机器产出骨架，人定语义。
 - **类型字段（spike F4 落地）**：Document 增加 `Type`，实体查询默认从节点簇排除 `structural_types`（章节/大纲/报告/画布/索引/状态等机器与结构节点）——实测后输出全为内容类型（人物/线索/设定/ADR），2-hop 惊喜保留、噪音消失。
 - **OKF 通用格式落地（〔v0.1.1〕Google Open Knowledge Format）**：OKF v0.1 = "一目录 markdown + YAML frontmatter" 的可移植知识格式，frontmatter 只约定六个可查询字段 `type / title / description / resource / tags / timestamp`，概念间用**普通 markdown 链接**连成图（`index.md` / `log.md` 为保留文件名）。默认解析因此内置：① 标准 markdown 链接（目标须 `.md`）与 `[[...]]` 一样入图——通用语法层直接支持；② `type_field="type"`——frontmatter 的 `type` 值即节点类型；③ `description_keys` / `resource_keys`——描述与资源地址并入正文，全文检索可命中结构化元数据；④ `--profile-name okf` 与 default-obsidian 等价。`index` / `log` **不默认结构类型化**（真实库里可能是正文页面，是否排除由各库画像 `structural_types` 自定）。参考：https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing
+
+**〔2026-08-23 补〕LLM Wiki 画像（真实性门槛下唯一"可接受"的 LLM 数据源）**：内置画像 `llm-wiki`——`excluded_dirs: [raw, audit, output, outputs]` + `excluded_files: [index.md, log.md, CLAUDE.md, AGENTS.md]`，其余字段继承 default-obsidian。`ExcludedFiles` 是**文件名级**排除（现有 `ExcludedDirs` 只管目录），实现 = WalkDir 加文件名判断（各 3 行）。**`index.md` 排除只通过显式画像启用，绝不进默认画像**——Obsidian 用户常拿 index.md 做 MOC，文件名相同无法区分手写 vs LLM 生成。详见 [`docs/backend-backlog.md`](backend-backlog.md) §3.5。
 
 **图自洽性原则（用户拍板）**：节点粒度 = 原生链接粒度——Obsidian 链接目标是页面 → 节点 = 页面；虎鲸链接目标是块 → 节点 = 块；思源（预留）同理。强行跨原生粒度（如把 Obsidian 页面拆成块节点）会产生用户看不懂的碎片图——**图的样子必须和笔记软件里的样子一致**。
 

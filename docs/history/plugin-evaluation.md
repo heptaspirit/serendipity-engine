@@ -114,6 +114,6 @@
 ## 九、相关文档
 
 - [product-form.md](product-form.md)：产品形态分层（跳回软件 > 插件薄壳 > MCP）——本文是其"② 插件薄壳"的细化与拍板
-- [roadmap.md](../roadmap.md)：总路线图（阶段 A/B/C；插件化 M2 在阶段 C）
+- [roadmap.md](../roadmap.md)：总路线图（阶段 1 引擎核心+Web UI / 2 插件薄壳 M2）
 - [architecture/07-mcp.md](../architecture/07-mcp.md)：MCP 架构研究稿（seren mcp 子命令、只读三件套）
 - [architecture/00-overview.md](../architecture/00-overview.md)：架构总览
