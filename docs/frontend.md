@@ -9,7 +9,7 @@
 
 ## 一、现状核对（v0.1.10，internal/web/static/index.html）
 
-已有功能：搜索漫游 / 🎲 随机 / 关系查询 / 参数抽屉（白盒）/ 卡片续漫游 + 历史栈 / 打开跳转（obsidian:// 与 orca-note://）/ touch 埋点 / 自动监听提示 / 对账刷新 / 深跳标签。
+已有功能：搜索漫游 / 🎲 随机 / 关系查询 / **相似查询** / **节点详情预览** / **漫游导出** / **拍照统计** / 参数抽屉（白盒）/ 卡片续漫游 + 历史栈 / 打开跳转（obsidian:// 与 orca-note://）/ touch 埋点 / 自动监听提示 / 对账刷新 / 深跳标签。
 技术形态：零依赖原生 JS，单 HTML，CSS 变量隔离（Tokyo Night 暗色），token 服务端注入（iframe 天然兼容）。
 
 ## 二、P0 · 插件化前置（进 Obsidian/虎鲸前必须）
@@ -62,12 +62,12 @@
 
 | 后端能力（来源） | 前端联动 | 状态 |
 |---|---|---|
-| **节点详情 API**（[`docs/backend-backlog.md`](backend-backlog.md) §六 graph.node，MCP 与 Web 同源） | 卡片「预览」按钮 + 详情面板（Text 摘要 + 邻居 + 被引用）——**一次实现两端受益**，与本路线图 #3 是同一件事 | P0（#3 已有） |
-| **export 漫游导出**（[`docs/backend-backlog.md`](backend-backlog.md) §3.2） | 「导出」按钮 → `?export=1` 拿 Markdown 下载/复制；默认路径零回归 | P0 |
-| **similar 结构相似**（[`docs/backend-backlog.md`](backend-backlog.md) §3.1） | 卡片「相似」按钮 + 独立折叠面板（与「关系」面板同级），展示共享邻居证据清单 | P1 |
-| **touch 统计 API**（[`docs/backend-backlog.md`](backend-backlog.md) §3.3） | 统计折叠面板（哪些节点被反复点击）——**只展示，绝不反馈排序**（红线 2） | P1 |
-| **refresh 的 renamed 字段**（v0.1.5 已有） | 刷新摘要补「改名 N」展示（当前只有 增/更/删） | P1 顺手 |
-| **MCP 接入配置说明**（本表新增） | serve 页面加「AI 接入」卡片：展示 `seren mcp <vault> --db <store>` 配置 + 一键复制——onboarding AI 消费 | P1 |
+| **节点详情 API**（[`docs/backend-backlog.md`](backend-backlog.md) §六 graph.node，MCP 与 Web 同源） | 卡片「预览」按钮 + 详情浮层（Text 摘要 + 邻居 + 被引用）——**一次实现两端受益** | ✅ v0.1.11 已落地 |
+| **export 漫游导出**（[`docs/backend-backlog.md`](backend-backlog.md) §3.2） | 顶栏「导出」按钮 → `?export=1` 拿 Markdown 下载；默认路径零回归 | ✅ v0.1.11 已落地 |
+| **similar 结构相似**（[`docs/backend-backlog.md`](backend-backlog.md) §3.1） | 卡片「相似」按钮 + 独立折叠面板（与「关系」面板同级），展示共享邻居证据清单 | ✅ v0.1.11 已落地 |
+| **touch 统计 API**（[`docs/backend-backlog.md`](backend-backlog.md) §3.3） | 顶栏「统计」折叠面板（哪些节点被反复点击）——**只展示，绝不反馈排序**（红线 2） | ✅ v0.1.11 已落地 |
+| **refresh 的 renamed 字段**（v0.1.5 已有） | 刷新摘要补「改名 N」展示 | ✅ v0.1.11 已落地 |
+| **MCP 接入配置说明** | serve 页面加「AI 接入」卡片：展示 `seren mcp <vault> --db <store>` 配置 + 一键复制——onboarding AI 消费 | P1（未做） |
 
 **MCP 配置说明（细节）**：注意 MCP 是独立子命令进程（`seren mcp`，stdio），不是 serve 的一部分——前端只能**展示配置模板供复制**，不能"开关"它（无开关意义，入口即开关，v0.1.9 已定）。配置模板由服务端提供（如 `/api/config` 返回 mcp 示例块）或前端按当前 source/vault 拼。
 

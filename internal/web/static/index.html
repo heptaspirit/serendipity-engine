@@ -37,6 +37,9 @@
             设置抽屉新增"随机漫步·度加权"滑块（rand_alpha）
     v0.1.8  安全前置：服务端注入 API token（__SEREN_TOKEN__），fetch 包装自动携带
             X-Seren-Token 头——外部页面读不到 token，无法 CSRF 调用
+    v0.1.11 卡片「预览」（/api/node 详情浮层）与「相似」（/api/similar 折叠面板，
+            共享邻居证据）；顶栏「导出」（/api/roam?export=1 → Markdown 下载）与
+            「统计」（/api/touch/stats 折叠面板，只读展示）；刷新摘要补「改名 N」
 -->
 <html lang="zh">
 <head>
@@ -221,6 +224,49 @@
   /* 加载态 */
   .loading { color: var(--muted); text-align: center; padding: 24px 0; font-size: 13px; }
 
+  /* 卡片动作按钮（预览 / 相似，v0.1.11） */
+  .card .actions { display: flex; gap: 6px; margin-top: 8px; }
+  .card .act { font-size: 12px; color: var(--muted); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 2px 9px; cursor: pointer; background: transparent; }
+  .card .act:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* 节点详情预览浮层（v0.1.11，前端 #3） */
+  .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+    animation: fade .12s ease; }
+  .detail-card { width: min(560px, 100%); max-height: 80vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius);
+    padding: 18px 20px; box-shadow: var(--shadow); }
+  .detail-card .dhead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .detail-card .dtitle { font-size: 17px; font-weight: 700; }
+  .detail-card .dtype { font-size: 11px; border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 1px 8px; color: var(--muted); }
+  .detail-card .dclose { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 18px; }
+  .detail-card .dclose:hover { color: var(--accent); }
+  .detail-card .dmeta { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; word-break: break-all; }
+  .detail-card .dtext { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 12px;
+    white-space: pre-wrap; max-height: 220px; overflow: auto; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .detail-card .dsec { font-size: 12px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .5px; margin: 10px 0 6px; }
+  .detail-card .dneighbors { display: flex; flex-wrap: wrap; gap: 6px; }
+  .detail-card .dnod { background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  .detail-card .dnod:hover { border-color: var(--accent); color: var(--accent); }
+  .detail-card .dempty { color: var(--muted); font-size: 12.5px; }
+
+  /* 相似面板（复用折叠 panel，v0.1.11） */
+  #sim-result .sim-item { display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13.5px; }
+  #sim-result .sim-item:hover { background: var(--surface); }
+  #sim-result .sim-item .evi { color: var(--muted); font-size: 11.5px; }
+
+  /* 统计面板（v0.1.11） */
+  #stat-result { font-size: 13px; }
+  #stat-result .stat-line { color: var(--muted); margin: 6px 0; }
+  #stat-result .stat-tag { display: inline-block; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 2px 8px; font-size: 12px; margin: 2px 3px 2px 0; }
   @media (max-width: 560px) {
     .brand .tag { display: none; }
     .header-right .btn .txt { display: none; }
@@ -239,6 +285,8 @@
   </div>
   <h1 id="brand" class="brand">Serendipity Engine <span class="tag" id="ver"></span></h1>
   <div class="header-right">
+    <button id="export" class="btn ghost sm" title="导出当前漫游为 Markdown"><span class="txt">导出</span></button>
+    <button id="stat-toggle" class="btn ghost sm" title="反馈埋点统计（只读）"><span class="txt">统计</span></button>
     <button id="rel-toggle" class="btn ghost sm" title="两节点关系查询"><span class="txt">关系</span></button>
     <button id="cfg-toggle" class="btn ghost sm" title="调整漫游参数">⚙ <span class="txt">参数</span></button>
   </div>
@@ -259,6 +307,24 @@
       <button id="rel-go" class="btn primary">查关系</button>
     </div>
     <div id="rel-result" class="rel-result"></div>
+  </div>
+
+  <!-- 相似面板（可折叠，v0.1.11 结构相似 Jaccard） -->
+  <div id="sim-panel" class="panel hidden">
+    <div class="cfg-head">
+      <span>相似节点 <small style="color:var(--muted);font-weight:400">共同邻居多但互不链接</small></span>
+      <button id="sim-close" class="btn ghost sm">关闭</button>
+    </div>
+    <div id="sim-result" class="rel-result"></div>
+  </div>
+
+  <!-- 统计面板（可折叠，v0.1.11 埋点只读） -->
+  <div id="stat-panel" class="panel hidden">
+    <div class="cfg-head">
+      <span>反馈统计 <small style="color:var(--muted);font-weight:400">只读，不参与排序</small></span>
+      <button id="stat-close" class="btn ghost sm">关闭</button>
+    </div>
+    <div id="stat-result"></div>
   </div>
 
   <!-- 参数设置抽屉（可折叠） -->
@@ -515,8 +581,12 @@ function cardHTML(c, i) {
       ${hopEl}
       ${openLink}
     </div>
-    <div class="path">${esc(c.path || '')}</div>
+    ${c.path ? `<div class="path">${esc(c.path)}</div>` : ''}
     <div class="scores">${esc(scoreLine(c))}</div>
+    <div class="actions">
+      <button class="act" data-preview="${esc(c.id)}" onclick="event.stopPropagation(); showPreview(this.dataset.preview)">预览</button>
+      <button class="act" data-similar="${esc(c.id)}" onclick="event.stopPropagation(); showSimilar(this.dataset.similar)">相似</button>
+    </div>
   </div>`;
 }
 
@@ -600,6 +670,105 @@ async function queryRelation() {
   }
 }
 
+// ---- 节点详情预览（v0.1.11，前端 #3）：点卡片「预览」看 /api/node ----
+async function showPreview(id) {
+  let d;
+  try {
+    const r = await fetch('/api/node?id=' + encodeURIComponent(id));
+    d = await r.json();
+    if (d.error) throw new Error(d.error);
+  } catch (e) {
+    return alert('详情失败: ' + e.message);
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'detail-overlay';
+  const nb = (d.neighbors || []).map(n =>
+    `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
+  const bl = (d.backlinks || []).map(n =>
+    `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
+  overlay.innerHTML = `<div class="detail-card" onclick="event.stopPropagation()">
+    <div class="dhead">
+      <span class="dtitle">${esc(d.title || d.id)}</span>
+      <span class="dtype">${esc(d.type || '')}</span>
+      <span class="dclose" title="关闭">✕</span>
+    </div>
+    <div class="dmeta">id: ${esc(d.id)}${d.deg !== undefined ? ' · 度 ' + d.deg : ''}</div>
+    <div class="dtext">${esc(d.text || '（无正文摘要）')}</div>
+    <div class="dsec">邻居（${(d.neighbors || []).length}）</div>
+    ${nb || '<div class="dempty">无邻居</div>'}
+    <div class="dsec">被引用（${(d.backlinks || []).length}）</div>
+    ${bl || '<div class="dempty">无被引用</div>'}
+  </div>`;
+  overlay.addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.dclose').onclick = () => overlay.remove();
+  // 邻居/被引用点击 → 从该节点继续漫游 + 关闭详情
+  overlay.querySelectorAll('.dnod').forEach(n => {
+    n.onclick = () => { overlay.remove(); roam(n.dataset.id, 'push', n.dataset.title || n.dataset.id); };
+  });
+  document.body.appendChild(overlay);
+}
+
+// ---- 结构相似（v0.1.11，backlog §3.1）：卡片「相似」→ 折叠面板 ----
+async function showSimilar(id) {
+  openOnly('#sim-panel');
+  const box = $('#sim-result');
+  box.innerHTML = '<div class="loading">查询相似…</div>';
+  try {
+    const r = await fetch('/api/similar?id=' + encodeURIComponent(id) + '&k=12');
+    const d = await r.json();
+    if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
+    const list = d.results || [];
+    if (!list.length) { box.innerHTML = '<div class="rel-empty">没有相似节点</div>'; return; }
+    box.innerHTML = list.map(s => {
+      let title = s.title || s.id;
+      // 显示当前查询节点标题为上下文
+      const evi = (s.shared_titles || []).slice(0, 4).join('、');
+      return `<div class="sim-item" data-id="${esc(s.id)}" data-title="${esc(title)}">
+        <span>${esc(title)} <small style="color:var(--muted)">[${esc(s.type)}]</small></span>
+        <span class="evi">${esc(evi ? '直连: ' + evi : '')}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="rel-empty">查询失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+// ---- 导出当前漫游为 Markdown（v0.1.11，backlog §3.2）----
+function exportMarkdown() {
+  const q = $('#q').value.trim();
+  let url = '/api/roam?export=1' + (q ? '&q=' + encodeURIComponent(q) : '');
+  const qs = paramQS();
+  if (qs) url += '&' + qs;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'serendipity-roam.md';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// ---- 反馈统计（v0.1.11，backlog §3.3）：只读展示 ----
+async function showStats() {
+  openOnly('#stat-panel');
+  const box = $('#stat-result');
+  box.innerHTML = '<div class="loading">读取统计…</div>';
+  try {
+    const r = await fetch('/api/touch/stats?n=10');
+    const d = await r.json();
+    if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
+    const tag = (x) => `<span class="stat-tag">${esc(x.id)} <b>${x.count}</b></span>`;
+    const targets = (d.targets || []).map(tag).join('') || '<span style="color:var(--muted)">无数据</span>';
+    const sources = (d.sources || []).map(tag).join('') || '<span style="color:var(--muted)">无数据</span>';
+    box.innerHTML =
+      `<div class="stat-line">总点击：<b>${d.total || 0}</b> 次</div>` +
+      `<div class="stat-line">被反复点击：</div><div>${targets}</div>` +
+      `<div class="stat-line">点击来源：</div><div>${sources}</div>` +
+      `<div style="color:var(--muted);font-size:11.5px;margin-top:8px">仅记录与只读统计，不参与排序（红线）</div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="rel-empty">统计失败: ' + esc(e.message) + '</div>';
+  }
+}
+
 // ---- 回到初始页 ----
 function goHome() {
   stack = [''];
@@ -616,7 +785,7 @@ window.addEventListener('popstate', e => {
   roam(q, 'replace');
 });
 
-// ---- 事件委托：卡片 / 气泡 / 锚点 / 关系节点 统一点击 ----
+// ---- 事件委托：卡片 / 气泡 / 锚点 / 关系节点 / 相似项 统一点击 ----
 document.addEventListener('click', e => {
   if (e.target.closest('a')) return; // 「打开 ↗」链接不拦截
   const rel = e.target.closest('.rel-node');
@@ -625,6 +794,12 @@ document.addEventListener('click', e => {
     $('#rel-from').value = rel.dataset.title || rel.dataset.id;
     $('#q').value = rel.dataset.title || rel.dataset.id;
     roam(rel.dataset.id, 'push', rel.dataset.title || rel.dataset.id);
+    return;
+  }
+  // 相似面板项点击（v0.1.11）
+  const si = e.target.closest('.sim-item');
+  if (si && si.dataset.id) {
+    roam(si.dataset.id, 'push', si.dataset.title || si.dataset.id);
     return;
   }
   const el = e.target.closest('.card, .bubble, #anchors .anchor[data-id]');
@@ -676,13 +851,26 @@ function toggle(id, btn) {
   if (btn && on) { btn.classList.add('active'); } else if (btn) { btn.classList.remove('active'); }
   // 同时只开一个面板，避免页面堆叠
   if (!el.classList.contains('hidden')) {
-    ['#rel-panel', '#cfg-panel'].forEach(o => {
+    ['#rel-panel', '#cfg-panel', '#sim-panel', '#stat-panel'].forEach(o => {
       if (o !== id) $(o).classList.add('hidden');
     });
   }
 }
+// openOnly：直接打开指定面板并关掉其它（相似/统计按钮不需要"再点一次关闭"逻辑用）
+function openOnly(id) {
+  ['#rel-panel', '#cfg-panel', '#sim-panel', '#stat-panel'].forEach(o => {
+    $(o).classList.add('hidden');
+  });
+  $(id).classList.remove('hidden');
+}
 $('#rel-toggle').onclick = () => toggle('#rel-panel');
 $('#cfg-toggle').onclick = () => toggle('#cfg-panel');
+// 统计/相似按钮点击 → 打开面板并加载数据（showStats/showSimilar 内部通过 openOnly
+// 打开面板并关掉其它——只开一个，避免与 toggle 的开关语义打架）
+$('#stat-toggle').onclick = () => showStats();
+$('#sim-close').onclick = () => $('#sim-panel').classList.add('hidden');
+$('#stat-close').onclick = () => $('#stat-panel').classList.add('hidden');
+$('#export').onclick = exportMarkdown;
 
 // ---- 对账刷新 ----
 $('#refresh').onclick = async () => {
@@ -695,7 +883,7 @@ $('#refresh').onclick = async () => {
     const d = await r.json();
     if (d.error) { hint.textContent = '刷新失败: ' + d.error; return; }
     hint.textContent = '已刷新: 新增 ' + d.added + ' · 更新 ' + d.updated +
-      ' · 删除 ' + d.deleted + ' · 未变 ' + d.unchanged +
+      ' · 删除 ' + d.deleted + ' · 改名 ' + (d.renamed || 0) + ' · 未变 ' + d.unchanged +
       '（' + d.duration_ms + 'ms，节点 ' + d.nodes + '）';
     // 刷新后源信息可能变化
     fetch('/api/config').then(r => r.json()).then(c => {

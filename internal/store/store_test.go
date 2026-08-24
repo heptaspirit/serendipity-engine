@@ -94,3 +94,42 @@ func TestLoadRenamesRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip 错误：%v ≠ %v", got, rm)
 	}
 }
+
+// TouchStats：只读统计聚合（v0.1.11，backlog §3.3）。
+// 验证被点击 TopN、来源 TopN、总数；且不写库（只读）。
+func TestTouchStats(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "t.sqlite")
+	// 插入埋点：target 聚焦少数节点，src 记录来源
+	for i := 0; i < 3; i++ {
+		if err := AppendTouch(dbPath, "热点A", "来源X"); err != nil {
+			t.Fatalf("AppendTouch: %v", err)
+		}
+	}
+	if err := AppendTouch(dbPath, "热点A", "来源Y"); err != nil {
+		t.Fatalf("AppendTouch: %v", err)
+	}
+	if err := AppendTouch(dbPath, "热点B", ""); err != nil { // 无来源（src=NULL/空）
+		t.Fatalf("AppendTouch: %v", err)
+	}
+	total, targets, sources, err := TouchStats(dbPath, 10)
+	if err != nil {
+		t.Fatalf("TouchStats: %v", err)
+	}
+	if total != 5 {
+		t.Fatalf("总数应 5：%d", total)
+	}
+	// 被点击：热点A(4) 应排首位
+	if len(targets) == 0 || targets[0].ID != "热点A" || targets[0].Count != 4 {
+		t.Fatalf("Targets 错误：%v", targets)
+	}
+	// 来源：来源X(3) 应排首位；空 src 应被排除
+	if len(sources) == 0 || sources[0].ID != "来源X" || sources[0].Count != 3 {
+		t.Fatalf("Sources 错误：%v", sources)
+	}
+	// 无埋点表 → 全零（不报错）
+	total2, _, _, err := TouchStats(filepath.Join(dir, "none.sqlite"), 10)
+	if err != nil || total2 != 0 {
+		t.Fatalf("无表应全零：total=%d err=%v", total2, err)
+	}
+}

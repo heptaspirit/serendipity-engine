@@ -11,11 +11,12 @@
 > 定位（positioning 一句话）：把用户笔记库变成 agent 的记忆——本引擎是记忆的「激活层」。
 > **落地目标**：先让作者本人把「阅读 + 漫游」用起来（引擎 + Web UI 顺手）；再做插件让它对别人也可用、不硬核。
 
-## 当前状态快照（2026-08-24）
+## 当前状态快照（2026-08-25）
 
-- 引擎 **v0.1.10**；**M0 已落地**（serve 安全前置 + API 契约 + MCP v3）；**36 单测绿**；Obsidian + 虎鲸真实库验证通过（双数据源、对账刷新、自动监听）。
+- 引擎 **v0.1.11**；**M0 已落地**（serve 安全前置 + API 契约 + MCP v3）；**55 单测绿**；Obsidian + 虎鲸真实库验证通过（双数据源、对账刷新、自动监听）。
+- **M1 阶段 1 持续推进**：similar 结构相似 / graph.node 节点详情 / export 漫游导出 / touch 统计 API / Stats 缓存 / renames 中间环清理 / WAL autocheckpoint / CLI 三件套（子命令 help / --json / 退出码）已落地。
 - **现状判断**：目前几乎是「只有后端的引擎」——Web UI 只是「漫游工具」，缺让非技术用户可用的插件/入口，对外偏硬核。
-- 未完成：引擎核心缺口（similar / node / export / touch / 社区发现 / LLM Wiki 画像…）、Web UI 完善、插件薄壳。
+- 未完成：引擎核心缺口（性能：PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写、Web UI 完善、LLM Wiki adapter、社区发现 — 诊断层）、插件薄壳。
 - **2026-08-24 新增方向**（来自 agent 记忆库研究，见 [`history/agent-memory-research.md`](history/agent-memory-research.md)）：**诊断层**（Leiden 社区发现 → 知识缺口诊断）、**LLM Wiki adapter 画像**；两个 backlog 方向获外部验证（Store 增量写 ← Graphiti、touch 边权演化 ← A-MEM）。
 
 ## 里程碑总览
@@ -36,16 +37,17 @@
 
 | # | 任务 | 落点 | 说明 |
 |---|---|---|---|
-| 1 | **similar 结构相似**（Jaccard 孪生） | [backend-backlog](backend-backlog.md) §3.1 | 最高价值；解锁 `graph.similar` + Web 相似面板；白盒替代语义缺口 |
-| 2 | **graph.node**（MCP + 前端节点详情，一次双端） | [backend-backlog](backend-backlog.md) §六 · [frontend](frontend.md) #3 | MCP 最缺的「确认这是什么」 |
-| 3 | **export 漫游导出** | [backend-backlog](backend-backlog.md) §3.2 · [frontend](frontend.md) | 漫游发现能沉淀进笔记 |
-| 4 | **touch 统计 API**（只读） | [backend-backlog](backend-backlog.md) §3.3 | 反馈闭环只读第一步 |
-| 5 | 性能：PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | [backend-backlog](backend-backlog.md) §二 | 数万节点规模（等信号） |
-| 6 | 风险修复：renames 中间环 + WAL autocheckpoint | [backend-backlog](backend-backlog.md) §四 | 防无限增长 |
-| 7 | **Web UI 完善**：hero 改静态（P0.5）、节点详情、相似/统计/导出面板、易用性（P1）、侧滑抽屉（§九） | [frontend](frontend.md) §三/§九 | 从「漫游工具」→「阅读 + 漫游工具」 |
+| 1 | **similar 结构相似**（Jaccard 孪生） | [backend-backlog](backend-backlog.md) §3.1 | ✅ v0.1.11；解锁 `graph.similar` + Web 相似面板；白盒替代语义缺口 |
+| 2 | **graph.node**（MCP + 前端节点详情，一次双端） | [backend-backlog](backend-backlog.md) §六 · [frontend](frontend.md) #3 | ✅ v0.1.11；MCP graph.node + /api/node + 卡片「预览」 |
+| 3 | **export 漫游导出** | [backend-backlog](backend-backlog.md) §3.2 · [frontend](frontend.md) | ✅ v0.1.11；/api/roam?export=1 → Markdown 卡片清单 |
+| 4 | **touch 统计 API**（只读） | [backend-backlog](backend-backlog.md) §3.3 | ✅ v0.1.11；/api/touch/stats 只读聚合，绝不反馈排序 |
+| 5 | 性能：PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | [backend-backlog](backend-backlog.md) §二 | 数万节点规模（等信号）；Stats 缓存 ✅ 已顺手做掉 |
+| 6 | 风险修复：renames 中间环 + WAL autocheckpoint | [backend-backlog](backend-backlog.md) §四 | ✅ v0.1.11（collapseChains + wal_autocheckpoint） |
+| 7 | **Web UI 完善**：hero 改静态（P0.5）、节点详情、相似/统计/导出面板、易用性（P1）、侧滑抽屉（§九） | [frontend](frontend.md) §三/§九 | 🔄 进行中（v0.1.11 已加预览/相似/导出/统计面板） |
 | 8 | 前端测试：**JSON 契约测试**（优先）+ Playwright 前端自动化（**可选/按需**，用户后装环境） | [frontend](frontend.md) 附录 | 质量门槛 |
 | 9 | **LLM Wiki adapter 画像**（`llm-wiki` + `ExcludedFiles`） | [backend-backlog](backend-backlog.md) §3.5 | 真实性门槛下唯一可接受的 LLM 数据源兼容，低成本 |
 | 10 | **社区发现（Leiden）→ 诊断层**（知识缺口诊断） | [backend-backlog](backend-backlog.md) §3.4 | 「算法等场景」：诊断层排期时落地，选型已定 |
+| 11 | **CLI 打磨三件套** | [backend-backlog](backend-backlog.md) §五 | ✅ v0.1.11（seren help <cmd> / --json / 退出码 0-2-1） |
 
 ### 阶段 2 · 插件薄壳（M2；对外可用）
 

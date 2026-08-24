@@ -376,6 +376,9 @@ func baseName(p string) string {
 //   - 持久化条目在"旧 ID 重现于当前批次"时失效删除（旧名回到库 = 新文档，
 //     不再是改名目标）；目标消失但旧名也未重现 → 保留（链式改名的中间环，
 //     由 ApplyRenames 传递解析到最终目标）。
+//   - v0.1.11 链式折叠（backlog §四，renames 表无上限风险修复）：合并后只保留
+//     "链头 → 最终目标"直达映射，丢弃被其他映射覆盖的中间环（A→B、B→C 存在时
+//     A→B 可删）——条目数从"历史改名总次数"收敛为"仍存活的链头数"（有界）。
 func MergeRenames(stored, fresh map[string]string, cur []*adapter.Document) map[string]string {
 	curIDs := map[string]bool{}
 	for _, d := range cur {
@@ -391,7 +394,51 @@ func MergeRenames(stored, fresh map[string]string, cur []*adapter.Document) map[
 	for o, n := range fresh {
 		out[o] = n
 	}
+	return collapseChains(out)
+}
+
+// collapseChains 链式折叠：每条改名链只留"链头→最终目标"。
+// 链头 = 不作为任何条目目标的 key（入度 0）；中间环（目标本身也是 key）被链头
+// 的直达映射覆盖，丢弃。环（异常）防御：解析回自身的条目删除。
+// 语义权衡（backlog §四）：中间名（B/C）是改名过程的短暂状态，Obsidian 内改名
+// 会自动更新引用、文件系统手动改名时引用仍指向原始名（链头）——中间名引用
+// 在实践中不存在或极罕见，丢弃换取有界增长。
+func collapseChains(m map[string]string) map[string]string {
+	if len(m) < 2 {
+		return m
+	}
+	inDeg := map[string]int{}
+	for _, n := range m {
+		inDeg[n]++
+	}
+	out := map[string]string{}
+	for o := range m {
+		if inDeg[o] > 0 {
+			continue // 中间节点：被链头覆盖
+		}
+		final := resolveChain(m, o)
+		if final != o {
+			out[o] = final
+		}
+	}
 	return out
+}
+
+// resolveChain 沿映射解析到最终目标；环/缺失返回自身（保守）。
+func resolveChain(m map[string]string, start string) string {
+	seen := map[string]bool{start: true}
+	cur := start
+	for {
+		next, ok := m[cur]
+		if !ok {
+			return cur
+		}
+		if seen[next] {
+			return start // 环：返回原始
+		}
+		seen[next] = true
+		cur = next
+	}
 }
 
 // ApplyRenames 把 docs 的 Refs 里指向旧 ID 的链接重定向到新 ID（就地修改）。

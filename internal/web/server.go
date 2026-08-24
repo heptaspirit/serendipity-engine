@@ -12,10 +12,17 @@
 //	       ?seed=N 可复现，?rand_alpha= 度加权指数，内置防重复 ring）
 //	  GET  /api/relation?from=&to=  两节点关系查询（v0.1.5：最短路径+双向
 //	       PPR 强度+证据链，white-box；from/to 接受 ID 或标题）
+//	  GET  /api/similar?id=&k=  结构相似节点（v0.1.11，Jaccard 孪生：
+//	       共同邻居多但互不链接，带共享邻居证据；独立入口不并入 roam 红线 1）
+//	  GET  /api/node?id=  单节点详情（v0.1.11：L0 Text 摘要 + L1 邻居/被引用）
+//	  GET  /api/touch/stats  反馈埋点只读统计（v0.1.11，backlog §3.3；
+//	       只读聚合，绝不反馈到排序/hot——红线 2）
 //	  GET  /api/config   前端可调参数白名单（top/hops/lambda/theta/alpha/beta
 //	       + 范围约束；前端据此渲染设置抽屉，见 tuneParams）
 //	  POST /api/refresh  对账刷新（v0.1.2，见下）
 //	  GET  /             嵌入的可视化页面（go:embed static/index.html）
+//	roam 支持 ?export=1 → Markdown 卡片清单（v0.1.11，backlog §3.2：
+//	       导出语义 = 卡片清单而非重新生成笔记；默认路径行为完全不变）
 //
 // ▍对账刷新（POST /api/refresh，v0.1.2）
 //
@@ -58,6 +65,9 @@
 //	v0.1.8  安全前置（roadmap M0-0.1）：Handler 包 auth 中间件——Host 校验
 //	        （仅回环地址）+ API token 鉴权（X-Seren-Token 头 / ?token=，
 //	        常量时间比较）；页面注入 token（__SEREN_TOKEN__ 占位符）。
+//	v0.1.11 GET /api/similar（Jaccard 结构相似，独立入口）+ GET /api/node
+//	        （节点详情 L0/L1）+ GET /api/touch/stats（埋点只读统计）+
+//	        /api/roam?export=1（Markdown 卡片清单导出）。
 //
 // ============================================================================
 package web
@@ -92,6 +102,19 @@ type RefreshFunc func() (*syncpkg.Result, *graph.Graph, error)
 // TouchFunc 反馈埋点闭包（由 main 构造，写 store 的 touch 表）。
 type TouchFunc func(target, from string) error
 
+// TouchStatsFunc 反馈埋点只读统计闭包（由 main 构造，读 store touch 表聚合；
+// v0.1.11，backlog §3.3 —— 只读分析，绝不反馈到排序/hot，红线 2）。
+// 返回 (total 总点击数, targets 被点击 TopN, sources 点击来源 TopN, err)。
+// 用 web 自有类型而非 store.TouchRow——保持 web 不 import store 的边界
+// （闭包注入模式：main 负责把 store 结果映射过来）。
+type TouchStatsFunc func() (total int, targets, sources []TouchRow, err error)
+
+// TouchRow 埋点聚合行（web 层展示形态）。
+type TouchRow struct {
+	ID    string `json:"id"`
+	Count int    `json:"count"`
+}
+
 // Server 持有图与画像，提供 REST 接口。
 type Server struct {
 	mu        sync.RWMutex // 保护 G 与 revision（刷新替换图，读接口并发安全）
@@ -103,6 +126,7 @@ type Server struct {
 	Version   string
 	Refresh   RefreshFunc // 非空时注册 POST /api/refresh
 	Touch     TouchFunc   // 非空时注册 POST /api/touch（反馈埋点）
+	TouchStat TouchStatsFunc // 非空时注册 GET /api/touch/stats（只读统计，v0.1.11）
 	Token     string      // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
 	revision  int         // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
 
@@ -112,13 +136,18 @@ type Server struct {
 	recent []string   // 最近随机起点（防重复 ring，上限 32）
 }
 
-// New 创建 Web 服务；refresh/touch 为 nil 时不注册对应端点。
+// New 创建 Web 服务；refresh/touch/touchStat 为 nil 时不注册对应端点。
 func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version string, refresh RefreshFunc, touch TouchFunc) *Server {
 	return &Server{
 		G: g, P: p, Source: source, VaultName: vaultName, Version: version,
 		Refresh: refresh, Touch: touch,
 		rng: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15)),
 	}
+}
+
+// SetTouchStats 注入埋点只读统计闭包（v0.1.11；New 后调用，避免改签名波及调用方）。
+func (s *Server) SetTouchStats(fn TouchStatsFunc) {
+	s.TouchStat = fn
 }
 
 // ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
@@ -145,12 +174,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/hot", s.handleHot)
 	mux.HandleFunc("/api/roam", s.handleRoam)
 	mux.HandleFunc("/api/relation", s.handleRelation)
+	mux.HandleFunc("/api/similar", s.handleSimilar)
+	mux.HandleFunc("/api/node", s.handleNode)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	if s.Refresh != nil {
 		mux.HandleFunc("/api/refresh", s.handleRefresh)
 	}
 	if s.Touch != nil {
 		mux.HandleFunc("/api/touch", s.handleTouch)
+	}
+	if s.TouchStat != nil {
+		mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
 	}
 	mux.HandleFunc("/", s.handleIndex)
 	return s.auth(mux)
@@ -293,6 +327,104 @@ func (s *Server) resolveID(q string) string {
 		return ""
 	}
 	return ms[0].ID
+}
+
+// similarItem 结构相似响应项（web 层补充标题/类型 + 共享邻居证据标题）。
+type similarItem struct {
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Type          string   `json:"type"`
+	Score         float64  `json:"score"`
+	Shared        []string `json:"shared"`         // 共享邻居 ID（证据）
+	SharedTitles  []string `json:"shared_titles"`  // 共享邻居标题（证据可读）
+	URI           string   `json:"uri,omitempty"`  // 跳转
+}
+
+// handleSimilar GET /api/similar?id=&k=：结构相似节点（v0.1.11，backlog §3.1）。
+// id 接受 ID 或标题（Resolve 锚定首个）。输出 Jaccard 相似节点 + 共享邻居证据
+// （white-box："因为都链接了 X/Y"）。独立入口——绝不并入 roam 管线（红线 1）。
+func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("id")
+	if q == "" {
+		writeJSON(w, map[string]string{"error": "id required"})
+		return
+	}
+	k := atoiDefault(r.URL.Query().Get("k"), 10)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id := s.resolveID(q)
+	if id == "" {
+		writeJSON(w, map[string]string{"error": "node not found"})
+		return
+	}
+	structural := map[string]bool{}
+	for _, t := range s.P.StructuralTypes {
+		structural[t] = true
+	}
+	sims := s.G.Similar(id, k, structural)
+	out := make([]similarItem, 0, len(sims))
+	for _, sm := range sims {
+		var titles []string
+		for _, sid := range sm.Shared {
+			if n, ok := s.G.Node(sid); ok && n.Title != "" {
+				titles = append(titles, n.Title)
+			}
+		}
+		out = append(out, similarItem{
+			ID: sm.ID, Title: sm.Title, Type: sm.Type,
+			Score: sm.Score, Shared: sm.Shared, SharedTitles: titles,
+			URI: s.uriFor(nodePath(s.G, sm.ID), sm.ID),
+		})
+	}
+	writeJSON(w, map[string]any{"id": id, "results": out})
+}
+
+// handleNode GET /api/node?id=：单节点详情（v0.1.11，roadmap M1 #2 / 前端 #3）。
+// id 接受 ID 或标题。输出 L0 摘要 + L1 邻居/被引用（graph.NodeDetail 原样）。
+func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("id")
+	if q == "" {
+		writeJSON(w, map[string]string{"error": "id required"})
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id := s.resolveID(q)
+	if id == "" {
+		writeJSON(w, map[string]string{"error": "node not found"})
+		return
+	}
+	d := s.G.NodeDetail(id)
+	if d == nil {
+		writeJSON(w, map[string]string{"error": "node not found"})
+		return
+	}
+	writeJSON(w, d)
+}
+
+// handleTouchStats GET /api/touch/stats：反馈埋点只读统计（v0.1.11，backlog §3.3）。
+// 只读分析：总点击数 + 被点击 TopN + 来源 TopN。绝不反馈到排序/hot（红线 2：
+// 否则等于偷偷启动边权演化）。不进 MCP（隐私敏感，见 backend-backlog §3.3）。
+func (s *Server) handleTouchStats(w http.ResponseWriter, r *http.Request) {
+	if s.TouchStat == nil {
+		writeJSON(w, map[string]string{"error": "touch stats unavailable"})
+		return
+	}
+	limit := atoiDefault(r.URL.Query().Get("n"), 10)
+	total, targets, sources, err := s.TouchStat()
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(targets) > limit {
+		targets = targets[:limit]
+	}
+	if len(sources) > limit {
+		sources = sources[:limit]
+	}
+	writeJSON(w, map[string]any{
+		"total": total, "targets": targets, "sources": sources,
+	})
 }
 
 type statsResp struct {
@@ -442,6 +574,7 @@ func nodePath(g *graph.Graph, id string) string {
 func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	vals := r.URL.Query()
+	export := vals.Get("export") == "1"
 	s.mu.RLock()
 	opt := roam.Options{
 		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
@@ -458,14 +591,74 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	// 随机漫步（v0.1.7）：?random=1 时忽略 q，roll 随机起点 + 簇。
 	if vals.Get("random") == "1" {
 		out := s.computeRandom(vals, opt)
-		writeJSON(w, s.roamRespOf(out, "random"))
+		resp := s.roamRespOf(out, "random")
+		if export {
+			writeMarkdown(w, s.exportMD(resp))
+			s.mu.RUnlock()
+			return
+		}
+		writeJSON(w, resp)
 		s.mu.RUnlock()
 		return
 	}
 
 	out := roam.Compute(s.G, s.P, query, opt)
-	writeJSON(w, s.roamRespOf(out, query))
+	resp := s.roamRespOf(out, query)
+	if export {
+		writeMarkdown(w, s.exportMD(resp))
+		s.mu.RUnlock()
+		return
+	}
+	writeJSON(w, resp)
 	s.mu.RUnlock()
+}
+
+// exportMD 把一次漫游结果渲染为 Markdown 卡片清单（v0.1.11，backlog §3.2）。
+// 语义：卡片清单（标题 + 类型 + hop + 路径 + 分数），不是重新生成笔记；
+// 导出不额外 touch（只读）。锚点、结果、降级命中都带上，供沉淀进笔记。
+func (s *Server) exportMD(resp roamResp) string {
+	var b strings.Builder
+	b.WriteString("# Serendipity 漫游导出\n\n")
+	b.WriteString(fmt.Sprintf("- 查询：`%s`（源 %s，vault %s）\n", resp.Query, resp.Source, resp.Vault))
+	if len(resp.Anchors) > 0 {
+		b.WriteString("\n## 锚点\n\n")
+		for _, a := range resp.Anchors {
+			mark := ""
+			if a.Random {
+				mark = " 🎲"
+			}
+			b.WriteString(fmt.Sprintf("- **%s** `%s` [%s]%s\n", a.Title, a.ID, a.Type, mark))
+		}
+	}
+	if len(resp.Results) > 0 {
+		b.WriteString("\n## 相关节点\n\n")
+		for _, it := range resp.Results {
+			hop := ""
+			if it.Hops > 0 {
+				hop = fmt.Sprintf(" · %d-hop", it.Hops)
+			}
+			b.WriteString(fmt.Sprintf("- **%s** `%s` [%s]%s\n", it.Title, it.ID, it.Type, hop))
+			b.WriteString(fmt.Sprintf("  score %.3f · ppr %.4f · act %.3f\n", it.Score, it.PPR, it.Act))
+			if len(it.Path) > 0 {
+				b.WriteString("  路径：`" + strings.Join(it.Path, " → ") + "`\n")
+			}
+		}
+	}
+	if len(resp.FallbackHits) > 0 {
+		b.WriteString("\n## 全文降级命中\n\n")
+		for _, h := range resp.FallbackHits {
+			b.WriteString(fmt.Sprintf("- **%s** `%s` [%s] · 命中 %d 次\n", h.Title, h.ID, h.Type, h.Count))
+		}
+	}
+	if len(resp.Results) == 0 && len(resp.FallbackHits) == 0 {
+		b.WriteString("\n_（无结果）_\n")
+	}
+	return b.String()
+}
+
+func writeMarkdown(w http.ResponseWriter, s string) {
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write([]byte(s))
 }
 
 // computeRandom 执行一次随机漫步（?random=1，v0.1.7）。

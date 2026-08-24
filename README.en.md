@@ -4,7 +4,7 @@
 >
 > White-box, local, pure-Go zero-dependency. One structural signal, two consumers: **humans** roam for inspiration, **agents** skip the crawl and consume clusters / evidence chains / weight distributions directly.
 
-[![Version](https://img.shields.io/badge/version-v0.1.10-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
+[![Version](https://img.shields.io/badge/version-v0.1.11-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
 [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
 [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod)
@@ -20,7 +20,9 @@ English · [简体中文](README.md)
 - **Two data sources**: Obsidian vault (file parsing) + Orca Note (SQLite snapshot read; the credentials table is **never** touched)
 - **Reconciliation**: `seren refresh` / Web ↻ / auto-watch keep the graph in sync with add/edit/delete (throttled merging — deliberately restrained against feedback loops)
 - **Relation query**: shortest path + bidirectional PPR strength + evidence chain between any two nodes (white-box)
-- **Four entry points**: CLI / REST + Web UI / MCP (`seren mcp`, AI channel)
+- **Structural similarity**: node pairs with many common neighbors but no direct link (Jaccard, with shared-neighbor evidence) — a pure-structure substitute for the embedding semantic axis
+- **Roam export**: `/api/roam?export=1` → Markdown card list, so discoveries can be captured back into your notes
+- **Five entry points**: CLI / REST + Web UI / MCP (`seren mcp`, AI channel, six read-only tools) / CLI subcommand help + `--json` structured output
 
 ## Design Philosophy
 
@@ -67,8 +69,12 @@ go build -o seren.exe ./cmd/seren
 # Reconcile (sync after add/edit/delete; prints added/updated/deleted)
 .\seren.exe refresh <vault> --store <file.sqlite>
 
-# MCP (AI channel, read-only tools; point a stdio MCP client at this)
+# MCP (AI channel, six read-only tools; point a stdio MCP client at this)
 .\seren.exe mcp <vault> --db <file.sqlite>
+
+# Subcommand help + structured output (CLI triplet)
+.\seren.exe help roam          # per-subcommand help (or .\seren.exe roam -h)
+.\seren.exe roam <vault> "word" --json   # structured JSON (agent-consumable)
 ```
 
 ## Docs
@@ -82,7 +88,7 @@ go build -o seren.exe ./cmd/seren
 | [`docs/roadmap.md`](docs/roadmap.md) | Master roadmap: Phase 1 engine core + Web UI polish (self-use) / 2 plugin shells (M2), with dependency chain & status |
 | [`docs/frontend.md`](docs/frontend.md) | Frontend plan (Web UI): plugin prep + UI/UX polish spec + test quick-reference |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | Backend backlog: perf optimizations, similar/export/touch stats, CLI & MCP polish |
-| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 7 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
+| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 10 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
 | [`docs/history/`](docs/history/) | Archived decisions/verifications (content absorbed into design/roadmap; full narrative retained) |
 
 ## Special Thanks

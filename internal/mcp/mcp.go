@@ -1,6 +1,7 @@
 // Package mcp 实现 seren mcp（第四个入口，v0.1.9）：
 //   供 AI（agent，含 dsh-mneme 类）经 MCP stdio 调用引擎能力。
-//   只读四件套：graph.stats / graph.roam / graph.random / graph.relation。
+//   只读工具：graph.stats / graph.roam / graph.random / graph.relation /
+//   graph.node（v0.1.11）/ graph.similar（v0.1.11）。
 //
 // 边界（design §6.10 / docs/architecture/07-mcp.md）：
 //   - 只 import internal/{graph,roam,adapter}（纯库、无副作用）；
@@ -168,6 +169,19 @@ func toolDefs() []toolDef {
 				"to":   str("节点 B（名称/ID）"),
 			}),
 		},
+		{
+			Name: "graph.node", Description: "单节点详情：Text 摘要（L0）+ 邻居列表 + 被引用（backlinks，L1）——AI 漫游到节点后确认『这是不是我要的』。id 接受 ID 或标题。",
+			InputSchema: schema([]string{"id"}, map[string]any{
+				"id": str("节点 ID 或标题"),
+			}),
+		},
+		{
+			Name: "graph.similar", Description: "结构相似节点（Jaccard 孪生）：共同邻居多但互不链接的节点对，带共享邻居证据——AI 判断『哪些笔记在说同一件事』（embedding 语义轴的纯结构替代）。id 接受 ID 或标题。",
+			InputSchema: schema([]string{"id"}, map[string]any{
+				"id": str("节点 ID 或标题"),
+				"k":  snum("输出条数（1-60，默认 10）"),
+			}),
+		},
 	}
 }
 
@@ -196,6 +210,14 @@ func (s *Server) callTool(req rpcRequest) rpcResponse {
 			return errResp(req.ID, -32602, "node not found: from/to 无法锚定")
 		}
 		payload = rel
+	case "graph.node":
+		d := s.nodeDetail(p.Args)
+		if d == nil {
+			return errResp(req.ID, -32602, "node not found: id 无法锚定")
+		}
+		payload = d
+	case "graph.similar":
+		payload = s.similar(p.Args)
 	default:
 		return errResp(req.ID, -32602, "unknown tool: "+p.Name)
 	}
@@ -271,6 +293,43 @@ func (s *Server) relation(raw json.RawMessage) *graph.Relation {
 		return nil
 	}
 	return s.g.ComputeRelation(from, to, 0.7)
+}
+
+// nodeDetail 单节点详情（复用 graph.NodeDetail，与 REST /api/node 同源，v0.1.11）。
+func (s *Server) nodeDetail(raw json.RawMessage) *graph.NodeDetail {
+	var m struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	if m.ID == "" {
+		return nil
+	}
+	id := s.resolveID(m.ID)
+	if id == "" {
+		return nil
+	}
+	return s.g.NodeDetail(id)
+}
+
+// similar 结构相似（复用 graph.Similar，与 REST /api/similar 同源，v0.1.11）。
+func (s *Server) similar(raw json.RawMessage) []graph.SimilarResult {
+	var m struct {
+		ID string `json:"id"`
+		K  int    `json:"k"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	if m.ID == "" {
+		return nil
+	}
+	id := s.resolveID(m.ID)
+	if id == "" {
+		return nil
+	}
+	structural := map[string]bool{}
+	for _, t := range s.p.StructuralTypes {
+		structural[t] = true
+	}
+	return s.g.Similar(id, clamp(m.K, 10, 1, 60), structural)
 }
 
 func (s *Server) resolveID(q string) string {

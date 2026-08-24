@@ -59,7 +59,7 @@ func runServe(t *testing.T, reqs string) []line {
 	return lines
 }
 
-// 主流程：初始化 / 列工具 / 四个只读 tool / 错误路径 / 通知不响应。
+// 主流程：初始化 / 列工具 / 六只读 tool / 错误路径 / 通知不响应。
 func TestMCPLifecycle(t *testing.T) {
 	reqs := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
@@ -68,15 +68,17 @@ func TestMCPLifecycle(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"graph.roam","arguments":{"q":"Alpha","top":5}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"graph.random","arguments":{"seed":42,"top":5}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"graph.relation","arguments":{"from":"Alpha","to":"Beta"}}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"nope","params":{}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"graph.node","arguments":{"id":"Alpha"}}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"graph.similar","arguments":{"id":"Alpha","k":5}}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"nope","params":{}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"ping"}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`, // 无 id → 不响应
 		`not json`,
 	}, "\n")
 	resps := runServe(t, reqs)
-	if len(resps) != 10 {
-		t.Fatalf("应有 10 个响应（9 请求 + 1 解析错误；通知不响应），got %d", len(resps))
+	if len(resps) != 12 {
+		t.Fatalf("应有 12 个响应（11 请求 + 1 解析错误；通知不响应），got %d", len(resps))
 	}
 
 	// id=1 initialize
@@ -93,17 +95,17 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("initialize 兜底 protocolVersion 应为 2024-11-05, got %v", init["protocolVersion"])
 	}
 
-	// id=2 tools/list → 4 个 tools，含 graph.random
+	// id=2 tools/list → 6 个 tools，含 graph.random/node/similar
 	var tl struct{ Tools []struct{ Name string } }
 	json.Unmarshal(resps[1].Result, &tl)
-	if len(tl.Tools) != 4 {
-		t.Fatalf("应有 4 个 tools, got %d", len(tl.Tools))
+	if len(tl.Tools) != 6 {
+		t.Fatalf("应有 6 个 tools, got %d", len(tl.Tools))
 	}
 	names := map[string]bool{}
 	for _, x := range tl.Tools {
 		names[x.Name] = true
 	}
-	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation"} {
+	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar"} {
 		if !names[want] {
 			t.Fatalf("tools 缺 %s", want)
 		}
@@ -172,21 +174,54 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("relation 应有路径, got %+v", rl)
 	}
 
-	// id=7 未知工具 → error -32602
-	if resps[6].Error == nil || resps[6].Error.Code != -32602 {
-		t.Fatalf("未知工具应 -32602, got %+v", resps[6].Error)
+	// id=7 graph.node → 节点详情（L0 摘要 + L1 邻居/被引用）
+	var nd struct{ Content []struct{ Text string } }
+	json.Unmarshal(resps[6].Result, &nd)
+	var ndInfo struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Neighbors []struct{ ID string } `json:"neighbors"`
 	}
-	// id=8 未知方法 → error -32601
-	if resps[7].Error == nil || resps[7].Error.Code != -32601 {
-		t.Fatalf("未知方法应 -32601, got %+v", resps[7].Error)
+	json.Unmarshal([]byte(nd.Content[0].Text), &ndInfo)
+	if ndInfo.Title != "Alpha" || len(ndInfo.Neighbors) < 2 {
+		t.Fatalf("node Alpha 详情错误: %+v", ndInfo)
 	}
-	// id=9 ping → result {}
-	if string(resps[8].Result) != "{}" {
-		t.Fatalf("ping 应返回 {}, got %s", resps[8].Result)
+	// a 的邻居应含 b、c（a 链接它们 + 被引用它们的反边；s1/s2 也引用 a）
+	nbSet := map[string]bool{}
+	for _, nb := range ndInfo.Neighbors {
+		nbSet[nb.ID] = true
+	}
+	if !nbSet["b"] || !nbSet["c"] {
+		t.Fatalf("node Alpha 邻居应含 b,c: %+v", ndInfo.Neighbors)
+	}
+
+	// id=8 graph.similar → 相似节点带共享邻居
+	var sm struct{ Content []struct{ Text string } }
+	json.Unmarshal(resps[7].Result, &sm)
+	var smList []struct {
+		ID     string   `json:"id"`
+		Shared []string `json:"shared"`
+	}
+	json.Unmarshal([]byte(sm.Content[0].Text), &smList)
+	if len(smList) == 0 || len(smList[0].Shared) == 0 {
+		t.Fatalf("similar 应带共享邻居: %+v", smList)
+	}
+
+	// id=9 未知工具 → error -32602
+	if resps[8].Error == nil || resps[8].Error.Code != -32602 {
+		t.Fatalf("未知工具应 -32602, got %+v", resps[8].Error)
+	}
+	// id=10 未知方法 → error -32601
+	if resps[9].Error == nil || resps[9].Error.Code != -32601 {
+		t.Fatalf("未知方法应 -32601, got %+v", resps[9].Error)
+	}
+	// id=11 ping → result {}
+	if string(resps[10].Result) != "{}" {
+		t.Fatalf("ping 应返回 {}, got %s", resps[10].Result)
 	}
 	// 解析错误 → -32700
-	if resps[9].Error == nil || resps[9].Error.Code != -32700 {
-		t.Fatalf("解析错误应 -32700, got %+v", resps[9].Error)
+	if resps[11].Error == nil || resps[11].Error.Code != -32700 {
+		t.Fatalf("解析错误应 -32700, got %+v", resps[11].Error)
 	}
 }
 

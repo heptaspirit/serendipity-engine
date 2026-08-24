@@ -72,6 +72,11 @@ func AppendTouch(dbPath, target, from string) error {
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
 		return err
 	}
+	// v0.1.11（backlog §四）：WAL 自动 checkpoint 上限 1000 页，长跑 + 频繁
+	// touch 时防 WAL 缓慢增长（此前未设，靠连接关闭隐式 checkpoint）。
+	if _, err := db.Exec(`PRAGMA wal_autocheckpoint = 1000`); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS touch (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +107,62 @@ func TouchCount(dbPath string) (int, error) {
 		return 0, err // 表不存在 = 0
 	}
 	return n, nil
+}
+
+// TouchRow 一条 touch 聚合行（目标/来源 + 点击数）。
+type TouchRow struct {
+	ID    string `json:"id"`
+	Count int    `json:"count"`
+}
+
+// TouchStats 反馈埋点只读统计（v0.1.11，backlog §3.3 —— 反馈闭环只读第一步）。
+// 只读 SQL 聚合，绝不写库、绝不反馈到排序/hot（红线 2：埋点只记录不演化）。
+// touch 表不存在（从未埋点/旧库）→ 全零统计（不报错，展示友好）。
+func TouchStats(dbPath string, limit int) (total int, targets, sources []TouchRow, err error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer db.Close()
+	var tbl string
+	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='touch'`).Scan(&tbl); err != nil {
+		return 0, nil, nil, nil // 无埋点表 = 全零
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM touch`).Scan(&total); err != nil {
+		return 0, nil, nil, err
+	}
+	targets, err = touchGroup(db, `target`, limit)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// src 列可能为 NULL/空（早期埋点未传 from）——排除空值
+	sources, err = touchGroup(db, `src`, limit)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return total, targets, sources, nil
+}
+
+// touchGroup 按列分组计数（target/src 通用），返回 TopN（降序，并列按 ID 稳定）。
+func touchGroup(db *sql.DB, col string, limit int) ([]TouchRow, error) {
+	rows, err := db.Query(`SELECT `+col+` AS k, COUNT(*) AS c FROM touch
+		WHERE k IS NOT NULL AND k != '' GROUP BY k ORDER BY c DESC, k ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TouchRow
+	for rows.Next() {
+		var r TouchRow
+		if err := rows.Scan(&r.ID, &r.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // LoadRenames 读回改名迁移映射（v0.1.5，修订 #8）：renames 表 = 持久化的
@@ -253,6 +314,10 @@ func Save(dbPath string, docs []*adapter.Document) error {
 	}
 	defer db.Close()
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		return err
+	}
+	// v0.1.11（backlog §四）：WAL autocheckpoint 防长跑增长
+	if _, err := db.Exec(`PRAGMA wal_autocheckpoint = 1000`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`

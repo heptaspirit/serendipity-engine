@@ -11,10 +11,11 @@
 
 | 类别 | 项目 | 价值 | 风险 |
 |---|---|---|---|
-| 性能优化 | Stats 缓存 / PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | 大库（数万节点）时显著 | 前三个低，Store 增量写中 |
-| 功能缺口 | 结构相似节点（similar） | **高**——补语义缺口的白盒方案 | 中（需防度偏置） |
-| 功能缺口 | 漫游导出（export） | 中高——工作流闭环 | 低 |
-| 功能缺口 | touch 统计 API | 中——反馈闭环只读第一步 | 低（防滑坡） |
+| 性能优化 | Stats 缓存 / PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | 大库（数万节点）时显著 | ✅ Stats 缓存已落地（v0.1.11）；其余前三个低，Store 增量写中 |
+| 功能缺口 | 结构相似节点（similar） | **高**——补语义缺口的白盒方案 | ✅ v0.1.11 已落地（graph.Similar + /api/similar + MCP graph.similar） |
+| 功能缺口 | 漫游导出（export） | 中高——工作流闭环 | ✅ v0.1.11 已落地（/api/roam?export=1 → Markdown） |
+| 功能缺口 | touch 统计 API | 中——反馈闭环只读第一步 | ✅ v0.1.11 已落地（/api/touch/stats 只读聚合，绝不反馈排序） |
+| 功能缺口 | 单节点详情（graph.node） | **最缺的"确认这是什么"** | ✅ v0.1.11 已落地（graph.NodeDetail + /api/node + MCP graph.node） |
 | 功能缺口 | 社区发现（Leiden）→ 诊断层 | 中——知识缺口诊断 + 簇级导航（等场景） | 低（选型已定） |
 | 功能缺口 | LLM Wiki adapter 画像（`llm-wiki`） | 中——真实性门槛下唯一可接受的 LLM 数据源兼容 | 低（文件名级排除） |
 
@@ -89,7 +90,7 @@
 
 ### 缓存/累积状态盘点（2026-08-23 评审，防无限增长）
 
-> 全量盘点项目所有累积状态。结论：**绝大多数有界，唯一无上限的是 renames 表**。
+> 全量盘点项目所有累积状态。结论：**绝大多数有界；renames 表曾无上限，v0.1.11 链式折叠后已收敛**。
 > 以下条目"看着情况删"——修复后即勾掉，不永久占位。
 
 | 状态 | 位置 | 上限机制 | 状态 |
@@ -100,11 +101,11 @@
 | 前端 localStorage 参数 | index.html | 白名单 key，值有界 | ✅ 有界 |
 | 内存图（graph） | 全程 | = 节点数，refresh 整体替换不累积 | ✅ 有界 |
 | revision 计数 | web/server.go:107 | int 溢出需 21 亿次刷新 | ✅ 实际不可能 |
-| SQLite WAL | store | 未设 wal_autocheckpoint，长跑 + 频繁 touch 可能缓慢增长 | ⚠️ 建议 `PRAGMA wal_autocheckpoint=1000` |
-| **renames 表** | store.go SaveRenames + sync.go MergeRenames | **无上限** | ❌ **唯一真实风险点** |
+| SQLite WAL | store | 未设 wal_autocheckpoint，长跑 + 频繁 touch 可能缓慢增长 | ✅ v0.1.11 已设 `PRAGMA wal_autocheckpoint=1000` |
+| **renames 表** | store.go SaveRenames + sync.go MergeRenames | 曾无上限（链式中间环累积） | ✅ v0.1.11 已修复（`collapseChains` 只留链头→最终目标） |
 | 日志 | watch/web log.Printf | 走 stderr 不落盘 | ✅ 安全 |
 
-**renames 表风险**：`MergeRenames`（sync.go:379）失效逻辑 = 旧名重现才删；"目标消失但旧名未重现"的中间环节点永久保留（为链式改名传递解析）。**文件反复改名（A→B→C→D…）时每轮留一行，条目数 = 历史改名总次数，理论无上限**（实际每条几十字节，千次改名才几十 KB，严重度低）。**修法**：保留映射但丢弃被其他映射覆盖的中间环（A→B、B→C 存在时 A→B 可删，传递解析已不需要），每条改名链只留"链头→最终目标"。
+**renames 表风险**：`MergeRenames`（sync.go:379）失效逻辑 = 旧名重现才删；"目标消失但旧名未重现"的中间环节点永久保留（为链式改名传递解析）。**文件反复改名（A→B→C→D…）时每轮留一行，条目数 = 历史改名总次数，理论无上限**（实际每条几十字节，千次改名才几十 KB，严重度低）。**✅ v0.1.11 修法**：`collapseChains` 只保留"链头→最终目标"直达映射，丢弃被其他映射覆盖的中间环（A→B、B→C 存在时 A→B 可删）——条目数从"历史改名总次数"收敛为"仍存活的链头数"。语义权衡（backlog §四）：中间名是改名过程的短暂状态，Obsidian 内改名自动更新引用、文件系统手动改名时引用仍指向原始名（链头），中间名引用在实践中不存在或极罕见，丢弃换取有界增长。
 
 **〔2026-08-23 借鉴〕Graphiti 的「边失效而非删除」给出另一条路**：新事实与旧事实矛盾时，旧边打 `invalid_at` 时间戳**保留**（可查询任意历史时点的图状态），而非删除——「历史映射有价值，用失效标记而非删除」。这与 renames 中间环的「清理 vs 标记失效」是同一个权衡，值得在 M1 增量写落地时重新评估（见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.3）。
 
@@ -113,7 +114,9 @@
 ## 五、CLI 打磨三件套（人机双消费者，2026-08-23 用户提出）
 
 > CLI 是「双消费者」：人是第一消费者，agent（shell 直调场景）是次级——MCP 才是 AI 正式通道。
-> 实测现状（v0.1.10 源码）：已有全局 help / stderr 错误 + exit 1；缺子命令级帮助、结构化输出、退出码语义化。
+> 实测现状（v0.1.11 源码）：三件套**已全部落地**——子命令级 help（`seren help <cmd>` /
+> `<cmd> -h`）、`--json` 结构化输出（roam/index/refresh）、退出码语义化（0 成功 / 2 用法
+> 错误 / 1 运行时错误）。
 
 | # | 改进 | 现状 | 建议 |
 |---|---|---|---|
@@ -121,12 +124,14 @@
 | 2 | **--json 结构化输出** | 全是人类格式化文本，AI/脚本 grep 硬解析 | `roam --json` / `index --json` / `refresh --json` → 复用现有结构体（roam.Outcome / sync.Result）序列化 |
 | 3 | **退出码语义化** | 只有 0/1，参数错误与运行时错误不分 | 0 成功 / 2 参数或用法错误 / 1 运行时错误（解析失败、库不存在）——agent 能自纠而非误报 |
 
-**补充发现**：仓库根 `seren.exe` 是 v0.1.5 旧二进制（源码 v0.1.10）——需 `go build -o seren.exe ./cmd/seren` 重建，避免旧行为误导测试/演示。
+**补充发现**：仓库根 `seren.exe` 是旧二进制（源码 v0.1.11）——本地测试二进制 `scratch\seren.exe`
+gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进制不上库）。
 
 ## 六、MCP 工具扩展评估（2026-08-23 用户提出）
 
 > 结构不变（stdio JSON-RPC 薄协议、只读、零第三方依赖），只评估工具集扩展。
-> 现状四件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation`（见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）。
+> 现状六件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation` /
+> `graph.node` / `graph.similar`（见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）。
 
 ### 建议新增（按价值排序）
 
@@ -168,12 +173,12 @@
 
 ## 八、优先级建议
 
-1. **Stats 缓存**（顺手做掉，10 分钟）
-2. **similar 结构相似**（补语义缺口的白盒方案，一次投入长期受益）
-3. **export 漫游导出**（工作流闭环，成本低）
-4. **touch 统计 API**（反馈闭环第一步，只读）
-5. **graph.node**（MCP 最缺的基础动作，与前端节点详情 API 同源）
-6. **CLI 打磨三件套**（子命令 help / --json / 退出码——onboarding 体验，agent 次级通道）
+1. **Stats 缓存**（✅ v0.1.11 已落地：Graph.Stats memoize，refresh 换图即新缓存）
+2. **similar 结构相似**（✅ v0.1.11 已落地：graph.Similar + /api/similar + MCP graph.similar）
+3. **export 漫游导出**（✅ v0.1.11 已落地：/api/roam?export=1 → text/markdown 卡片清单）
+4. **touch 统计 API**（✅ v0.1.11 已落地：/api/touch/stats 只读聚合，绝不反馈排序）
+5. **graph.node**（✅ v0.1.11 已落地：graph.NodeDetail + /api/node + MCP graph.node）
+6. **CLI 打磨三件套**（✅ v0.1.11 已落地：`seren help <cmd>` 子命令帮助 / `--json` 结构化输出 / 退出码 0-2-1）
 7. **LLM Wiki adapter 画像**（`llm-wiki` + `ExcludedFiles`，低成本，综合时顺手）
 8. **社区发现（Leiden）**（诊断层排期时，选型已定）
 
@@ -187,13 +192,13 @@
 
 ## 十、后续动作
 
-- [ ] similar / export / touch-stats 三个端点一起登记进 [`docs/api-contract.md`](api-contract.md)
-- [ ] similar 实现时复用 rollSeed 排除逻辑 + 相似度阈值 + 共享邻居证据展示
-- [ ] Stats 缓存与 refresh 换图联动失效（单测覆盖）
-- [ ] graph.node 与前端节点详情 API 一起实现（两端受益，见 [`docs/frontend.md`](frontend.md)）
-- [ ] CLI 三件套（help/--json/退出码）完成（onboarding 体验，agent 次级通道）
-- [ ] 重建 seren.exe（当前仓库根是 v0.1.5 旧二进制）
+- [x] similar / export / touch-stats 三个端点登记进 [`docs/api-contract.md`](api-contract.md)（✅ v0.1.11）
+- [x] similar 实现复用 rollSeed 排除逻辑 + 相似度阈值 + 共享邻居证据（✅ v0.1.11）
+- [x] Stats 缓存与 refresh 换图联动失效（✅ v0.1.11：Graph 不可变 memoize，换图即新缓存）
+- [x] graph.node 与前端节点详情 API 一起实现（✅ v0.1.11，两端受益）
+- [x] CLI 三件套（help/--json/退出码）完成（✅ v0.1.11，onboarding 体验）
+- [ ] 重建 seren.exe（源码 v0.1.11；仓库根 seren.exe 为旧二进制，用 GitHub Actions 平台构建，本地进制不入库）
 - [ ] LLM Wiki adapter 画像：VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki` + 可选结构发现器（§3.5）
 - [ ] 社区发现（Leiden）在诊断层排期时实现（§3.4，选型已定，直接落地）
-- [ ] renames 中间环清理（MergeRenames 丢弃被覆盖的旧映射，每条改名链只留链头→最终）
-- [ ] store 加 `PRAGMA wal_autocheckpoint=1000`（长跑 + 频繁 touch 稳住 WAL）
+- [x] renames 中间环清理（✅ v0.1.11：MergeRenames 链式折叠，只留链头→最终目标）
+- [x] store 加 `PRAGMA wal_autocheckpoint=1000`（✅ v0.1.11）

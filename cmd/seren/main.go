@@ -56,6 +56,13 @@
 //	        （stats/roam/random/relation）；只 import 纯库不碰 web/watch。
 //	v0.1.10 MCP 集成修复：initialize 回显客户端 protocolVersion（修复 SDK 客户端
 //	         版本不匹配→断连重连→反复 spawn）；启动横幅仅 TTY 打印（DSH spawn 静默）。
+//	v0.1.11 M1 阶段 1 第二批：similar 结构相似（/api/similar + MCP graph.similar）、
+//	         graph.node 节点详情（/api/node + MCP graph.node）、/api/roam?export=1
+//	         漫游导出、/api/touch/stats 埋点只读统计、Stats 缓存、renames 中间环
+//	         清理、WAL autocheckpoint。
+//	         附：CLI 三件套（backlog §五）——子命令级帮助（seren help <cmd> /
+//	         <cmd> -h）、--json 结构化输出（roam/index/refresh）、退出码语义化
+//	         （0 成功 / 2 用法错误 / 1 运行时错误）。
 //
 // ============================================================================
 package main
@@ -64,6 +71,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -85,34 +93,102 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.10"
+const version = "v0.1.11"
 
 func main() {
-	if len(os.Args) < 2 {
+	code := run(os.Args[1:])
+	os.Exit(code)
+}
+
+// ---------- CLI 三件套（v0.1.11，backlog §五）----------
+// 退出码语义化：
+//   0 成功；2 用法/参数错误（agent 可自纠——补参数重跑）；1 运行时错误（解析失败、
+//   库不存在、服务失败等）。此前参数错误与运行时错误都 exit 1，agent 无法区分。
+func run(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(1)
+		return 2
 	}
-	switch os.Args[1] {
+	switch args[0] {
 	case "index":
-		cmdIndex(os.Args[2:])
+		return cmdIndex(args[1:])
 	case "roam":
-		cmdRoam(os.Args[2:])
+		return cmdRoam(args[1:])
 	case "serve":
-		cmdServe(os.Args[2:])
+		return cmdServe(args[1:])
 	case "refresh":
-		cmdRefresh(os.Args[2:])
+		return cmdRefresh(args[1:])
 	case "profile-detect":
-		cmdProfileDetect(os.Args[2:])
+		return cmdProfileDetect(args[1:])
 	case "mcp":
-		cmdMCP(os.Args[2:])
+		return cmdMCP(args[1:])
 	case "version", "--version", "-v":
 		fmt.Printf("Serendipity Engine %s\n", version)
+		return 0
 	case "help", "-h", "--help":
-		usage()
+		if len(args) >= 2 {
+			usageFor(args[1])
+		} else {
+			usage()
+		}
+		return 0
 	default:
 		usage()
-		os.Exit(1)
+		return 2
 	}
+}
+
+// usageFor 打印某个子命令的专属帮助（CLI 三件套 #1：seren <cmd> 的 -h / help）。
+func usageFor(cmd string) {
+	var text string
+	switch cmd {
+	case "index":
+		text = "index: 解析 + 建图 + 统计 + 持久化（新库 onboarding）\n" +
+			"  seren index <vault|OrcaNote.db> [--profile-name <名>] [--db <store>] [--persist|--store <file>]\n" +
+			"  --profile-name  内置画像 (default-obsidian / okf / example-wiki)\n" +
+			"  --db            从持久化存储读图（跳过解析）\n" +
+			"  --persist       解析后持久化到库内 .serendipity/db-<hash>.sqlite\n" +
+			"  --store         指定持久化路径（覆盖默认）"
+	case "roam":
+		text = "roam: 查询漫游 → top-N 节点簇（--random 随机漫步）\n" +
+			"  seren roam <vault|OrcaNote.db> [query] [flags]\n" +
+			"  --top N        输出条数 (默认 15)\n" +
+			"  --hops N       最大跳数 (默认 3)\n" +
+			"  --lambda X     激活衰减 (默认 0.7)\n" +
+			"  --theta Y      激活剪枝阈值 (默认 0.1)\n" +
+			"  --alpha X      结构分权重 (默认 0.5)\n" +
+			"  --beta Y       激活分权重 (默认 0.5)\n" +
+			"  --random       随机漫步：随机 roll 起点 + 它的簇（可省略 query）\n" +
+			"  --seed N       随机种子（默认 0=随机；固定 N 可复现）\n" +
+			"  --rand-alpha X 起点度加权指数（0=均匀，1=偏丰富簇，默认 0.5）\n" +
+			"  --json         结构化 JSON 输出（roam.Outcome）"
+	case "serve":
+		text = "serve: Web UI（REST + 节点簇可视化 + 自动监听 + 刷新）\n" +
+			"  seren serve <vault|OrcaNote.db> [--port 8080] [flags]\n" +
+			"  --port N       端口 (默认 8080)\n" +
+			"  --vault-name N Obsidian vault 名（obsidian:// 跳转）\n" +
+			"  --repo <名>    虎鲸 repo 名（orca-note:// 跳转）\n" +
+			"  --token <t>    鉴权 token（默认自动生成）\n" +
+			"  --watch-off    关闭自动监听\n" +
+			"  --watch-interval N  轮询秒 (默认 10)\n" +
+			"  --watch-throttle N  刷新节流秒 (默认 60)"
+	case "refresh":
+		text = "refresh: 对账刷新（重解析 + 与上次持久化状态 diff 增删改）\n" +
+			"  seren refresh <vault|OrcaNote.db> [--profile-name <名>] [--store <file>] [--json]\n" +
+			"  --store         存储路径 (覆盖默认)\n" +
+			"  --json          结构化 JSON 输出（sync.Result）"
+	case "profile-detect":
+		text = "profile-detect: 扫描 vault，产出解析画像 YAML（新库 onboarding）\n" +
+			"  seren profile-detect <vault>"
+	case "mcp":
+		text = "mcp: MCP stdio server（只读工具：stats/roam/random/relation/node/similar）\n" +
+			"  seren mcp <vault|OrcaNote.db> [--db <store>] [--profile-name <名>]\n" +
+			"  --db            读持久化存储免重解析"
+	default:
+		usage()
+		return
+	}
+	fmt.Printf("Serendipity Engine %s\n用法:\n  %s\n", version, text)
 }
 
 func usage() {
@@ -149,14 +225,24 @@ flags:
   --watch-interval N          监听轮询间隔秒（默认 10）
   --watch-throttle N          刷新节流秒（默认 60，合并窗口防频繁重解析）
   --repo <name>               虎鲸 repo 名（orca-note:// 跳转；默认取库文件名）
+CLI 三件套 (v0.1.11):
+  seren help <subcmd>         子命令级帮助（或 seren <subcmd> -h）
+  --json                      roam/index/refresh 结构化 JSON 输出
+  退出码: 0 成功 / 2 用法或参数错误 / 1 运行时错误
 `, version)
 }
 
 // parseArgs 解析 CLI 参数：位置参数 + --k=v / --k v 标志。
+// -h/--help 也识别为 flags（子命令级帮助，CLI 三件套 #1）——单短横线 -h 不当作位置参数。
 func parseArgs(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		switch a {
+		case "-h", "--help":
+			flags["help"] = "true"
+			continue
+		}
 		if strings.HasPrefix(a, "--") {
 			kv := strings.SplitN(a[2:], "=", 2)
 			if len(kv) == 2 {
@@ -262,10 +348,14 @@ func storePathFor(vault string, storeFlag string) string {
 }
 
 // cmdRefresh 对账刷新：全量重解析 → 与上次持久化状态 diff → 输出明细 → 写回存储。
-func cmdRefresh(args []string) {
+func cmdRefresh(args []string) int {
 	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("refresh")
+		return 0
+	}
 	if len(pos) < 1 {
-		fatal("用法: seren refresh <vault> [--store file]")
+		usageErr("用法: seren refresh <vault> [--store file]")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
@@ -299,6 +389,17 @@ func cmdRefresh(args []string) {
 	}
 	if err := store.Save(storePath, docs); err != nil {
 		fatal("持久化失败: %v", err)
+	}
+
+	if flags["json"] != "" {
+		// --json：复用 sync.Result 结构体（含 Changes/Renames 明细）。为可读，
+		// 补 src/画像/解析计数作为顶层字段（新匿名结构体，不污染 Result）。
+		jsonOut(map[string]any{
+			"source": src, "profile": p.Name, "store": storePath,
+			"reused": reused, "documents": len(docs),
+			"result": res,
+		})
+		return 0
 	}
 
 	fmt.Printf("source: %s\n", src)
@@ -344,12 +445,17 @@ func cmdRefresh(args []string) {
 			fmt.Println()
 		}
 	}
+	return 0
 }
 
-func cmdIndex(args []string) {
+func cmdIndex(args []string) int {
 	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("index")
+		return 0
+	}
 	if len(pos) < 1 {
-		fatal("用法: seren index <vault>")
+		usageErr("用法: seren index <vault>")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
@@ -357,6 +463,20 @@ func cmdIndex(args []string) {
 		fatal("画像加载失败: %v", err)
 	}
 	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
+	if flags["json"] != "" {
+		// --json：复用 graph.Stats 结构体 + 类型分布，顶层补 source/画像/文档数。
+		// 置于人类可读输出之前——--json 是整块序列化，不掺人类文本。
+		typeCount := map[string]int{}
+		for _, d := range docs {
+			typeCount[d.Type]++
+		}
+		jsonOut(map[string]any{
+			"vault": vault, "source": src, "profile": p.Name,
+			"documents": len(docs), "types": typeCount, "stats": g.Stats(),
+		})
+		return 0
+	}
+
 	fmt.Printf("vault: %s\n", vault)
 	fmt.Printf("source: %s\n", src)
 	fmt.Printf("画像: %s\n", p.Name)
@@ -406,13 +526,18 @@ func cmdIndex(args []string) {
 		}
 		fmt.Printf("已持久化: %s\n", dbPath)
 	}
+	return 0
 }
 
-func cmdRoam(args []string) {
+func cmdRoam(args []string) int {
 	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("roam")
+		return 0
+	}
 	random := flags["random"] != ""
 	if len(pos) < 1 {
-		fatal("用法: seren roam <vault> [query] [flags]（--random 随机漫步时可省略 query）")
+		usageErr("用法: seren roam <vault> [query] [flags]（--random 随机漫步时可省略 query）")
 	}
 	vault := pos[0]
 	var query string
@@ -420,7 +545,7 @@ func cmdRoam(args []string) {
 		query = pos[1]
 	}
 	if !random && strings.TrimSpace(query) == "" {
-		fatal("查询不能为空（或加 --random 随机漫步）")
+		usageErr("查询不能为空（或加 --random 随机漫步）")
 	}
 	top := fint(flags, "top", 15)
 	lambda := ffloat(flags, "lambda", 0.7)
@@ -453,6 +578,20 @@ func cmdRoam(args []string) {
 		out = roam.ComputeRandom(g, p, opt, roam.Roll{Rng: rng, Alpha: randAlpha})
 	} else {
 		out = roam.Compute(g, p, query, opt)
+	}
+
+	if flags["json"] != "" {
+		// --json：复用 roam.Outcome 结构体（anchors/results/fallback/fallback_hits），
+		// 顶层补 mode/source/画像（新匿名结构体，不污染 Outcome）。
+		mode := "query"
+		if random {
+			mode = "random-walk"
+		}
+		jsonOut(map[string]any{
+			"mode": mode, "query": query, "seed": seed, "rand_alpha": randAlpha,
+			"source": src, "profile": p.Name, "outcome": out,
+		})
+		return 0
 	}
 
 	fmt.Printf("source: %s\n", src)
@@ -500,12 +639,17 @@ func cmdRoam(args []string) {
 				i+1, r.ID, r.Title, nodeType(g, r.ID), r.Score, r.PPR, r.Act, r.Hops, strings.Join(r.Path, " → "))
 		}
 	}
+	return 0
 }
 
-func cmdServe(args []string) {
+func cmdServe(args []string) int {
 	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("serve")
+		return 0
+	}
 	if len(pos) < 1 {
-		fatal("用法: seren serve <vault> [--port 8080] [--vault-name 库名] [--repo 虎鲸库名]")
+		usageErr("用法: seren serve <vault> [--port 8080] [--vault-name 库名] [--repo 虎鲸库名]")
 	}
 	vault := pos[0]
 	port := fint(flags, "port", 8080)
@@ -546,6 +690,21 @@ func cmdServe(args []string) {
 	touchFn := func(target, from string) error { return store.AppendTouch(storePath, target, from) }
 	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
 	srv.OrcaRepo = orcaRepo
+	// 埋点只读统计闭包（v0.1.11，backlog §3.3）：只读聚合，绝不反馈排序/hot
+	srv.SetTouchStats(func() (int, []web.TouchRow, []web.TouchRow, error) {
+		total, targets, sources, err := store.TouchStats(storePath, 10)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		toRows := func(rs []store.TouchRow) []web.TouchRow {
+			out := make([]web.TouchRow, 0, len(rs))
+			for _, r := range rs {
+				out = append(out, web.TouchRow{ID: r.ID, Count: r.Count})
+			}
+			return out
+		}
+		return total, toRows(targets), toRows(sources), nil
+	})
 
 	// API 鉴权（v0.1.8 安全前置）：--token 指定；否则自动生成 32 位 hex 并打印。
 	// 前端页面由服务端注入 token（外部页面拿不到）；curl 用 X-Seren-Token 头或
@@ -603,6 +762,7 @@ func cmdServe(args []string) {
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		fatal("服务失败: %v", err)
 	}
+	return 0
 }
 
 // refreshFunc 构造 Web 端的刷新闭包：重解析 → 对账 diff → 改名迁移（合并持久化
@@ -671,10 +831,14 @@ func nodeType(g *graph.Graph, id string) string {
 	return ""
 }
 
-func cmdProfileDetect(args []string) {
-	pos, _ := parseArgs(args)
+func cmdProfileDetect(args []string) int {
+	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("profile-detect")
+		return 0
+	}
 	if len(pos) < 1 {
-		fatal("用法: seren profile-detect <vault>")
+		usageErr("用法: seren profile-detect <vault>")
 	}
 	p, err := adapter.DetectProfile(pos[0])
 	if err != nil {
@@ -685,15 +849,20 @@ func cmdProfileDetect(args []string) {
 		fatal("序列化失败: %v", err)
 	}
 	fmt.Print(out)
+	return 0
 }
 
 // cmdMCP 启动 MCP stdio server（第四个入口，v0.1.9，roadmap M0-0.3）。
-// 只读四件套 tools（stats/roam/random/relation）；只 import 纯库，不碰 web/watch。
-// stdout 只承载 JSON-RPC 协议；启动提示一律写 stderr（避免污染协议流）。
-func cmdMCP(args []string) {
+// 只读工具（stats/roam/random/relation/node/similar，v0.1.11 扩至六个）：
+// 只 import 纯库，不碰 web/watch。stdout 只承载 JSON-RPC 协议；启动提示写 stderr。
+func cmdMCP(args []string) int {
 	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("mcp")
+		return 0
+	}
 	if len(pos) < 1 {
-		fatal("用法: seren mcp <vault> [--db <store.sqlite>]（库来源同 roam；--db 读持久化存储免重解析）")
+		usageErr("用法: seren mcp <vault> [--db <store.sqlite>]（库来源同 roam；--db 读持久化存储免重解析）")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
@@ -704,13 +873,14 @@ func cmdMCP(args []string) {
 	// 启动横幅仅在交互式终端（stdout 是 TTY）打印——DSH 等 MCP 客户端 spawn 时
 	// stdout 是管道，静默（否则每次重连/respawn 都在宿主控制台刷一行）。
 	if isTerminal(os.Stdout) {
-		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation\n",
+		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar\n",
 			src, g.Stats().Nodes)
 	}
 	srv := mcp.New(g, p, version)
 	if err := srv.Serve(os.Stdin, os.Stdout); err != nil {
 		fatal("MCP 服务失败: %v", err)
 	}
+	return 0
 }
 
 // isTerminal 判断 f 是否为交互式终端（字符设备）。MCP 客户端 spawn 时 stdout 是
@@ -761,4 +931,20 @@ func ffloat(flags map[string]string, k string, def float64) float64 {
 func fatal(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "错误: "+format+"\n", a...)
 	os.Exit(1)
+}
+
+// usageErr 用法/参数错误 → 退出码 2（CLI 三件套 #3；agent 可自纠补参重跑）。
+// 与 fatal（运行时错误，exit 1）区分——参数错误不是系统故障，重跑即可能成功。
+func usageErr(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "用法错误: "+format+"\n", a...)
+	os.Exit(2)
+}
+
+// jsonOut 结构化输出（CLI 三件套 #2）：整块 JSON 序列化到 stdout。
+// err 非 nil 时按运行时错误处理（exit 1）。复用现有结构体（roam.Outcome /
+// sync.Result / graph.Stats / adapter.Document），不新增镜像类型。
+func jsonOut(v any) {
+	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
+		fatal("JSON 输出失败: %v", err)
+	}
 }

@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.9 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.1.11 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -29,7 +29,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `revision` | int | 图版本号：自动/手动刷新后 +1（前端轮询对比以提示"库已更新"） |
 
 ```json
-{"nodes":235,"edges":318,"version":"v0.1.9","revision":3}
+{"nodes":235,"edges":318,"version":"v0.1.11","revision":3}
 ```
 
 ## 2. `GET /api/hot?n=20` · 热门节点（初始页气泡）
@@ -61,6 +61,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `beta` | 激活分融合权重（0-1） | 0.5 |
 | `rand_alpha` | 随机漫步起点度加权指数（0=均匀，1=偏丰富簇） | 0.5 |
 | `seed` | 随机漫步种子（0=随机；固定值可复现同一节点同一簇） | 0 |
+| `export=1` | 输出 Markdown 卡片清单（`Content-Type: text/markdown`，v0.1.11） | off |
 
 > `random=1` 且给 `seed` 时跳过防重复 ring；不给 seed 走服务端随机源 + 最近
 > 32 个起点 ring（防连续撞车）。`top/hops/lambda/theta/alpha/beta` 由服务端钳制到范围。
@@ -109,7 +110,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 ```json
 {
   "params":[{"key":"top","label":"结果条数","type":"int","min":1,"max":60,"step":1,"default":15,"group":"基础","hint":"..."}],
-  "source":"orca:...", "vault":"TestOrca", "version":"v0.1.9", "nodes":235, "edges":318
+  "source":"orca:...", "vault":"TestOrca", "version":"v0.1.11", "nodes":235, "edges":318
 }
 ```
 
@@ -139,6 +140,56 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 响应：`{"ok":true}`（埋点失败也返回 `{"ok":false}`，不影响主流程——克制设计，
 仅记录，不演化边权）。
 
+## 8. `GET /api/similar?id=&k=` · 结构相似节点（v0.1.11）
+
+`id` 接受 ID 或标题（Resolve 锚定首个）。`k` 最大条数（默认 10）。
+**独立入口——绝不并入 roam 管线**（红线 1：roam=相关，similar=说同一件事）。
+
+**响应**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string | 锚定后的节点 ID |
+| `results[]` | array | 相似候选（降序） |
+| `results[].id/title/type` | string | 候选节点 |
+| `results[].score` | float | Jaccard 相似度 \|N(u)∩N(v)\|/\|N(u)∪N(v)\| |
+| `results[].shared` | string[] | 共享邻居 ID（证据） |
+| `results[].shared_titles` | string[] | 共享邻居标题（证据可读，最多 4） |
+| `results[].uri` | string | 跳转（obsidian:// / orca-note://） |
+
+排除：自身、直接邻居（已链接=相关非相似）、目录枢纽（deg≥N/2）、结构类型、
+空标题、孤立。任一无法锚定 → `{"error":"node not found"}`。
+
+## 9. `GET /api/node?id=` · 单节点详情（v0.1.11）
+
+`id` 接受 ID 或标题。输出 `graph.NodeDetail`（L0 摘要 + L1 邻居导航）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id/title/type` | string | 节点本体 |
+| `aliases/tags` | string[] | 别名/标签（可选） |
+| `text` | string | 正文摘要（截断到 200 字符，发现层不读全文） |
+| `deg` | int | 图度 |
+| `neighbors[]` | array | 无向邻接：链接到谁 `{id,title,type}` |
+| `backlinks[]` | array | 有向入边：谁链接我 `{id,title,type}` |
+
+无法锚定 → `{"error":"node not found"}`。
+
+## 10. `GET /api/touch/stats?n=10` · 反馈埋点只读统计（v0.1.11）
+
+只读聚合：总点击数 + 被点击 TopN + 点击来源 TopN。**绝不反馈到排序/hot**
+（红线 2：否则等于偷偷启动边权演化）。**不进 MCP**（隐私敏感）。
+
+**响应**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `total` | int | 累计点击数 |
+| `targets[]` | array | 被反复点击 `{id,count}`（降序，n 截断） |
+| `sources[]` | array | 点击来源 `{id,count}`（降序，n 截断；空 src 排除） |
+
+无埋点表（从未埋点/旧库）→ 全零（不报错，展示友好）。
+
 ---
 
 ## 变更登记
@@ -152,6 +203,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | v0.1.6 | /api/config + roam 可调参数（top/hops/lambda/theta/alpha/beta clamp）；relation 加 path_nodes |
 | v0.1.7 | roam 加 random/seed/rand_alpha；config 加 rand_alpha |
 | v0.1.8 | **全 API 加鉴权**（X-Seren-Token 头 / ?token=）+ Host 校验 |
+| v0.1.11 | 新增 /api/similar（Jaccard）、/api/node（详情）、/api/touch/stats（只读统计）；roam 加 `?export=1`（text/markdown 卡片清单） |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

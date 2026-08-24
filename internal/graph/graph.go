@@ -5,6 +5,7 @@ package graph
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	"serendipity-engine/internal/adapter"
 )
@@ -20,6 +21,9 @@ type Edge struct {
 	A, B string
 }
 
+// Graph 不可变（Build 后只读；刷新整体替换新图，不原地改）——
+// Stats() 因此可以 memoize（v0.1.11，backlog §二：roam/rollSeed 每次查询都调
+// Stats 全图遍历，图不变结果就不变，缓存纯收益）。
 type Graph struct {
 	nodes      map[string]*Node
 	adj        map[string][]string // 无向邻接（去重）
@@ -27,6 +31,9 @@ type Graph struct {
 	totalLinks int                 // 全部 [[链接]] 数（含重复/悬空/自环）
 	selfLinks  int
 	multiedge  int // 已见面对之间的重复链接数
+
+	statsOnce sync.Once
+	stats     Stats // 惰性计算并缓存（Graph 不可变，无失效问题）
 }
 
 func Build(docs []*adapter.Document) *Graph {
@@ -94,6 +101,12 @@ func (g *Graph) NeighborsOfAll() map[string][]string {
 }
 
 // Stats 图统计：规模 / 链接账目 / 孤儿 / 连通分量 / 枢纽。
+// v0.1.11 memoize（Graph 不可变，首次计算后缓存；refresh 换新图即新缓存）。
+func (g *Graph) Stats() Stats {
+	g.statsOnce.Do(func() { g.stats = g.computeStats() })
+	return g.stats
+}
+
 type Stats struct {
 	Nodes         int
 	Edges         int // 去重无向边
@@ -114,7 +127,7 @@ type Hub struct {
 	Deg   int
 }
 
-func (g *Graph) Stats() Stats {
+func (g *Graph) computeStats() Stats {
 	s := Stats{
 		Nodes:         len(g.nodes),
 		TotalLinks:    g.totalLinks,

@@ -141,3 +141,51 @@ func TestApplyRenamesChain(t *testing.T) {
 		t.Fatalf("链式重定向失败：%v ≠ %v", docs[1].Refs, want)
 	}
 }
+
+// MergeRenames 链式折叠（v0.1.11，backlog §四）：A→B、B→C 只留 A→C（链头→最终），
+// 丢弃中间环，条目数从"历史改名总次数"收敛为"存活链头数"。
+func TestMergeRenamesCollapseChain(t *testing.T) {
+	stored := map[string]string{"A": "B", "B": "C"}
+	fresh := map[string]string{}
+	cur := []*adapter.Document{doc("C", "笔记/C.md", "x")}
+	out := MergeRenames(stored, fresh, cur)
+	if out["A"] != "C" {
+		t.Fatalf("A 应解到最终 C：%v", out)
+	}
+	if _, ok := out["B"]; ok {
+		t.Fatalf("中间环 B 应被丢弃：%v", out)
+	}
+	if len(out) != 1 {
+		t.Fatalf("应收敛为 1 条：%v", out)
+	}
+}
+
+// 多个独立链头：A→B、X→Y 互不影响，各保留链头→目标。
+func TestMergeRenamesCollapseMultiChain(t *testing.T) {
+	stored := map[string]string{"A": "B", "X": "Y"}
+	cur := []*adapter.Document{doc("B", "B.md", "1"), doc("Y", "Y.md", "2")}
+	out := MergeRenames(stored, nil, cur)
+	if out["A"] != "B" || out["X"] != "Y" || len(out) != 2 {
+		t.Fatalf("多链应各自保留：%v", out)
+	}
+}
+
+// 环防御：A→B、B→A 异常态 → 折叠后丢弃（无链头）。
+func TestMergeRenamesCollapseCycle(t *testing.T) {
+	stored := map[string]string{"A": "B", "B": "A"}
+	cur := []*adapter.Document{doc("A", "A.md", "1"), doc("B", "B.md", "2")}
+	out := MergeRenames(stored, nil, cur)
+	if len(out) != 0 {
+		t.Fatalf("环应被折叠丢弃：%v", out)
+	}
+}
+
+// 单条（无链）：A→B 保持不变。
+func TestMergeRenamesCollapseSingle(t *testing.T) {
+	stored := map[string]string{"A": "B"}
+	cur := []*adapter.Document{doc("B", "B.md", "1")}
+	out := MergeRenames(stored, nil, cur)
+	if out["A"] != "B" || len(out) != 1 {
+		t.Fatalf("单条应保持：%v", out)
+	}
+}
