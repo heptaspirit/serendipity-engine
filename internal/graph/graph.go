@@ -25,12 +25,13 @@ type Edge struct {
 // Stats() 因此可以 memoize（v0.1.11，backlog §二：roam/rollSeed 每次查询都调
 // Stats 全图遍历，图不变结果就不变，缓存纯收益）。
 type Graph struct {
-	nodes      map[string]*Node
-	adj        map[string][]string // 无向邻接（去重）
-	dangling   map[string]int      // 解析到但文件不存在的链接目标 → 计数
-	totalLinks int                 // 全部 [[链接]] 数（含重复/悬空/自环）
-	selfLinks  int
-	multiedge  int // 已见面对之间的重复链接数
+	nodes       map[string]*Node
+	adj         map[string][]string // 无向邻接（去重）
+	dangling    map[string]int      // 解析到但文件不存在的链接目标 → 计数
+	danglingSrc map[string][]string // 悬空链接的来源节点 → 目标列表（v0.1.12，backlog §四 缺口①）
+	totalLinks  int                 // 全部 [[链接]] 数（含重复/悬空/自环）
+	selfLinks   int
+	multiedge   int // 已见面对之间的重复链接数
 
 	statsOnce sync.Once
 	stats     Stats // 惰性计算并缓存（Graph 不可变，无失效问题）
@@ -38,9 +39,10 @@ type Graph struct {
 
 func Build(docs []*adapter.Document) *Graph {
 	g := &Graph{
-		nodes:    make(map[string]*Node, len(docs)),
-		adj:      make(map[string][]string),
-		dangling: map[string]int{},
+		nodes:       make(map[string]*Node, len(docs)),
+		adj:         make(map[string][]string),
+		dangling:    map[string]int{},
+		danglingSrc: map[string][]string{},
 	}
 	for _, d := range docs {
 		g.nodes[d.ID] = &Node{ID: d.ID, Title: d.Title, Doc: d}
@@ -55,6 +57,7 @@ func Build(docs []*adapter.Document) *Graph {
 			}
 			if _, ok := g.nodes[ref]; !ok {
 				g.dangling[ref]++
+				g.danglingSrc[d.ID] = append(g.danglingSrc[d.ID], ref)
 				continue
 			}
 			key := pairKey(d.ID, ref)
@@ -68,6 +71,30 @@ func Build(docs []*adapter.Document) *Graph {
 		}
 	}
 	return g
+}
+
+// DanglingRef 一条悬空链接明细（v0.1.12，backlog §四 缺口①）。
+type DanglingRef struct {
+	Source string `json:"source"` // 引用方节点 ID
+	Target string `json:"target"` // 指向的悬空目标（文件不存在）
+}
+
+// DanglingRefs 返回悬空链接明细：哪些节点指向哪些不存在的目标。
+// 稳定排序（先 source 后 target）；量级 = 悬空链接总数，通常远小于节点数。
+func (g *Graph) DanglingRefs() []DanglingRef {
+	var out []DanglingRef
+	for src, tgts := range g.danglingSrc {
+		for _, t := range tgts {
+			out = append(out, DanglingRef{Source: src, Target: t})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out
 }
 
 func pairKey(a, b string) string {

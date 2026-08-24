@@ -15,12 +15,13 @@
 //	  links(a, b, weight, PK(a,b)) —— 有向引用行（v0.1.5 修正）
 //
 // ▍links 的方向性（v0.1.5 修正，对账收敛的前提）
-//   Document.Refs 是有向的（本文档链接谁）；对账 diff 按 ID 逐文档比较 Refs，
-//   因此存储必须保方向。v0.1.5 前 Save 用排序 pairKey 去重（无向对，如
-//   (张三,李四) 恒按字典序），Load 只把 b 追加到 a 的 Refs——字典序较大的
-//   端点回读后 Refs 为空，每次刷新都报虚假 "refs +1"，永不收敛。修正后：
-//   Save 按精确 (a,b) 去重（每文档自己的 Refs 无重复），Load 原样回读；
-//   无向语义只在 graph.Build 层体现（双方入邻接表）。
+//
+//	Document.Refs 是有向的（本文档链接谁）；对账 diff 按 ID 逐文档比较 Refs，
+//	因此存储必须保方向。v0.1.5 前 Save 用排序 pairKey 去重（无向对，如
+//	(张三,李四) 恒按字典序），Load 只把 b 追加到 a 的 Refs——字典序较大的
+//	端点回读后 Refs 为空，每次刷新都报虚假 "refs +1"，永不收敛。修正后：
+//	Save 按精确 (a,b) 去重（每文档自己的 Refs 无重复），Load 原样回读；
+//	无向语义只在 graph.Build 层体现（双方入邻接表）。
 //
 // ▍与对账的关系（v0.1.2）
 //   - Load 对不存在的文件返回空列表（nil, nil）：对账刷新"首次"场景等价全新增；
@@ -28,9 +29,10 @@
 //   - 增量写（WAL 单行 UPDATE）是 v1.5 优化，不改本模块语义。
 //
 // ▍反馈埋点（v0.1.4）
-//   touch 表独立于 documents/links：Save 全量重写只 DELETE 后两张表，touch 保留
-//   （增量写入）。容量上限 touchMax=5000，超限删最旧——克制设计防无限增长；
-//   埋点只记录不演化边权（杜绝"点击→边权变→结果变→再点击"正反馈跑飞）。
+//
+//	touch 表独立于 documents/links：Save 全量重写只 DELETE 后两张表，touch 保留
+//	（增量写入）。容量上限 touchMax=5000，超限删最旧——克制设计防无限增长；
+//	埋点只记录不演化边权（杜绝"点击→边权变→结果变→再点击"正反馈跑飞）。
 //
 // ▍修改记录
 //
@@ -118,6 +120,8 @@ type TouchRow struct {
 // TouchStats 反馈埋点只读统计（v0.1.11，backlog §3.3 —— 反馈闭环只读第一步）。
 // 只读 SQL 聚合，绝不写库、绝不反馈到排序/hot（红线 2：埋点只记录不演化）。
 // touch 表不存在（从未埋点/旧库）→ 全零统计（不报错，展示友好）。
+// v0.1.12（backlog §四 缺口②）：targets 关联 documents 表过滤幽灵 touch——
+// 点击过但已删的节点不再进热度榜；sources 是自由文本查询词（非节点 ID），不过滤。
 func TouchStats(dbPath string, limit int) (total int, targets, sources []TouchRow, err error) {
 	if limit <= 0 {
 		limit = 10
@@ -134,12 +138,13 @@ func TouchStats(dbPath string, limit int) (total int, targets, sources []TouchRo
 	if err := db.QueryRow(`SELECT COUNT(*) FROM touch`).Scan(&total); err != nil {
 		return 0, nil, nil, err
 	}
-	targets, err = touchGroup(db, `target`, limit)
+	targets, err = touchGroup(db, `target`, limit, true)
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	// src 列可能为 NULL/空（早期埋点未传 from）——排除空值
-	sources, err = touchGroup(db, `src`, limit)
+	// src 列可能为 NULL/空（早期埋点未传 from）——排除空值；src 是自由文本查询词，
+	// 非节点 ID，不做幽灵过滤。
+	sources, err = touchGroup(db, `src`, limit, false)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -147,9 +152,15 @@ func TouchStats(dbPath string, limit int) (total int, targets, sources []TouchRo
 }
 
 // touchGroup 按列分组计数（target/src 通用），返回 TopN（降序，并列按 ID 稳定）。
-func touchGroup(db *sql.DB, col string, limit int) ([]TouchRow, error) {
+// filterNodes=true 时关联 documents 表，只保留仍存在的节点 ID（幽灵 touch 过滤，
+// v0.1.12 缺口②）；documents 表不存在（尚未持久化）→ 结果为空，语义=无已知节点。
+func touchGroup(db *sql.DB, col string, limit int, filterNodes bool) ([]TouchRow, error) {
+	valid := ""
+	if filterNodes {
+		valid = ` AND k IN (SELECT id FROM documents)`
+	}
 	rows, err := db.Query(`SELECT `+col+` AS k, COUNT(*) AS c FROM touch
-		WHERE k IS NOT NULL AND k != '' GROUP BY k ORDER BY c DESC, k ASC LIMIT ?`, limit)
+		WHERE k IS NOT NULL AND k != ''`+valid+` GROUP BY k ORDER BY c DESC, k ASC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

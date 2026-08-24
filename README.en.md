@@ -1,15 +1,12 @@
 # Serendipity Engine
 
+<p align="center"><img src="docs/logo.png" alt="Serendipity Engine" width="160"></p>
+
 > Graph roaming: an activation engine on top of your personal wiki's backlinks — **ask a point, get a cluster.**
 >
 > White-box, local, pure-Go zero-dependency. One structural signal, two consumers: **humans** roam for inspiration, **agents** skip the crawl and consume clusters / evidence chains / weight distributions directly.
 
-[![Version](https://img.shields.io/badge/version-v0.1.11-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
-[![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
-[![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod)
-
-English · [简体中文](README.md)
+[![Version](https://img.shields.io/badge/version-v0.1.12-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20ready-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Leiden](https://img.shields.io/badge/Leiden-community%20detection-4c566a)](https://github.com/heptaspirit/serendipity-engine) [![i18n](https://img.shields.io/badge/i18n-ZH%2FEN-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md) [![简体中文](https://img.shields.io/badge/简体中文-README-7aa2f7)](README.md)
 
 ## Features
 
@@ -20,9 +17,13 @@ English · [简体中文](README.md)
 - **Two data sources**: Obsidian vault (file parsing) + Orca Note (SQLite snapshot read; the credentials table is **never** touched)
 - **Reconciliation**: `seren refresh` / Web ↻ / auto-watch keep the graph in sync with add/edit/delete (throttled merging — deliberately restrained against feedback loops)
 - **Relation query**: shortest path + bidirectional PPR strength + evidence chain between any two nodes (white-box)
-- **Structural similarity**: node pairs with many common neighbors but no direct link (Jaccard, with shared-neighbor evidence) — a pure-structure substitute for the embedding semantic axis
+- **Structural similarity**: node pairs with many common neighbors but no direct link (Adamic-Adar degree-weighted, with shared-neighbor evidence) — a pure-structure substitute for the embedding semantic axis
 - **Roam export**: `/api/roam?export=1` → Markdown card list, so discoveries can be captured back into your notes
-- **Five entry points**: CLI / REST + Web UI / MCP (`seren mcp`, AI channel, six read-only tools) / CLI subcommand help + `--json` structured output
+- **Community detection (Leiden)**: split the graph into topic clusters (`/api/communities` + MCP `graph.community`) — agents localize knowledge gaps without crawling the whole library (diagnosis layer)
+- **Refresh consistency & UX**: `is_pending` pre-refresh hint + manual instant refresh; dangling-link details (`dangling_refs`) + ghost-touch filtering
+- **LLM Wiki compatible**: `--profile-name llm-wiki` (excludes `raw/` and `index.md/log.md`; real links, content-credibility caveat)
+- **Frontend P0 (plugin prep)**: compact embed `?embed=1` + postMessage bridge (`{type:'open'}`) + i18n (ZH/EN all user-visible copy)
+- **Five entry points**: CLI / REST + Web UI / MCP (`seren mcp`, AI channel, seven read-only tools) / CLI subcommand help + `--json` structured output
 
 ## Design Philosophy
 
@@ -49,7 +50,8 @@ store (SQLite: documents/links/touch) · sync (reconcile diff) · watch (auto-wa
 ```
 
 Minimal dependencies: the standard library + `gopkg.in/yaml.v3` + `modernc.org/sqlite`
-(pure Go, zero CGO), no network egress.
+(pure Go, zero CGO) + `github.com/vsuryav/leiden-go` (MIT, community detection, go.sum-pinned),
+no network egress.
 Maintainer-facing architecture docs live in `docs/architecture/`.
 
 ## Quick Start
@@ -69,13 +71,18 @@ go build -o seren.exe ./cmd/seren
 # Reconcile (sync after add/edit/delete; prints added/updated/deleted)
 .\seren.exe refresh <vault> --store <file.sqlite>
 
-# MCP (AI channel, six read-only tools; point a stdio MCP client at this)
+# MCP (AI channel, seven read-only tools; point a stdio MCP client at this)
 .\seren.exe mcp <vault> --db <file.sqlite>
+
+# Community detection (Leiden, diagnosis layer)
+.\seren.exe serve <vault> --port 8080   # open http://127.0.0.1:8080/api/communities
 
 # Subcommand help + structured output (CLI triplet)
 .\seren.exe help roam          # per-subcommand help (or .\seren.exe roam -h)
 .\seren.exe roam <vault> "word" --json   # structured JSON (agent-consumable)
 ```
+
+LLM Wiki vault profile: `.\seren.exe roam <llm-wiki-vault> "word" --profile-name llm-wiki`.
 
 ## Docs
 
@@ -88,13 +95,15 @@ go build -o seren.exe ./cmd/seren
 | [`docs/roadmap.md`](docs/roadmap.md) | Master roadmap: Phase 1 engine core + Web UI polish (self-use) / 2 plugin shells (M2), with dependency chain & status |
 | [`docs/frontend.md`](docs/frontend.md) | Frontend plan (Web UI): plugin prep + UI/UX polish spec + test quick-reference |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | Backend backlog: perf optimizations, similar/export/touch stats, CLI & MCP polish |
-| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 10 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
+| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 11 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
 | [`docs/history/`](docs/history/) | Archived decisions/verifications (content absorbed into design/roadmap; full narrative retained) |
 
 ## Special Thanks
 
 - **[dsh-mneme](https://github.com/modusensus/dsh-mneme)** — the philosophical source of the activation engine: structure × activation, spreading activation, white-box principle. The same engine with a different carrier and a different consumer is where this project started.
 - **[Dinosaur Toolbox](https://github.com/hqweay/orca-hqweay-go) (Orca Note plugin)** — inspiration for the SRS review-roam and random-walk interactions.
+- **[leiden-go](https://github.com/vsuryav/leiden-go)** (MIT) — community-detection (Leiden) third-party library, go.sum-pinned.
+- **[graphwizard](https://github.com/intelligrit/graphwizard)** (MIT) — graph-algorithm learning reference (Adamic-Adar similarity / community detection / structure analysis); the actual implementation here is self-written, no dependency pulled in.
 
 ## License
 

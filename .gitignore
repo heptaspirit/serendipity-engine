@@ -6,6 +6,9 @@
 # Scratch 临时工作区（探针脚本 / 库拷贝 / 构建缓存，不入库）
 scratch/
 
+# vendor/（本仓库用 go.sum 锁版本，不入库；第三方算法库 MIT 经 go.sum 锁定）
+/vendor/
+
 # DSH 工具目录与临时文件（不入库）
 .dsh-uploads/
 .dsh-vision-toolkit/

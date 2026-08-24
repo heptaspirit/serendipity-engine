@@ -41,7 +41,7 @@
 |---|---|---|
 | 构建层（LLM 写 wiki） | Karpathy 模式 / 用户在用 | 不碰——wiki 由 LLM 维护 |
 | 检索层（index.md 线性扫描） | 原始方案，规模受限（~100 sources 后吃力） | **补充：结构激活漫游**（PPR 相关簇 + 激活路径 + 可解释） |
-| agent 消费层 | Karpathy 推荐 qmd（BM25/vector + MCP server） | **已落地：MCP 六工具**（graph.stats/roam/random/relation/node/similar） |
+| agent 消费层 | Karpathy 推荐 qmd（BM25/vector + MCP server） | **已落地：MCP 七工具**（graph.stats/roam/random/relation/node/similar/community） |
 
 **关键差异：搜索 vs 漫游。**
 - qmd 类工具解决"找到"（命中相关页面）；serendipity 解决"发现"（结构相关簇、随机漫步、关系证据链）。
@@ -132,13 +132,14 @@ Obsidian（宿主）
 
 ## 七、对 AI agent 的价值（已铺路）
 
-MCP 六工具（只读）即 agent 接口（见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）：
+MCP 七工具（只读）即 agent 接口（见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）：
 - `graph.stats` — 库概况
 - `graph.roam` — 查询驱动漫游（激活簇 + 路径）
 - `graph.random` — 发散入口（seed 可复现）
 - `graph.relation` — 两实体关联强度 + 证据链
 - `graph.node` — 单节点详情（确认"这是不是我要的"）
-- `graph.similar` — 结构相似节点（共享邻居证据）
+- `graph.similar` — 结构相似节点（共享邻居证据，Adamic-Adar）
+- `graph.community` — 社区发现（Leiden，诊断层：定位主题簇/知识缺口）
 
 定位句：**给 agent 一个「结构侧记忆导航」——比 RAG 便宜、比向量记忆可信。**
 
@@ -157,7 +158,7 @@ MCP 六工具（只读）即 agent 接口（见 [`docs/architecture/07-mcp.md`](
 1. **克制即护城河**：纯 Go 零依赖、单二进制、白盒可解释——在云端 agent 记忆泛滥的时代是稀缺品
 2. **结构侧守门人**：语义候选需经引擎 Web 层融合，引擎位置稳固
 3. **可复现**：`--seed` 让漫游可复现——对 agent 联调、测试、分享有实际价值
-4. **双数据源 + 对账刷新 + 自动监听**：真实库上已验证（两库 55 单测绿）
+4. **双数据源 + 对账刷新 + 自动监听**：真实库上已验证（两库 74 单测绿）
 
 ## 十、后续动作
 

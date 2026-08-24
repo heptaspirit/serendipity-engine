@@ -3,6 +3,7 @@ module serendipity-engine
 go 1.26
 
 require (
+	github.com/vsuryav/leiden-go v0.0.0-20251120005855-0f56599dc139
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.57.0
 )

@@ -68,6 +68,9 @@
 //	v0.1.11 GET /api/similar（Jaccard 结构相似，独立入口）+ GET /api/node
 //	        （节点详情 L0/L1）+ GET /api/touch/stats（埋点只读统计）+
 //	        /api/roam?export=1（Markdown 卡片清单导出）。
+//	v0.1.12 GET /api/communities（Leiden 社区发现，诊断层）；/api/stats 加
+//	        is_pending（库变化待刷新）+ dangling_refs（悬空链接明细）；touch/stats
+//	        targets 过滤幽灵 touch；similar 升级 Adamic-Adar。
 //
 // ============================================================================
 package web
@@ -124,11 +127,12 @@ type Server struct {
 	VaultName string // Obsidian vault 名（obsidian:// URI 跳转用）；空 = 不提供跳转
 	OrcaRepo  string // 虎鲸 repo 名（orca-note:// URI 跳转用）；空 = 不提供跳转
 	Version   string
-	Refresh   RefreshFunc // 非空时注册 POST /api/refresh
-	Touch     TouchFunc   // 非空时注册 POST /api/touch（反馈埋点）
+	Refresh   RefreshFunc    // 非空时注册 POST /api/refresh
+	Touch     TouchFunc      // 非空时注册 POST /api/touch（反馈埋点）
 	TouchStat TouchStatsFunc // 非空时注册 GET /api/touch/stats（只读统计，v0.1.11）
-	Token     string      // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
-	revision  int         // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
+	IsPending func() bool    // 非空时 /api/stats 返回 is_pending（v0.1.12，roadmap #14：库有变化待刷新）
+	Token     string         // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
+	revision  int            // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
 
 	// 随机漫步状态（v0.1.7）：randMu 保护 rng 与 recent（rand.Rand 非并发安全）。
 	randMu sync.Mutex
@@ -148,6 +152,12 @@ func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version str
 // SetTouchStats 注入埋点只读统计闭包（v0.1.11；New 后调用，避免改签名波及调用方）。
 func (s *Server) SetTouchStats(fn TouchStatsFunc) {
 	s.TouchStat = fn
+}
+
+// SetIsPending 注入"有待刷新变化"查询（v0.1.12，roadmap #14）。non-nil 时
+// /api/stats 返回 is_pending；手动刷新后由 main 的刷新闭包清 pending。
+func (s *Server) SetIsPending(fn func() bool) {
+	s.IsPending = fn
 }
 
 // ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
@@ -176,6 +186,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/relation", s.handleRelation)
 	mux.HandleFunc("/api/similar", s.handleSimilar)
 	mux.HandleFunc("/api/node", s.handleNode)
+	mux.HandleFunc("/api/communities", s.handleCommunities)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	if s.Refresh != nil {
 		mux.HandleFunc("/api/refresh", s.handleRefresh)
@@ -331,13 +342,13 @@ func (s *Server) resolveID(q string) string {
 
 // similarItem 结构相似响应项（web 层补充标题/类型 + 共享邻居证据标题）。
 type similarItem struct {
-	ID            string   `json:"id"`
-	Title         string   `json:"title"`
-	Type          string   `json:"type"`
-	Score         float64  `json:"score"`
-	Shared        []string `json:"shared"`         // 共享邻居 ID（证据）
-	SharedTitles  []string `json:"shared_titles"`  // 共享邻居标题（证据可读）
-	URI           string   `json:"uri,omitempty"`  // 跳转
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Type         string   `json:"type"`
+	Score        float64  `json:"score"`
+	Shared       []string `json:"shared"`        // 共享邻居 ID（证据）
+	SharedTitles []string `json:"shared_titles"` // 共享邻居标题（证据可读）
+	URI          string   `json:"uri,omitempty"` // 跳转
 }
 
 // handleSimilar GET /api/similar?id=&k=：结构相似节点（v0.1.11，backlog §3.1）。
@@ -428,19 +439,39 @@ func (s *Server) handleTouchStats(w http.ResponseWriter, r *http.Request) {
 }
 
 type statsResp struct {
-	Nodes    int    `json:"nodes"`
-	Edges    int    `json:"edges"`
-	Version  string `json:"version"`
-	Revision int    `json:"revision"` // 图版本号：自动/手动刷新后 +1（前端轮询提示更新）
+	Nodes        int                 `json:"nodes"`
+	Edges        int                 `json:"edges"`
+	Version      string              `json:"version"`
+	Revision     int                 `json:"revision"`      // 图版本号：自动/手动刷新后 +1（前端轮询提示更新）
+	IsPending    bool                `json:"is_pending"`    // v0.1.12：库有变化待刷新（roadmap #14；手动刷新清 pending）
+	Dangling     int                 `json:"dangling"`      // 悬空目标种数
+	DanglingRefs []graph.DanglingRef `json:"dangling_refs"` // v0.1.12：悬空链接明细（backlog §四 缺口①，截断上限）
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	st := s.G.Stats()
 	rev := s.revision
+	isPending := false
+	if s.IsPending != nil {
+		isPending = s.IsPending()
+	}
+	// 悬空链接明细（v0.1.12，backlog §四 缺口①）：截断上限防 stats 轮询响应膨胀
+	danglingRefs := s.G.DanglingRefs()
+	if len(danglingRefs) > maxDanglingRefs {
+		danglingRefs = danglingRefs[:maxDanglingRefs]
+	}
 	s.mu.RUnlock()
-	writeJSON(w, statsResp{Nodes: st.Nodes, Edges: st.Edges, Version: s.Version, Revision: rev})
+	writeJSON(w, statsResp{
+		Nodes: st.Nodes, Edges: st.Edges, Version: s.Version,
+		Revision: rev, IsPending: isPending,
+		Dangling: st.DanglingLinks, DanglingRefs: danglingRefs,
+	})
 }
+
+// maxDanglingRefs /api/stats 返回的悬空链接明细上限（前端每 30s 轮询 stats，
+// 防大库悬空过多时响应膨胀——统计面板展示可截断后"… 共 N 条"）。
+const maxDanglingRefs = 50
 
 // hotNode 初始页漂浮气泡节点。
 type hotNode struct {
@@ -563,6 +594,30 @@ func (s *Server) toHitItems(hits []graph.TextHit) []roamItem {
 	return out
 }
 
+// handleCommunities GET /api/communities：社区发现（v0.1.12，roadmap #10 诊断层）。
+// ?resolution= &seed= 可选；返回模块度 + 社区列表（按 Size 降序，含代表标题）+
+// Membership（node→comm）。只读、无副作用（Leiden 不动图，仅分簇）。
+func (s *Server) handleCommunities(w http.ResponseWriter, r *http.Request) {
+	resolution := clampFloat(r.URL.Query(), "resolution", 1.0, 0, 100)
+	seed := int64(0)
+	if n, err := strconv.ParseInt(r.URL.Query().Get("seed"), 10, 64); err == nil {
+		seed = n
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	res, err := s.G.Communities(resolution, seed)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"modularity":      res.Modularity,
+		"community_count": res.CommunityCount,
+		"membership":      res.Membership,
+		"communities":     res.Communities,
+	})
+}
+
 // nodePath 取节点相对路径（跳转用）。
 func nodePath(g *graph.Graph, id string) string {
 	if n, ok := g.Node(id); ok && n.Doc != nil {
@@ -579,12 +634,12 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	opt := roam.Options{
 		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
 		// （高阶内部项——跳数配额/PPR 阻尼/迭代次数——不对外暴露，保持默认）。
-		Top:    clampInt(vals, "top", 15, 1, 60),
-		Hops:   clampInt(vals, "hops", 3, 1, 5),
-		Lambda: clampFloat(vals, "lambda", 0.7, 0, 1),
-		Theta:  clampFloat(vals, "theta", 0.1, 0, 1),
-		Alpha:  clampFloat(vals, "alpha", 0.5, 0, 1),
-		Beta:   clampFloat(vals, "beta", 0.5, 0, 1),
+		Top:              clampInt(vals, "top", 15, 1, 60),
+		Hops:             clampInt(vals, "hops", 3, 1, 5),
+		Lambda:           clampFloat(vals, "lambda", 0.7, 0, 1),
+		Theta:            clampFloat(vals, "theta", 0.1, 0, 1),
+		Alpha:            clampFloat(vals, "alpha", 0.5, 0, 1),
+		Beta:             clampFloat(vals, "beta", 0.5, 0, 1),
 		FilterStructural: true,
 	}
 

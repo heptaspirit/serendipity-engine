@@ -1,15 +1,12 @@
 # Serendipity Engine · 奇遇记引擎
 
+<p align="center"><img src="docs/logo.png" alt="Serendipity Engine" width="160"></p>
+
 > 图谱漫游：给个人笔记的双链装上激活引擎——**你问一个点，它给你一片。**
 >
 > 白盒、本地、纯 Go 零依赖。一份结构信号，两个消费者：**人**在笔记库里漫游寻灵感，**agent** 免于闷头遍历、直接消费相关簇 / 证据链 / 权重分布。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.11-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags)
-[![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod)
-[![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod)
-
-[English](README.en.md) · 简体中文
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.12-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-%E5%8D%95%E4%BA%8C%E8%BF%9B%E5%88%B6-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-%E6%95%B0%E6%8D%AE%E4%B8%8D%E5%87%BA%E6%9C%AC%E6%9C%BA-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20%E5%8F%AF%E6%8E%A5%E5%85%A5-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Leiden](https://img.shields.io/badge/Leiden-%E7%A4%BE%E5%8C%BA%E5%8F%91%E7%8E%B0-4c566a)](https://github.com/heptaspirit/serendipity-engine) [![i18n](https://img.shields.io/badge/i18n-%E4%B8%AD%E8%8B%B1%E5%8F%8C%E8%AF%AD-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![简体中文](https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-README-7aa2f7)](README.md) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md)
 
 ## 特性
 
@@ -20,9 +17,13 @@
 - **双数据源**：Obsidian vault（文件解析）+ 虎鲸 Orca Note（SQLite 快照直读，凭据表绝不碰）
 - **对账刷新**：`seren refresh` / Web ↻ / 自动监听三路同步增删改（节流合并，克制防跑飞）
 - **关系查询**：任意两节点的最短路径 + 双向 PPR 强度 + 证据链（white-box）
-- **结构相似**：共同邻居多但互不链接的节点对（Jaccard，带共享邻居证据）——embedding 语义轴的纯结构替代
+- **结构相似**：共同邻居多但互不链接的节点对（Adamic-Adar 度加权，带共享邻居证据）——embedding 语义轴的纯结构替代
 - **漫游导出**：`/api/roam?export=1` → Markdown 卡片清单，发现能沉淀进笔记
-- **五入口**：CLI / REST + Web UI / MCP（`seren mcp`，AI 通道，只读六工具）/ CLI 子命令帮助 + `--json` 结构化输出
+- **社区发现（Leiden）**：把图拆成主题簇（`/api/communities` + MCP `graph.community`）——agent 不用遍历全库就能定位知识缺口（诊断层）
+- **刷新一致性 + 体验**：`is_pending` 事前提示 + 手动即时刷新；悬挂链接明细（`dangling_refs`）+ 幽灵 touch 过滤
+- **LLM Wiki 兼容**：`--profile-name llm-wiki`（排除 raw/ 与 index.md/log.md，真实链接，内容可信度降级声明）
+- **前端 P0（插件化前置）**：紧凑嵌入 `?embed=1` + postMessage 桥（`{type:'open'}`）+ i18n 中英双语全部文案
+- **五入口**：CLI / REST + Web UI / MCP（`seren mcp`，AI 通道，只读七工具）/ CLI 子命令帮助 + `--json` 结构化输出
 
 ## 设计哲学
 
@@ -48,7 +49,7 @@ score + roam（归一化融合 + 跳数配额 / 漫游管线：锚定→扩散�
 store（SQLite: documents/links/touch） · sync（对账 diff） · watch（自动监听） · web（REST+前端）
 ```
 
-依赖极简：标准库 + `gopkg.in/yaml.v3` + `modernc.org/sqlite`（纯 Go 零 CGO），无网络出口。
+依赖极简：标准库 + `gopkg.in/yaml.v3` + `modernc.org/sqlite`（纯 Go 零 CGO）+ `github.com/vsuryav/leiden-go`（MIT，社区发现，go.sum 锁版本），无网络出口。
 维护者向架构文档在 `docs/architecture/`。
 
 ## 快速开始
@@ -68,13 +69,18 @@ go build -o seren.exe ./cmd/seren
 # 对账刷新（增删改后同步，输出 增/删/改 明细）
 .\seren.exe refresh <vault> --store <file.sqlite>
 
-# MCP（AI 通道，只读六工具；给 dsh/agent 配 stdio MCP 指向此命令）
+# MCP（AI 通道，只读七工具；给 dsh/agent 配 stdio MCP 指向此命令）
 .\seren.exe mcp <vault> --db <file.sqlite>
+
+# 社区发现（Leiden，诊断层：库里有哪些主题簇）
+.\seren.exe serve <vault> --port 8080   # 打开 http://127.0.0.1:8080/api/communities
 
 # 子命令级帮助 + 结构化输出（CLI 三件套）
 .\seren.exe help roam          # 某子命令专属帮助（或 .\seren.exe roam -h）
 .\seren.exe roam <vault> "词" --json   # 结构化 JSON（数据可给 agent 直接消费）
 ```
+
+LLM Wiki 库画像：`.\seren.exe roam <llm-wiki-vault> "词" --profile-name llm-wiki`。
 
 ## 文档
 
@@ -87,13 +93,15 @@ go build -o seren.exe ./cmd/seren
 | [`docs/roadmap.md`](docs/roadmap.md) | 总路线图：阶段 1 引擎核心 + Web UI 完善（作者自用）/ 2 插件薄壳（M2），含依赖链与状态 |
 | [`docs/frontend.md`](docs/frontend.md) | 前端计划（Web UI）：插件化前置 + UI/UX 打磨规范 + 测试速查与交接 |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | 后端积压清单：性能优化、similar/export/touch 统计、CLI/MCP 打磨 |
-| [`docs/api-contract.md`](docs/api-contract.md) | API 契约：10 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |
+| [`docs/api-contract.md`](docs/api-contract.md) | API 契约：11 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |
 | [`docs/history/`](docs/history/) | 历史决策/验证归档（内容已吸收进 design/roadmap，保留完整叙事） |
 
 ## 特别鸣谢
 
 - **[dsh-mneme](https://github.com/modusensus/dsh-mneme)** —— 激活引擎哲学源头：结构 × 激活、激活扩散、白盒原则。同一套引擎换个载体、换个人当消费者，就是本项目的起点。
 - **[恐龙工具箱](https://github.com/hqweay/orca-hqweay-go)（虎鲸笔记插件）** —— SRS 复习漫游与随机漫步交互的灵感来源。
+- **[leiden-go](https://github.com/vsuryav/leiden-go)**（MIT）—— 社区检测（Leiden）第三方库，`go.sum` 锁版本进来。
+- **[graphwizard](https://github.com/intelligrit/graphwizard)**（MIT）—— 图算法学习参考（Adamic-Adar 相似度 / 社区检测 / 结构分析），实际实现为自研，不引入依赖。
 
 ## License
 

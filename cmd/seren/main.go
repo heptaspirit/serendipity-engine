@@ -63,6 +63,11 @@
 //	         附：CLI 三件套（backlog §五）——子命令级帮助（seren help <cmd> /
 //	         <cmd> -h）、--json 结构化输出（roam/index/refresh）、退出码语义化
 //	         （0 成功 / 2 用法错误 / 1 运行时错误）。
+//	v0.1.12 M1 阶段 1 收官 + 前端 P0：similar 评分升级 Jaccard → Adamic-Adar；
+//	         is_pending 刷新待办标志（watch 原子标志 + /api/stats + 手动刷新清 pending）；
+//	         LLM Wiki 结构探测提示（DetectLLMWiki）；MCP 扩至七工具（graph.community）；
+//	         前端 P0（紧凑嵌入 / postMessage 桥 / i18n 双语）——见 internal/web/static。
+//	         本版不做 GitHub Actions 自动构建（用户拍板），本地 scratch/seren.exe 仅联调不入库。
 //
 // ============================================================================
 package main
@@ -80,6 +85,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"serendipity-engine/internal/adapter"
@@ -93,7 +99,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.11"
+const version = "v0.1.12"
 
 func main() {
 	code := run(os.Args[1:])
@@ -102,8 +108,9 @@ func main() {
 
 // ---------- CLI 三件套（v0.1.11，backlog §五）----------
 // 退出码语义化：
-//   0 成功；2 用法/参数错误（agent 可自纠——补参数重跑）；1 运行时错误（解析失败、
-//   库不存在、服务失败等）。此前参数错误与运行时错误都 exit 1，agent 无法区分。
+//
+//	0 成功；2 用法/参数错误（agent 可自纠——补参数重跑）；1 运行时错误（解析失败、
+//	库不存在、服务失败等）。此前参数错误与运行时错误都 exit 1，agent 无法区分。
 func run(args []string) int {
 	if len(args) < 1 {
 		usage()
@@ -181,7 +188,7 @@ func usageFor(cmd string) {
 		text = "profile-detect: 扫描 vault，产出解析画像 YAML（新库 onboarding）\n" +
 			"  seren profile-detect <vault>"
 	case "mcp":
-		text = "mcp: MCP stdio server（只读工具：stats/roam/random/relation/node/similar）\n" +
+		text = "mcp: MCP stdio server（只读工具：stats/roam/random/relation/node/similar/community）\n" +
 			"  seren mcp <vault|OrcaNote.db> [--db <store>] [--profile-name <名>]\n" +
 			"  --db            读持久化存储免重解析"
 	default:
@@ -199,7 +206,7 @@ func usage() {
   seren serve <vault|OrcaNote.db> [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新）
   seren refresh <vault|OrcaNote.db> [flags] 对账刷新：重解析 + 与上次持久化状态 diff
   seren profile-detect <vault>          扫描 vault，提出解析画像 YAML（新库 onboarding）
-  seren mcp <vault> [--db <store>]       MCP stdio server（只读四件套，AI 入口）
+  seren mcp <vault> [--db <store>]       MCP stdio server（只读七件套，AI 入口）
   seren version                         打印版本
 flags:
   --top N        输出条数 (默认 15)
@@ -323,9 +330,10 @@ func parseSource(vault string, p *adapter.VaultProfile, dbFile string) ([]*adapt
 }
 
 // refreshParse 刷新专用解析（v0.1.6 快照增量优化）：
-//   Obsidian 源且已有旧状态 → ParseVaultIncremental（复用 mtime/size 未变文件，
-//   只重解析变更/新增；返回 reused 计数供日志）；其余（--db 回读 / 虎鲸 /
-//   首次全量）→ parseSource。语义与全量解析等价（见 adapter/obsidian.go）。
+//
+//	Obsidian 源且已有旧状态 → ParseVaultIncremental（复用 mtime/size 未变文件，
+//	只重解析变更/新增；返回 reused 计数供日志）；其余（--db 回读 / 虎鲸 /
+//	首次全量）→ parseSource。语义与全量解析等价（见 adapter/obsidian.go）。
 func refreshParse(vault string, p *adapter.VaultProfile, flags map[string]string, old []*adapter.Document) (docs []*adapter.Document, reused int, src string, err error) {
 	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
 		docs, reused, err = adapter.ParseVaultIncremental(vault, p, old)
@@ -685,7 +693,18 @@ func cmdServe(args []string) int {
 	}
 
 	storePath := storePathFor(vault, flags["store"])
-	refreshFn := refreshFunc(vault, p, flags)
+	// v0.1.12 刷新待办（roadmap #14）：原子标志"库有变化待刷新"——watch 检测到变化置位、
+	// 刷新成功清除；/api/stats 暴露 is_pending，前端据此显示"库有变化，将自动刷新 · 立即刷新"提示条。
+	// 手动 /api/refresh 也走下面的 refreshFn（成功即清 pending，防 watch 下个 tick 重复自动刷）。
+	var pending atomic.Bool
+	baseRefresh := refreshFunc(vault, p, flags)
+	refreshFn := func() (*sync.Result, *graph.Graph, error) {
+		res, ng, err := baseRefresh()
+		if err == nil {
+			pending.Store(false)
+		}
+		return res, ng, err
+	}
 	// 反馈埋点闭包（克制：仅记录，写 store touch 表；失败静默）
 	touchFn := func(target, from string) error { return store.AppendTouch(storePath, target, from) }
 	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
@@ -705,6 +724,8 @@ func cmdServe(args []string) int {
 		}
 		return total, toRows(targets), toRows(sources), nil
 	})
+	// v0.1.12：/api/stats 暴露 is_pending（roadmap #14）
+	srv.SetIsPending(func() bool { return pending.Load() })
 
 	// API 鉴权（v0.1.8 安全前置）：--token 指定；否则自动生成 32 位 hex 并打印。
 	// 前端页面由服务端注入 token（外部页面拿不到）；curl 用 X-Seren-Token 头或
@@ -729,11 +750,11 @@ func cmdServe(args []string) int {
 		if isOrca {
 			check = watch.NewOrcaChecker(vault)
 		} else {
-			check = watch.NewVaultChecker(vault, p.ExcludedDirs)
+			check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watch.Run(ctx, interval, throttle, check, func() error {
+		go watch.Run(ctx, interval, throttle, &pending, check, func() error {
 			res, ng, err := refreshFn()
 			if err != nil {
 				return err
@@ -755,6 +776,11 @@ func cmdServe(args []string) int {
 		fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", orcaRepo)
 	case vaultName != "":
 		fmt.Printf("跳转: Obsidian vault 名=%s（卡片上点「打开」会跳到笔记软件）\n", vaultName)
+	}
+	// v0.1.12 LLM Wiki 结构探测（backlog §3.5）：只提示不自动启用——用户显式
+	// --profile-name llm-wiki 才排除 index.md/log.md / raw 等（保护普通 Obsidian 库）。
+	if !isOrca && flags["profile-name"] == "" && flags["profile"] == "" && adapter.DetectLLMWiki(vault) {
+		fmt.Printf("提示: 检测到 LLM Wiki 结构（raw/ + wiki/index.md）——如需只扫 wiki/ 实体页并排除 index.md/log.md，加 --profile-name llm-wiki\n")
 	}
 	if n, err := store.TouchCount(storePath); err == nil && n > 0 {
 		fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
@@ -853,7 +879,7 @@ func cmdProfileDetect(args []string) int {
 }
 
 // cmdMCP 启动 MCP stdio server（第四个入口，v0.1.9，roadmap M0-0.3）。
-// 只读工具（stats/roam/random/relation/node/similar，v0.1.11 扩至六个）：
+// 只读工具（stats/roam/random/relation/node/similar/community，v0.1.12 扩至七个）：
 // 只 import 纯库，不碰 web/watch。stdout 只承载 JSON-RPC 协议；启动提示写 stderr。
 func cmdMCP(args []string) int {
 	pos, flags := parseArgs(args)
@@ -873,7 +899,7 @@ func cmdMCP(args []string) int {
 	// 启动横幅仅在交互式终端（stdout 是 TTY）打印——DSH 等 MCP 客户端 spawn 时
 	// stdout 是管道，静默（否则每次重连/respawn 都在宿主控制台刷一行）。
 	if isTerminal(os.Stdout) {
-		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar\n",
+		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar/community\n",
 			src, g.Stats().Nodes)
 	}
 	srv := mcp.New(g, p, version)

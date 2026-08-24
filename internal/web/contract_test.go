@@ -1,0 +1,143 @@
+// // #8 前端 JSON 契约测试（v0.1.12）：验证 /api/* 端点返回的 JSON 形状与
+// api-contract.md 一致——前端据此渲染，契约漂移即测试失败。
+// 覆盖全部只读端点 + 手动刷新 + 埋点上报。每个端点断言响应能解码 + 必含契约字段。
+package web
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"testing"
+
+	"serendipity-engine/internal/adapter"
+	"serendipity-engine/internal/graph"
+	syncpkg "serendipity-engine/internal/sync"
+)
+
+// contractServer 构造带全端点（含 refresh/touch/touchStat）的契约测试服务。
+func contractServer(t *testing.T, storePath string) *Server {
+	t.Helper()
+	s := New(endpointGraph(), &adapter.VaultProfile{}, "obsidian:test", "V", "v0.1.12", nil, nil)
+	s.Token = testToken
+	s.OrcaRepo = ""
+	s.SetTouchStats(func() (int, []TouchRow, []TouchRow, error) {
+		return 7, []TouchRow{{ID: "b", Count: 4}}, []TouchRow{{ID: "Alpha", Count: 2}}, nil
+	})
+	s.SetIsPending(func() bool { return true })
+	// refresh 闭包：返回一个合成 diff + 同一图（端点只验证 JSON 形状，不做真刷新）
+	s.Refresh = func() (*syncpkg.Result, *graph.Graph, error) {
+		res := &syncpkg.Result{Added: 1, Updated: 2, Deleted: 0, Renamed: 1, Unchanged: 1, DurationMS: 3}
+		res.Changes = []syncpkg.Change{{ID: "n1", Title: "新节点", Kind: syncpkg.KindAdded, Type: "note"}}
+		res.Renames = []syncpkg.Rename{{OldID: "old", NewID: "new", Title: "改名", Type: "note"}}
+		return res, s.G, nil
+	}
+	return s
+}
+
+// decodeUntilEOF 把整个响应体读成任意 JSON（map[string]any / []any）。
+func decodeRaw(t *testing.T, body io.Reader) any {
+	t.Helper()
+	var v any
+	if err := json.NewDecoder(body).Decode(&v); err != nil {
+		t.Fatalf("响应非 JSON: %v", err)
+	}
+	return v
+}
+
+func mustKeys(t *testing.T, m map[string]any, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("契约缺字段 %s：%v", k, m)
+		}
+	}
+}
+
+// TestEndpointJSONContract 走全端点并校验契约字段。
+func TestEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+
+	cases := []struct {
+		method, path string
+		keys         []string
+	}{
+		{"GET", "/api/stats", []string{"nodes", "edges", "version", "revision", "is_pending", "dangling", "dangling_refs"}},
+		{"GET", "/api/config", []string{"params", "source", "vault", "version", "nodes", "edges"}},
+		{"GET", "/api/roam?q=Alpha", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
+		{"GET", "/api/roam?random=1&seed=42", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
+		{"GET", "/api/relation?from=Alpha&to=Beta", []string{"path", "path_nodes", "affinity"}},
+		{"GET", "/api/similar?id=Alpha", []string{"id", "results"}},
+		{"GET", "/api/node?id=Beta", []string{"id", "title", "type", "text", "deg", "neighbors", "backlinks"}},
+		{"GET", "/api/communities?seed=42", []string{"modularity", "community_count", "membership", "communities"}},
+		{"GET", "/api/hot?n=10", nil},
+	}
+	for _, c := range cases {
+		resp := doAuthGet(t, ts, c.path)
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s 应 200, got %d", c.path, resp.StatusCode)
+		}
+		body := decodeRaw(t, resp.Body)
+		resp.Body.Close()
+		if m, ok := body.(map[string]any); ok {
+			mustKeys(t, m, c.keys...)
+		} else if c.keys != nil { // /api/hot 是数组，keys 应为 nil
+			t.Fatalf("%s 应为对象：%v", c.path, body)
+		}
+	}
+}
+
+// POST /api/refresh 契约：diff 摘要 + 明细 + 改名。
+func TestRefreshEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/refresh", nil)
+	req.Header.Set(tokenHeader, testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	defer resp.Body.Close()
+	body := decodeRaw(t, resp.Body)
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("refresh 应为对象：%v", body)
+	}
+	mustKeys(t, m, "added", "updated", "deleted", "renamed", "unchanged", "duration_ms", "nodes", "changes", "renames")
+}
+
+// POST /api/touch 契约：埋点上报成功（写失败静默，仍返回 ok）。
+func TestTouchEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	s.Touch = func(target, from string) error { return nil }
+	ts := newAuthServer(t, s)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/touch", bytes.NewBufferString(`{"target":"a","from":"Alpha"}`))
+	req.Header.Set(tokenHeader, testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("touch 应 200, got %d", resp.StatusCode)
+	}
+	body := decodeRaw(t, resp.Body)
+	if m, ok := body.(map[string]any); !ok || m["ok"] != "true" {
+		t.Fatalf("touch 应返回 ok: %v", body)
+	}
+}
+
+// /api/stats 的 is_pending：注入 true 时应反射在响应里（roadmap #14）。
+func TestStatsIsPendingReflected(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+	resp := doAuthGet(t, ts, "/api/stats")
+	defer resp.Body.Close()
+	body := decodeRaw(t, resp.Body)
+	m := body.(map[string]any)
+	if m["is_pending"] != true {
+		t.Fatalf("is_pending 应为 true: %v", m)
+	}
+}

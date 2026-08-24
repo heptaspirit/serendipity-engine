@@ -89,6 +89,38 @@
 - 跳回：`orca.invokeBackend` 打开块
 - 发布：build 后 zip 解压到 `Documents/orca/plugins`
 
+### 插件形态升级：隐式优先三层（2026-08-24 用户拍板）
+
+> 用户对插件形态的思考：用户多数时候"开着插件但自己在操作"，**不打开插件面板**——插件应是无感存在的工具，**隐式触发（宿主内操作）比显式面板漫游更重要**。
+
+| 层 | 内容 | 交互 |
+|---|---|---|
+| **后台感知层** | 监听宿主操作 → 隐式 touch → 自动 refresh（现有 watch） | 零交互（无感） |
+| **命令触发层** | 命令面板/快捷键/右键/斜杠命令，**锚点 = 当前活跃笔记** | 轻交互（不打开面板） |
+| **可选面板层** | iframe 壳 Web UI（现有设计保留，深度漫游用） | 低频 |
+
+**关键设计**：命令锚点 = 用户正在看的笔记（Obsidian `activeFile` / 虎鲸当前块），无需输入——"无感使用"的核心交互。面板层代码不浪费（保留），但插件主价值在后台感知 + 命令触发。
+
+### touch 数据真实化（显式 + 隐式）
+
+| touch 来源 | 机制 | 工作量 |
+|---|---|---|
+| **显式**（seren 界面内漫游） | iframe 壳内 Web UI 埋点，现有 `/api/touch` 原样生效 | **零工作** |
+| **隐式**（宿主内日常操作，主信号） | Obsidian：`workspace.on('file-open' / 'active-leaf-change' / 'editor-change')` → `POST /api/touch`；虎鲸：Valtio `subscribe(orca.state.activePanel / panels / blocks)`（模板先例：main.ts `const { subscribe } = window.Valtio`） | 插件实现 |
+
+红线保持：隐式 touch 与显式同表、**只记录不演化**（v0.1.4 决策；是否进边权演化是 M1 边权演化时再议）。
+
+### 宿主命令注册（隐式优先的主入口）
+
+- **Obsidian**：`addCommand`（回调读 `activeFile` 作锚点）+ `workspace.on('file-menu')` 右键菜单 + `addStatusBarItem` 状态栏无感提示
+- **虎鲸**（orca.d.ts 已确认）：`commands.registerCommand` / `slashCommands.registerSlashCommand` / `blockMenuCommands` / `tagMenuCommands` / `toolbar.registerToolbarButton`
+
+### 虎鲸待确认点（开发时问开发者本人）
+
+1. `subscribe` 大对象（blocks/panels）的性能 vs 只 subscribe `activePanel`
+2. "当前活跃块"的现成获取方式（invokeBackend 无明确 get-active-block 消息；需从 activePanel + panels 解析？）
+3. `broadcasts` 是否承载宿主事件（若是，比订阅 state 更轻）
+
 ## 七、多平台策略
 
 拆成两个维度分别处理：

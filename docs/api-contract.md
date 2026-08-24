@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.11 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.1.12 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -25,11 +25,14 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 |---|---|---|
 | `nodes` | int | 图节点数 |
 | `edges` | int | 去重无向边数 |
-| `version` | string | 引擎版本（如 `v0.1.9`） |
+| `version` | string | 引擎版本（如 `v0.1.12`） |
 | `revision` | int | 图版本号：自动/手动刷新后 +1（前端轮询对比以提示"库已更新"） |
+| `is_pending` | bool | 库有变化待刷新（v0.1.12）：watch 检测到但节流窗口未到 → true；自动/手动刷新成功 → false。前端据以显示"库有变化，将自动刷新 · 立即刷新"提示条 |
+| `dangling` | int | 悬空链接总条数（指向不存在文件的链接） |
+| `dangling_refs[]` | array | 悬空链接明细 `{source,target}`（v0.1.12，截断上限 50；`source`=引用方节点 ID，`target`=悬空目标） |
 
 ```json
-{"nodes":235,"edges":318,"version":"v0.1.11","revision":3}
+{"nodes":235,"edges":318,"version":"v0.1.12","revision":3,"is_pending":false,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
 ```
 
 ## 2. `GET /api/hot?n=20` · 热门节点（初始页气泡）
@@ -152,7 +155,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `id` | string | 锚定后的节点 ID |
 | `results[]` | array | 相似候选（降序） |
 | `results[].id/title/type` | string | 候选节点 |
-| `results[].score` | float | Jaccard 相似度 \|N(u)∩N(v)\|/\|N(u)∪N(v)\| |
+| `results[].score` | float | **Adamic-Adar** 相似度 `Σ_{w∈N(u)∩N(v)} 1/log(deg(w))`（v0.1.12 升级：共同邻居按度倒数加权，比 Jaccard 更抗枢纽偏置、对"专属关联"更敏感） |
 | `results[].shared` | string[] | 共享邻居 ID（证据） |
 | `results[].shared_titles` | string[] | 共享邻居标题（证据可读，最多 4） |
 | `results[].uri` | string | 跳转（obsidian:// / orca-note://） |
@@ -188,7 +191,26 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `targets[]` | array | 被反复点击 `{id,count}`（降序，n 截断） |
 | `sources[]` | array | 点击来源 `{id,count}`（降序，n 截断；空 src 排除） |
 
-无埋点表（从未埋点/旧库）→ 全零（不报错，展示友好）。
+无埋点表（从未埋点/旧库）→ 全零（不报错，展示友好）。targets 关联 documents 表
+过滤**幽灵 touch**（v0.1.12：点击过但已删的节点不再进热度榜）；sources 是自由
+文本查询词（非节点 ID），不过滤。
+
+## 11. `GET /api/communities?resolution=&seed=` · 社区发现（v0.1.12，诊断层）
+
+Leiden 社区检测（`github.com/vsuryav/leiden-go`，MIT，vendor）——把图拆成主题簇，
+回答「库里有哪些主题簇、哪些区域互不相连」，诊断层定位知识缺口。只读、无副作用。
+
+**响应**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `modularity` | float | 模块度质量分（-1~1，越高社区越清晰；Leiden 自查） |
+| `community_count` | int | 社区数 |
+| `membership` | object | `nodeID → 社区ID`（不含孤立节点——孤立节点由 stats.orphans 承接，不单独成社区） |
+| `communities[]` | array | 社区列表（按 Size 降序）：`{id,size,nodes[],titles[]}`（titles 为度 TOP8 代表标题） |
+
+参数：`resolution`（默认 1.0，越大社区越碎）、`seed`（0=随机；固定值可复现）。
+孤立节点（度=0）在检测前过滤。失败 → `{"error":"..."}`。
 
 ---
 
@@ -204,6 +226,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | v0.1.7 | roam 加 random/seed/rand_alpha；config 加 rand_alpha |
 | v0.1.8 | **全 API 加鉴权**（X-Seren-Token 头 / ?token=）+ Host 校验 |
 | v0.1.11 | 新增 /api/similar（Jaccard）、/api/node（详情）、/api/touch/stats（只读统计）；roam 加 `?export=1`（text/markdown 卡片清单） |
+| v0.1.12 | similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；stats 加 `is_pending`（库变化待刷新）+ `dangling_refs`（悬空明细）；touch/stats targets 过滤幽灵 touch；**新增 /api/communities**（Leiden 社区发现，诊断层）；MCP tools 扩至 7（+graph.community） |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

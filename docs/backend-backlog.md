@@ -12,12 +12,25 @@
 | 类别 | 项目 | 价值 | 风险 |
 |---|---|---|---|
 | 性能优化 | Stats 缓存 / PPR 提前收敛 / TextSearch 小写缓存 / Store 增量写 | 大库（数万节点）时显著 | ✅ Stats 缓存已落地（v0.1.11）；其余前三个低，Store 增量写中 |
-| 功能缺口 | 结构相似节点（similar） | **高**——补语义缺口的白盒方案 | ✅ v0.1.11 已落地（graph.Similar + /api/similar + MCP graph.similar） |
+| 功能缺口 | 结构相似节点（similar） | **高**——补语义缺口的白盒方案 | ✅ v0.1.11（Jaccard）→ v0.1.12 升级 **Adamic-Adar**（度加权，抗枢纽偏置） |
 | 功能缺口 | 漫游导出（export） | 中高——工作流闭环 | ✅ v0.1.11 已落地（/api/roam?export=1 → Markdown） |
-| 功能缺口 | touch 统计 API | 中——反馈闭环只读第一步 | ✅ v0.1.11 已落地（/api/touch/stats 只读聚合，绝不反馈排序） |
+| 功能缺口 | touch 统计 API | 中——反馈闭环只读第一步 | ✅ v0.1.11 已落地（/api/touch/stats 只读聚合，绝不反馈排序）；v0.1.12 加幽灵 touch 过滤 |
 | 功能缺口 | 单节点详情（graph.node） | **最缺的"确认这是什么"** | ✅ v0.1.11 已落地（graph.NodeDetail + /api/node + MCP graph.node） |
-| 功能缺口 | 社区发现（Leiden）→ 诊断层 | 中——知识缺口诊断 + 簇级导航（等场景） | 低（选型已定） |
-| 功能缺口 | LLM Wiki adapter 画像（`llm-wiki`） | 中——真实性门槛下唯一可接受的 LLM 数据源兼容 | 低（文件名级排除） |
+| 功能缺口 | 社区发现（Leiden）→ 诊断层 | 中——知识缺口诊断 + 簇级导航 | ✅ v0.1.12 落地（leiden-go vendor + /api/communities + MCP graph.community） |
+| 功能缺口 | LLM Wiki adapter 画像（`llm-wiki`） | 中——真实性门槛下唯一可接受的 LLM 数据源兼容 | ✅ v0.1.12 落地（VaultProfile ExcludedFiles + 内置画像 llm-wiki + 结构探测 + watch 排除同源） |
+
+## 一.5 开发纪律（2026-08-24 用户拍板，横切所有后端开发）
+
+> 原则级表述见 [`docs/architecture/00-overview.md`](architecture/00-overview.md) §2 设计哲学第 6 条（工程纪律）；本节为操作细节与 first case。
+
+**文件组织**：
+1. **单文件 500 行左右，最好不超千行**——超过即拆（现有最大 web/server.go 787，安全但留意）
+2. **按领域域拆文件，不按函数碎片化**：同领域相关函数放一个文件（如 `structure.go` 装聚类系数 + K-Core 两个小函数）
+3. **算法/模块 = 包级可复用函数**——独立导出，为未来接口暴露（如 MCP `graph.community`）直接可调用（现状 graph 包已是此模式：activation/score/similar 各一文件）
+
+**依赖策略**：
+4. **第三方算法库可引入**（用户拍板）——"克制"指**零依赖单二进制**（不背运行时/网络栈/服务），不是"永远不用库"。条件：MIT 类宽松许可 + **go.sum 以 pseudo-version 锁定版本**（版本不可变、上游免疫——本仓库沿用 go.sum 而非 vendor 大树，与已用 sqlite/yaml 一致）+ README attribution 一行。（可选 vendor 锁全树，本仓库不引入。）
+5. **first case：Leiden 社区发现用 `github.com/vsuryav/leiden-go`（MIT）**——手写 Leiden 会超 500 行红线（比 Louvain 复杂，含 refinement 阶段）。✅ v0.1.12 已引入（go.sum 锁定），`community.go` 只是适配层（~80 行）。注意：**Config 必须从 `DefaultConfig()` 起再覆盖 resolution/seed**——直接用 `&Config{Resolution, RandomSeed}` 会让 MaxIterations=0，Leiden 循环不跑、全部节点各成一簇（实测抓出）。落地细节见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) 附录 D.4.4。
 
 ## 二、性能优化（克制、低风险、有代码实据）
 
@@ -40,7 +53,7 @@
 - **价值**：**embedding 语义轴的纯结构替代**——白盒、零依赖、证据可解释（"因为都链接了人物B/C"）。把"不做 embedding"的决策从妥协变成有替代方案。
 - **实现**：`graph.go` 加 `Similar(id, k)`（局部按需计算，O(邻居²)，不预计算全图）；Web 加 `/api/similar`；卡片加「相似」按钮；UI 展示共享邻居清单作为证据。
 - **风险**：Jaccard 度偏置（枢纽天然像所有人）→ 复用 rollSeed 排除逻辑（枢纽/空标题/孤立）+ 相似度阈值；区分"相关(roam)"与"相似(similar)"语义（不同入口、不同标签）。
-- **〔2026-08-24 借鉴〕graphwizard 的 Adamic-Adar（链接预测）**是同类白盒结构相似的正确实现参考（共同邻居度加权 `Σ 1/log(deg)`，~20 行手写）——若 Jaccard 度偏置仍不满意，Adamic-Adar 是升级选项（见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) 附录 E）。
+- **〔2026-08-24 借鉴〕graphwizard 的 Adamic-Adar（链接预测）**是同类白盒结构相似的正确实现参考（共同邻居度加权 `Σ 1/log(deg)`，~20 行手写）。✅ v0.1.12 已升级落地（`graph.Similar` 用 AA，证据/排除/排序全复用）——Jaccard 比例错位 + 共享邻居不加权问题一并解决。
 
 ### 3.2 漫游导出（export）—— 工作流闭环
 
@@ -54,27 +67,46 @@
 - **概念**：`GET /api/touch/stats` 返回"哪些节点被反复点击、哪些边被反复激活"（只读分析）。
 - **价值**：先看懂数据，再决定是否演化边权（呼应 M1）；回答"越用越准"是否有依据。
 - **实现**：`store.go` touch 表已埋点（5000 条容量），只读 SQL 查询即可。
-- **风险**：**绝不反馈到排序/hot**——否则等于偷偷启动边权演化，违背 v0.1.4"埋点只记录不演化"决策；不进 MCP（隐私敏感）。
+- **风险**：**绝不反馈到排序/hot**——否则等于偷偷启动边权演化，违背 v0.1.4"埋点只记录不演化"决策；不进 MCP（隐私敏感）。**〔2026-08-24 边际情况〕幽灵 touch 缺口**：纯 SQL 聚合不关联节点表，已删节点仍进热度榜 → ✅ v0.1.12 修复（targets 关联 documents 过滤；sources 是自由查询词不过滤）。
 - **〔2026-08-23 外部验证〕A-MEM（NeurIPS 2025）的记忆演化机制与「touch 边权演化」同题**——A-MEM 用 LLM 判断"新信息是否更新旧记忆"，seren 计划用**用户点击数据**判断"哪些边值得强化"，更白盒（行为证据 vs LLM 猜测）。这是「touch 边权演化」方向正确的印证（见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.4）。
 - **〔远期设计参考〕OpenViking 的 `used()` success 字段**——「点了但没深入」比「点了」更有信号，是 touch 统计 API 远期演进时的设计参考（§4.2 #5）。
 
 ### 3.4 社区发现（Leiden）→ 诊断层（知识缺口诊断，等场景）
 
-- **概念**：对无向无权图跑 Leiden 社区检测，回答「库里有哪些主题簇、哪些区域互不相连」——这是「激活层」之外的第二种 agent 价值：**诊断层**（agent 不用遍历全库就能定位知识缺口）。
-- **选型（已定，2026-08-24）**：算法用 **Leiden**（Louvain 官方改进版，保证 well-connected 社区）；Go 实现用 `github.com/vsuryav/leiden-go`（MIT、string 节点直通、零新增依赖、自带 Modularity 质量分）。孤立节点（度=0）检测前过滤（其诊断信号由 `Stats().Orphans` 承接）。落地草图见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) 附录 D.4。
-- **原则「算法等场景」**：社区发现/介数中心性的价值要落到具体功能（知识缺口诊断 API / 结构导航视图）才有意义——不提前做，等「诊断层」功能排期时顺带实现。先拿已有连通分量做粗糙版（哪些区域互不相连），不够再上 Leiden（选型已定，落地时直接执行，无需重新调研）。
-- **未来 MCP**：落地时顺势加 `graph.community` 工具，与 roam/random/relation/stats 并列。
+- **概念**：对无向无权图跑 Leiden 社区检测，回答「库里有哪些主题簇、哪些区域互不相连」——这是「激活层」之外的第二种 agent 价值：**诊断层**（agent 不用遍历全库就能定位知识缺口）。✅ v0.1.12 落地（`internal/graph/community.go` + `/api/communities` + MCP `graph.community`；leiden-go MIT vendor）。
+- **选型（已定，2026-08-24）**：算法用 **Leiden**（Louvain 官方改进版，保证 well-connected 社区）；Go 实现用 `github.com/vsuryav/leiden-go`（MIT、string 节点直通、零新增依赖、自带 Modularity 质量分，go.sum 锁定）。孤立节点（度=0）检测前过滤（其诊断信号由 `Stats().Orphans` 承接）。落地草图见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) 附录 D.4。
+- **原则「算法等场景」**：社区发现/介数中心性的价值要落到具体功能（知识缺口诊断 API / 结构导航视图）才有意义——不提前做，等「诊断层」功能排期时顺带实现。先拿已有连通分量做粗糙版（哪些区域互不相连），不够再上 Leiden。
+- **选型（2026-08-24 用户拍板）**：Leiden 直接引 `github.com/vsuryav/leiden-go`（MIT，vendor 锁版本）——手写会超行数红线，引库后 `community.go` 仅适配层（~50 行）。**文件组织见 §一.5 开发纪律**：community.go（Leiden）/ centrality.go（Betweenness）/ structure.go（聚类系数 + K-Core）/ similar.go 扩展（Adamic-Adar）。落地时直接执行，无需重新调研。
+- **未来 MCP**：✅ v0.1.12 顺势加了 `graph.community` 工具，与 roam/random/relation/node/similar/stats 并列（七件套）。
 - **可选真增量**：介数中心性（桥接节点检测，诊断层信号，Brandes O(nm) 千级~2 万节点跑得起）；最短路径/紧密度/SCC 不引入（hop 路径已覆盖，无场景）。
 - **合规**：MIT，硬性要求仅「保留版权声明」（vendor 时 Go 自动记录 LICENSE）；README 标注一行 attribution。
 
 ### 3.5 LLM Wiki adapter 画像（真实性门槛下唯一「可接受」的 LLM 数据源）
 
 - **背景**：LLM Wiki（Karpathy 模式）有 raw 事实锚点 + 人力维护，是真实性门槛下唯一「可接受但默认谨慎」的 LLM 生成数据源（见 [`docs/positioning.md`](positioning.md) §六）。对 Obsidian 里做 LLM Wiki 的用户，adapter 值得做专门兼容。
-- **改动（A 方案已定，2026-08-23）**：
+- **改动（A 方案已定，2026-08-23）—— ✅ v0.1.12 全部落地**：
   1. **VaultProfile 新增 `ExcludedFiles []string`**（文件名级排除）——现有 `ExcludedDirs` 只管目录（SkipDir）；LLM Wiki 的 index.md/log.md 是文件级。实现：`ParseVault` / `ParseVaultIncremental` 的 WalkDir 加文件名判断（各 3 行），收益不止 LLM Wiki。
-  2. **新增内置画像 `llm-wiki`**：`excluded_dirs: [raw, audit, output, outputs]` + `excluded_files: [index.md, log.md, CLAUDE.md, AGENTS.md]`，其余字段继承 default-obsidian。用法 `--profile-name llm-wiki`，开箱即用。
-  3. **（可选加分）结构发现器**：索引时检测 `raw/ + wiki/ + wiki/index.md` 组合 → 日志提示「检测到 LLM Wiki 结构，可用 `--profile-name llm-wiki`」（只提示不自动启用）。
+  2. **新增内置画像 `llm-wiki`**：`excluded_dirs: [raw, audit, output, outputs]` + `excluded_files: [index.md, log.md, CLAUDE.md, AGENTS.md]`，其余字段继承 default-obsidian（`ProfileByName` 现合并默认填充）。用法 `--profile-name llm-wiki`，开箱即用。
+  3. **结构发现器**：`adapter.DetectLLMWiki`（raw/ + wiki/index.md 组合命中）→ 启动/索引日志提示「检测到 LLM Wiki 结构，可用 `--profile-name llm-wiki`」（只提示不自动启用）。
+- **watch 排除同源**（缺口③）：`watch.NewVaultChecker` 现同时接受画像 `ExcludedDirs`（目录）与 `ExcludedFiles`（文件名）——与 ParseVault 排除同源，raw/（及 index.md/log.md）变化不再无效触发刷新。
 - **边界（诚实声明）**：wiki/ 页面是 LLM 写的，进图 = 接受「二手编译内容」（链接仍真实，内容可信度降级）；`index.md` 排除**必须**通过显式画像启用，绝不进默认画像（Obsidian 用户常拿 index.md 做 MOC，文件名相同无法区分手写 vs LLM 生成）；raw/ 整体不扫（含其中 .md）——零新增解析能力，只认 wiki/ 里的 markdown。
+
+### 3.6 mentions API（虚拟引用 / 未链接提及，2026-08-24 讨论，可选做）
+
+- **价值**：发现「正文提到但没链上」的潜在关系（Obsidian unlinked mentions 同款）。三个利用方向：
+  1. **潜在链接发现**：`/api/mentions?id=X` 返回「提到了你但没链你」的节点清单 → 用户决定补不补 `[[]]`。
+  2. **诊断层信号**：**隐藏枢纽**（被大量提及但零链接的节点 = 库里最值得整理的待连节点）+ 库级「链接成熟度」指标（提及数/节点数）。
+  3. **touch 转化（远期）**：插件里候选点击确认 → 虚拟引用转真实链接，本身是高质量 touch 事件。
+- **红线：绝不进图**——虚拟引用是引擎「猜」的边，不是用户写的；进图污染「图 = 真实链接」信任承诺（stance §二）。只做只读建议层 API，永不为边。
+- **与 similar 互补**：similar = 结构侧（共同邻居），mentions = 文本侧（标题/别名出现在正文）——同一需求的两个正交维度。
+- **实现 = 反向 Resolve**：对每篇文档 Text 找出哪些节点的 Title/Alias 出现其中、且不在该文档 Refs 里；复用 Resolve 锚定语义（MatchTitle / MatchAlias 级别，graph.go:217）。
+- **性能方案（用户实测过万级节点，必须按此实现）**：
+  - ❌ 朴素「每文档 × 每节点标题」子串匹配 = O(N² × TextLen)，万级节点 ≈ 1 亿次 Contains，不可接受。
+  - ✅ **refresh 时建提及索引**：Aho-Corasick（或等价多模式扫描）把所有 Title/Alias 作模式，单遍扫描每篇 Text（O(总文本长度)），存 `mentionedTerm → []docIDs` 反向索引；查询 O(1)。refresh 本来就全量重建图，顺带建索引是自然延伸——与 Stats 缓存同一哲学（查询无关计算移到 refresh）。
+  - 误报控制：标题长度阈值（≤2 字符跳过，防「数据」类泛词）；中文无空格分词，按子串 + 长度阈值即可，可接受。
+  - 存储：内存索引，随图重建不落盘（派生数据，源数据权威原则——索引可重建）。
+- **落点**：引擎 `/api/mentions`（与 similar/export/touch-stats 同批登记 api-contract.md）；前端节点详情页（frontend #3）加「未链接提及」区；诊断层（#10）落地时可取「隐藏枢纽」信号。
+- **优先级**：可选做（低优先）——价值成立但非核心闭环；M1 内随手可做（与 #13 同批也行）。
 
 ## 四、风险分析与红线（防污染已验证行为）
 
@@ -111,6 +143,33 @@
 
 **空查询 + 全图锚定**：`Resolve` 对空串 Contains 恒真——`roam.Compute`（roam.go:64）已拦截，但未来新入口必须同样拦截（计算放大，非存储放大）。
 
+### 刷新边际情况与体验增强（2026-08-24 用户提出，全链路审查）
+
+> 背景：自动刷新 1min 节流（watch throttle），用户增删改后存在边际情况。审查链路：watch → sync.Diff → graph.Build → touch。
+
+**A 类：中间态（1min 窗口内"建了又删"）——已免疫，无需处理**
+
+快照对账 + 图整体重建使"最终态一致"即可；建块+链接、建块+链接+删除、改名又改回（A→B→A）、轮询漏掉瞬态文件，全部安全。**不要加事件级中间态恢复逻辑**（复杂度换不来价值）。
+
+**B 类：最终态不一致——两缺口**
+
+| 边际情况 | 现状 | 处理 |
+|---|---|---|
+| 删块没清链接（悬挂链接） | ✅ graph.Build 统计 `Dangling`，悬空不进图（漫游不崩） | ✅ **缺口① v0.1.12 已落地**：`g.DanglingRefs()` 返回 `{source,target}` 明细，`/api/stats` 暴露 `dangling_refs`（截断 50）→ 统计面板/诊断层可见"有悬空链接该修" |
+| 点击过已删节点（幽灵 touch） | ⚠️ `TouchStats` 纯 SQL 聚合，**不关联节点表**——已删节点仍出现在热度榜 | ✅ **缺口② v0.1.12 已落地**：targets 关联 documents 表过滤已删节点；sources 是自由查询词不过滤 |
+| 改名链（A→B→C）/ 重名消歧 ID 变化 / 同秒多改 / 孤立节点 | ✅ 均已处理（MergeRenames/ApplyRenames/RenameTouch；pathSimilarity 救回；全量 diff 免疫；Orphans 统计） | 无需动 |
+
+**C 类：LLM Wiki 联动（roadmap #9 绑定）**
+
+- ✅ **缺口③ v0.1.12 已落地**：`watch.NewVaultChecker` 现同时接受画像 `ExcludedDirs`（目录）与 `ExcludedFiles`（文件名），与 ParseVault 排除同源——raw/（及 index.md/log.md）变化不再无效触发刷新。
+
+**体验增强：事前提示 + 手动刷新联动（用户方案）—— ✅ v0.1.12 全部落地**
+
+- 现状：手动刷新按钮 ✅（v0.1.2）+ 自动刷新**后**提示 ✅（v0.1.4 轮询 revision）；缺"刷新**前**有待刷新"提示
+- 方案：`/api/stats` 加 `is_pending` 字段（暴露 watch pending）→ 前端轮询（已有 setInterval）显示"库有变化，将自动刷新 · [立即刷新]"（复用 #refresh）→ M2 插件 Obsidian 状态栏 / 虎鲸 notify 同款
+- 粒度诚实：事前提示只能到"有变化"（watch 未解析，不知增删）；具体明细在刷新后的 diff 摘要
+- 细节：手动刷新需**清 pending**，否则 watch 下个 tick 可能重复自动刷一次（幂等无害但浪费）——✅ v0.1.12 `refreshFn` 手动刷新成功后 `pending.Store(false)` 实现
+
 ## 五、CLI 打磨三件套（人机双消费者，2026-08-23 用户提出）
 
 > CLI 是「双消费者」：人是第一消费者，agent（shell 直调场景）是次级——MCP 才是 AI 正式通道。
@@ -127,11 +186,14 @@
 **补充发现**：仓库根 `seren.exe` 是旧二进制（源码 v0.1.11）——本地测试二进制 `scratch\seren.exe`
 gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进制不上库）。
 
+ ✅（v0.1.11）已完成开发
+
 ## 六、MCP 工具扩展评估（2026-08-23 用户提出）
 
 > 结构不变（stdio JSON-RPC 薄协议、只读、零第三方依赖），只评估工具集扩展。
-> 现状六件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation` /
-> `graph.node` / `graph.similar`（见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）。
+> 现状七件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation` /
+> `graph.node` / `graph.similar` / `graph.community`（v0.1.9 四件 → v0.1.11 六 → v0.1.12 七，
+> 见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）。
 
 ### 建议新增（按价值排序）
 
@@ -179,8 +241,10 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 4. **touch 统计 API**（✅ v0.1.11 已落地：/api/touch/stats 只读聚合，绝不反馈排序）
 5. **graph.node**（✅ v0.1.11 已落地：graph.NodeDetail + /api/node + MCP graph.node）
 6. **CLI 打磨三件套**（✅ v0.1.11 已落地：`seren help <cmd>` 子命令帮助 / `--json` 结构化输出 / 退出码 0-2-1）
-7. **LLM Wiki adapter 画像**（`llm-wiki` + `ExcludedFiles`，低成本，综合时顺手）
-8. **社区发现（Leiden）**（诊断层排期时，选型已定）
+7. **LLM Wiki adapter 画像**（✅ v0.1.12：`llm-wiki` 画像 + `ExcludedFiles` + watch 排除同源 + 结构探测）
+8. **社区发现（Leiden）**（✅ v0.1.12：leiden-go vendor，/api/communities + MCP graph.community；诊断层排期时使用）
+9. **刷新一致性补全**（✅ v0.1.12：缺口① DanglingRefs 明细 + 缺口② 幽灵 touch 过滤）
+10. **刷新体验增强**（✅ v0.1.12：is_pending 事前提示 + 手动刷新清 pending）
 
 ## 九、与现有文档的关系
 
@@ -197,8 +261,11 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 - [x] Stats 缓存与 refresh 换图联动失效（✅ v0.1.11：Graph 不可变 memoize，换图即新缓存）
 - [x] graph.node 与前端节点详情 API 一起实现（✅ v0.1.11，两端受益）
 - [x] CLI 三件套（help/--json/退出码）完成（✅ v0.1.11，onboarding 体验）
-- [ ] 重建 seren.exe（源码 v0.1.11；仓库根 seren.exe 为旧二进制，用 GitHub Actions 平台构建，本地进制不入库）
-- [ ] LLM Wiki adapter 画像：VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki` + 可选结构发现器（§3.5）
-- [ ] 社区发现（Leiden）在诊断层排期时实现（§3.4，选型已定，直接落地）
+- [ ] 重建 seren.exe（源码 v0.1.12；仓库根 seren.exe 为旧二进制，用 GitHub Actions 平台构建，本地进制不入库——**注：用户拍板本版暂不做 GitHub Actions 自动构建**，本地 `scratch/seren.exe` 仅供本地联调）
+- [x] LLM Wiki adapter 画像：VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki` + 结构发现器（✅ v0.1.12，含 watch 排除同源——缺口③）
+- [x] 社区发现（Leiden）实现（✅ v0.1.12：/api/communities + MCP graph.community）
+- [x] 边际情况三待办（✅ v0.1.12）：缺口① 悬挂链接明细 DanglingRefs（stats.dangling_refs）、缺口② 幽灵 touch 过滤（targets 关联 documents）
+- [x] 刷新体验增强（✅ v0.1.12）：/api/stats 加 `is_pending` + 前端"有待刷新"提示条 + 手动刷新清 pending
+- [ ] mentions API（§3.6，可选低优先）：refresh 时建提及索引（AC 多模式扫描） + `/api/mentions` + 契约登记；**绝不进图**（留待诊断层/引用索引排期）
 - [x] renames 中间环清理（✅ v0.1.11：MergeRenames 链式折叠，只留链头→最终目标）
 - [x] store 加 `PRAGMA wal_autocheckpoint=1000`（✅ v0.1.11）

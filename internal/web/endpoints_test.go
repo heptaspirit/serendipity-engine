@@ -101,8 +101,8 @@ func TestNodeEndpoint(t *testing.T) {
 	resp := doAuthGet(t, ts, "/api/node?id=Beta")
 	defer resp.Body.Close()
 	var d struct {
-		ID        string       `json:"id"`
-		Title     string       `json:"title"`
+		ID        string                `json:"id"`
+		Title     string                `json:"title"`
 		Neighbors []struct{ ID string } `json:"neighbors"`
 		Backlinks []struct{ ID string } `json:"backlinks"`
 	}
@@ -168,5 +168,40 @@ func TestTouchStatsEndpoint(t *testing.T) {
 	}
 	if out.Total != 5 || len(out.Targets) != 1 || out.Targets[0].Count != 3 {
 		t.Fatalf("touch stats 错误: %+v", out)
+	}
+}
+
+// GET /api/communities：社区发现（v0.1.12，roadmap #10）。
+// a-b-c 链 + 孤立 x；Leiden 应产出 ≥1 社区，membership 含 a/b/c、不含孤立 x。
+func TestCommunitiesEndpoint(t *testing.T) {
+	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.12", nil, nil)
+	s.Token = testToken
+	ts := newAuthServer(t, s)
+	resp := doAuthGet(t, ts, "/api/communities?seed=42")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("communities 应 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		CommunityCount int            `json:"community_count"`
+		Membership     map[string]int `json:"membership"`
+		Communities    []struct {
+			Size int `json:"size"`
+		} `json:"communities"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.CommunityCount < 1 {
+		t.Fatalf("应有 ≥1 社区: %+v", out)
+	}
+	if _, ok := out.Membership["a"]; !ok {
+		t.Fatalf("membership 应含 a: %+v", out.Membership)
+	}
+	if _, ok := out.Membership["x"]; ok {
+		t.Fatalf("孤立 x 不应进 membership: %+v", out.Membership)
+	}
+	if len(out.Communities) != out.CommunityCount {
+		t.Fatalf("Communities 数应 = CommunityCount: %+v", out)
 	}
 }

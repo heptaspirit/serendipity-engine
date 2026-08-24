@@ -193,3 +193,26 @@ func containsAny(s string, words []string) bool {
 	}
 	return false
 }
+
+// DetectLLMWiki 探测 vault 是否为 LLM Wiki（Karpathy 模式）结构（v0.1.12，backlog §3.5）。
+// 判定：存在 raw/ + wiki/ + wiki/index.md 组合。只提示不自动启用（白盒原则，用户显式
+// 选择 --profile-name llm-wiki）；探测成本 = 一次目录读取，可在 index/serve 启动时调用。
+func DetectLLMWiki(vault string) bool {
+	hasRaw := dirExists(filepath.Join(vault, "raw"))
+	if !hasRaw {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(vault, "wiki", "index.md"))
+	if err != nil {
+		return false
+	}
+	if fi, err := os.Stat(filepath.Join(vault, "wiki")); err != nil || !fi.IsDir() {
+		return false
+	}
+	return true
+}
+
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}

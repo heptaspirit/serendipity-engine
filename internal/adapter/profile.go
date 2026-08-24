@@ -48,7 +48,8 @@ var profileFS embed.FS
 type VaultProfile struct {
 	Name            string     `yaml:"name"`
 	ExcludedDirs    []string   `yaml:"excluded_dirs"`
-	TitleKeys       []string   `yaml:"title_keys"` // frontmatter 键优先级；兜底: 任意 *_name 键 > H1 > 文件名
+	ExcludedFiles   []string   `yaml:"excluded_files"` // v0.1.12：文件名级排除（LLM Wiki 的 index.md/log.md）
+	TitleKeys       []string   `yaml:"title_keys"`     // frontmatter 键优先级；兜底: 任意 *_name 键 > H1 > 文件名
 	AliasKeys       []string   `yaml:"alias_keys"`
 	TagKeys         []string   `yaml:"tag_keys"`
 	TypeByDir       []TypeRule `yaml:"type_by_dir"`      // 相对路径目录前缀 → 类型
@@ -91,6 +92,8 @@ func DefaultObsidianProfile() *VaultProfile {
 
 // ProfileByName 按名字取内置画像。
 // 内置画像 = 内嵌 YAML（profiles/*.yaml，单一事实源）；default / okf 走代码默认。
+// v0.1.12：其余内置画像用 default-obsidian 的默认填充缺省字段（继承），
+// 使 llm-wiki 等画像只声明覆盖项（excluded_dirs/excluded_files）即可。
 func ProfileByName(name string) (*VaultProfile, bool) {
 	switch name {
 	case "default-obsidian", "default", "okf":
@@ -104,6 +107,7 @@ func ProfileByName(name string) (*VaultProfile, bool) {
 	if err := yaml.Unmarshal(b, p); err != nil {
 		return nil, false
 	}
+	fillDefaults(p)
 	return p, true
 }
 
@@ -117,6 +121,12 @@ func LoadProfile(path string) (*VaultProfile, error) {
 	if err := yaml.Unmarshal(b, p); err != nil {
 		return nil, err
 	}
+	fillDefaults(p)
+	return p, nil
+}
+
+// fillDefaults 用 default-obsidian 的默认填充画像中缺失的字段（防御性校验）。
+func fillDefaults(p *VaultProfile) {
 	d := DefaultObsidianProfile()
 	if p.Name == "" {
 		p.Name = d.Name
@@ -145,7 +155,6 @@ func LoadProfile(path string) (*VaultProfile, error) {
 	if p.DefaultType == "" {
 		p.DefaultType = d.DefaultType
 	}
-	return p, nil
 }
 
 // ResolveProfile 按 CLI 参数 + vault 本地约定取画像：

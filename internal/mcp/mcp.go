@@ -1,7 +1,8 @@
 // Package mcp 实现 seren mcp（第四个入口，v0.1.9）：
-//   供 AI（agent，含 dsh-mneme 类）经 MCP stdio 调用引擎能力。
-//   只读工具：graph.stats / graph.roam / graph.random / graph.relation /
-//   graph.node（v0.1.11）/ graph.similar（v0.1.11）。
+//
+//	供 AI（agent，含 dsh-mneme 类）经 MCP stdio 调用引擎能力。
+//	只读工具：graph.stats / graph.roam / graph.random / graph.relation /
+//	graph.node（v0.1.11）/ graph.similar（v0.1.11）/ graph.community（v0.1.12，七件套）。
 //
 // 边界（design §6.10 / docs/architecture/07-mcp.md）：
 //   - 只 import internal/{graph,roam,adapter}（纯库、无副作用）；
@@ -157,8 +158,8 @@ func toolDefs() []toolDef {
 		{
 			Name: "graph.random", Description: "🎲 随机漫步：无明确目标时的『随便逛逛』——随机起点 + 它的簇一次给出。seed 固定可复现。",
 			InputSchema: schema(nil, map[string]any{
-				"top":       snum("输出条数（1-60，默认 15）"),
-				"seed":      snum("随机种子（0=随机；固定值可复现同一漫步）"),
+				"top":        snum("输出条数（1-60，默认 15）"),
+				"seed":       snum("随机种子（0=随机；固定值可复现同一漫步）"),
 				"rand_alpha": num("起点度加权指数（0=均匀惊喜，1=偏丰富簇，默认 0.5）"),
 			}),
 		},
@@ -180,6 +181,13 @@ func toolDefs() []toolDef {
 			InputSchema: schema([]string{"id"}, map[string]any{
 				"id": str("节点 ID 或标题"),
 				"k":  snum("输出条数（1-60，默认 10）"),
+			}),
+		},
+		{
+			Name: "graph.community", Description: "社区发现（Leiden）：把图拆成主题簇——AI 不用遍历全库就能定位『有哪些主题簇、哪块互不相连』（诊断层：知识缺口）。分辨率 resolution 越大社区越碎；seed 固定可复现。",
+			InputSchema: schema(nil, map[string]any{
+				"resolution": num("分辨率参数（默认 1.0；越大社区越碎）"),
+				"seed":       snum("随机种子（0=随机；固定值可复现同一划分）"),
 			}),
 		},
 	}
@@ -218,6 +226,8 @@ func (s *Server) callTool(req rpcRequest) rpcResponse {
 		payload = d
 	case "graph.similar":
 		payload = s.similar(p.Args)
+	case "graph.community":
+		payload = s.community(p.Args)
 	default:
 		return errResp(req.ID, -32602, "unknown tool: "+p.Name)
 	}
@@ -247,12 +257,12 @@ func (s *Server) roam(raw json.RawMessage) *roam.Outcome {
 	}
 	_ = json.Unmarshal(raw, &a)
 	opt := roam.Options{
-		Top:    clamp(a.Top, 15, 1, 60),
-		Hops:   clamp(a.Hops, 3, 1, 5),
-		Lambda: clampF(a.Lambda, 0.7, 0, 1),
-		Theta:  clampF(a.Theta, 0.1, 0, 1),
-		Alpha:  clampF(a.Alpha, 0.5, 0, 1),
-		Beta:   clampF(a.Beta, 0.5, 0, 1),
+		Top:              clamp(a.Top, 15, 1, 60),
+		Hops:             clamp(a.Hops, 3, 1, 5),
+		Lambda:           clampF(a.Lambda, 0.7, 0, 1),
+		Theta:            clampF(a.Theta, 0.1, 0, 1),
+		Alpha:            clampF(a.Alpha, 0.5, 0, 1),
+		Beta:             clampF(a.Beta, 0.5, 0, 1),
 		FilterStructural: true,
 	}
 	return roam.Compute(s.g, s.p, a.Q, opt)
@@ -330,6 +340,21 @@ func (s *Server) similar(raw json.RawMessage) []graph.SimilarResult {
 		structural[t] = true
 	}
 	return s.g.Similar(id, clamp(m.K, 10, 1, 60), structural)
+}
+
+// community 社区发现（复用 graph.Communities，与 REST /api/communities 同源，
+// v0.1.12，roadmap #10 诊断层——AI 定位主题簇/知识缺口）。
+func (s *Server) community(raw json.RawMessage) *graph.CommunityResult {
+	var m struct {
+		Resolution float64 `json:"resolution"`
+		Seed       int64   `json:"seed"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	res, err := s.g.Communities(clampF(m.Resolution, 1.0, 0, 100), m.Seed)
+	if err != nil {
+		return &graph.CommunityResult{}
+	}
+	return res
 }
 
 func (s *Server) resolveID(q string) string {

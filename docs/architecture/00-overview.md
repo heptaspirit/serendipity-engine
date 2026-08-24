@@ -30,6 +30,11 @@
    本地工具优先稳定，不追求实时。
 5. **安全红线（不可违反）**：虎鲸 `Repo` 表含用户凭据（API key 等）——**绝不读取**；
    活库先做一致性快照再读（绝不锁活库）；个人数据不进 git。
+6. **工程纪律（2026-08-24，横切所有开发）**：① 单文件 ~500 行、不超千行，按领域域
+   拆文件（不按函数碎片化）；② 算法/模块 = 包级可复用函数（为未来 MCP 工具直接调用
+   准备）；③ 第三方**算法库可引入**——"克制"= 零依赖单二进制（不背运行时/网络栈/服务），
+   **≠ 永不用库**；条件：MIT 类宽松许可 + `go mod vendor` 锁版本（离线可构建、上游免疫）+
+   README attribution 一行（first case：Leiden 用 `leiden-go`，见 backend-backlog §一.5）。
 
 ## 3. 模块架构
 
@@ -68,7 +73,8 @@
 ```
 
 依赖极简：标准库 + `gopkg.in/yaml.v3` + `modernc.org/sqlite`（纯 Go 零 CGO）。
-无其他第三方依赖；无网络出口。
+无网络出口；第三方依赖仅限 vendor 锁版本的算法库（设计哲学 §2.6，first case：
+Leiden 的 `leiden-go`，MIT——引库不破坏单二进制与离线构建）。
 
 ## 4. 关键数据流
 
@@ -113,5 +119,6 @@ docs/                design.md（设计过程）/ architecture/（维护文档�
 | v0.1.9 | MCP server（第四个入口，roadmap M0-0.3）：`seren mcp` 子命令——stdio JSON-RPC 2.0 自实现薄协议（零第三方依赖，单二进制不变），只读四件套 tools（stats/roam/random/relation），只 import 纯库不碰 web/watch（边界守护见维护指南 §4.1）；API 契约文档 api-contract.md（M0-0.2） |
 | v0.1.10 | MCP 集成修复：initialize **回显客户端 protocolVersion**（修复 SDK 客户端版本不匹配→断连→重连→反复 spawn）；启动横幅仅 TTY 打印（DSH 等 MCP 客户端 spawn 时静默） |
 | v0.1.11 | M1 阶段 1 第二批：similar 结构相似（graph.Similar + /api/similar + MCP graph.similar，红线 1 独立入口）、graph.node 节点详情（graph.NodeDetail + /api/node + MCP graph.node，L0 摘要 + L1 邻居/被引用）、/api/roam?export=1（漫游导出 Markdown）、/api/touch/stats（埋点只读统计，红线 2 绝不反馈排序）、Stats 缓存（Graph 不可变 memoize）、renames 中间环清理（collapseChains 只留链头→最终目标）、WAL autocheckpoint；CLI 三件套（seren help <cmd> / --json / 退出码 0-2-1） |
+| v0.1.12 | M1 阶段 1 收官 + 前端 P0：similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；刷新一致性补全（`DanglingRefs` 明细 stats.dangling_refs + `TouchStats` targets 关联 documents 过滤幽灵 touch）；刷新体验增强（stats.is_pending + 前端"库有变化，将自动刷新 · 立即刷新"提示条 + 手动刷新清 pending）；**LLM Wiki adapter 画像**（ExcludedFiles + llm-wiki + watch 排除同源 + 结构探测）；**Leiden 社区发现诊断层**（`github.com/vsuryav/leiden-go` MIT，go.sum 锁定 + /api/communities + MCP graph.community）；前端 JSON 契约测试（10 端点循环校验）；**Web UI 完善 + 前端 P0**（hero 静态热门列表 / 侧滑抽屉统一面板 / 卡片 ID 收敛 + scores 折叠 + 🎲 升级主按钮 / `?embed=1` 紧凑嵌入 / postMessage 桥 `{type:'open'}` + 宿主注入 theme/locale / i18n 中英双语全部文案）；**用户拍板本版不做 GitHub Actions 自动构建**（本地 `scratch/seren.exe` 仅联调，不入库） |
 
 详细历史见 `PROGRESS_LOG.md`（本地，不入库）。

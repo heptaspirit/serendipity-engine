@@ -7,25 +7,24 @@
 
 > 目标：让 Web UI 从「漫游工具」升级为「阅读 + 漫游工具」，并为 Obsidian/虎鲸插件薄壳铺路。
 
-## 一、现状核对（v0.1.10，internal/web/static/index.html）
+## 一、现状核对（v0.1.12，internal/web/static/index.html）
 
-已有功能：搜索漫游 / 🎲 随机 / 关系查询 / **相似查询** / **节点详情预览** / **漫游导出** / **拍照统计** / 参数抽屉（白盒）/ 卡片续漫游 + 历史栈 / 打开跳转（obsidian:// 与 orca-note://）/ touch 埋点 / 自动监听提示 / 对账刷新 / 深跳标签。
-技术形态：零依赖原生 JS，单 HTML，CSS 变量隔离（Tokyo Night 暗色），token 服务端注入（iframe 天然兼容）。
+已有功能：搜索漫游 / 🎲 随机漫步（升级带文字主按钮）/ 关系查询 / **相似查询（Adamic-Adar）** / **节点详情预览** / **漫游导出** / **反馈统计（只读）** / 参数侧滑抽屉（白盒）/ 卡片续漫游 + 历史栈 / 打开跳转（obsidian:// 与 orca-note:// 与 **postMessage 桥**）/ touch 埋点 + 幽灵过滤 / 自动监听提示 + **is_pending 提示条** / 对账刷新 / **紧凑嵌入 `?embed=1`** / **i18n 中英双语全部文案**。
+技术形态：零依赖原生 JS，单 HTML，CSS 变量隔离（Tokyo Night 暗色 + light 变量主题跟随），token 服务端注入（iframe 天然兼容）。
 
-## 二、P0 · 插件化前置（进 Obsidian/虎鲸前必须）
+## 二、P0 · 插件化前置（进 Obsidian/虎鲸前必须）—— ✅ v0.1.12 全部落地
 
 | # | 功能 | 说明 | 落点 |
 |---|---|---|---|
-| 1 | **紧凑嵌入模式** | 当前 920px 全宽 + hero 56vh，窄面板（300-500px）直接崩。`?embed=1` 或 iframe 检测：隐藏 hero、压缩卡片密度、搜索框常驻 | 纯前端 |
-| 2 | **postMessage 桥** | 插件场景「打开」不跳外链，postMessage 通知宿主就地打开（Obsidian openLinkText / 虎鲸 invokeBackend）。`top !== self` 时自动启用 | 纯前端 |
-| 3 | **节点详情预览** | 点卡片先看内容再决定深入。需 `/api/node?id=`（Text 摘要 + 邻居列表）+ 卡片「预览」按钮 | 引擎 +1 端点（登记契约）+ 前端 |
-| 4 | **多语言（至少英语）** | Obsidian 社区是国际平台；前端文案目前全硬编码中文。抽 i18n（文案集中一份文件），早期做比后期便宜 | 纯前端 |
+| 1 | **紧凑嵌入模式** | 当前 920px 全宽 + hero 56vh，窄面板（300-500px）直接崩。`?embed=1` 或 iframe 检测：隐藏 hero、压缩卡片密度、搜索框常驻 | ✅ v0.1.12：`?embed=1` 或 `top!==self` → body.embed（hero/brand/页脚隐藏、搜索 sticky、卡片收紧、.open 常显） |
+| 2 | **postMessage 桥** | 插件场景「打开」不跳外链，postMessage 通知宿主就地打开（Obsidian openLinkText / 虎鲸 invokeBackend）。`top !== self` 时自动启用 | ✅ v0.1.12：嵌入时 `window.parent.postMessage({type:'open',id})`；宿主注入 `{type:'theme'}/{type:'locale'}/{type:'activeFile'}` |
+| 3 | **节点详情预览** | 点卡片先看内容再决定深入。需 `/api/node?id=`（Text 摘要 + 邻居列表）+ 卡片「预览」按钮 | ✅ v0.1.11（`/api/node` + 卡片预览浮层） |
+| 4 | **多语言（中英双语，覆盖全部用户可见文案）** | Obsidian 社区是国际平台；前端文案目前全硬编码中文。抽 i18n（文案集中一份文件），早期做比后期便宜。**范围：所有用户可见文案一律中英双语**——按钮/标签/提示条/toast/刷新摘要/空状态/错误提示/加载态，禁止硬编码中文字符串。语言跟随宿主（Obsidian navigator.language / 虎鲸 `orca.state.locale`，默认中文，英文兜底） | ✅ v0.1.12：集中 `I18N` 字典（zh/en），`t(key)` 取值；`applyStaticI18n()` 填充 data-i18n；语言跟随 postMessage `{type:'locale'}` > navigator.language（zh→中文，其他→英文兜底） |
 
-## 三、P0.5 · 近期改掉：hero 浮游气泡
+## 三、P0.5 · 近期改掉：hero 浮游气泡 —— ✅ v0.1.12 已落地
 
 - 现状：初始页 56vh 随机浮动气泡（/api/hot），动画 + 随机位置——**插件场景是纯粹负面资产**（窄面板装不下、视觉喧宾夺主、信息密度低）。
-- 方向：改掉动画随机漂浮，替换为**静态热门节点列表 / 标签云**（信息密度优先，保留"点它开始漫游"的入口）。
-- 与紧凑嵌入模式联动：嵌入时直接隐藏初始页展示区，聚焦搜索框。
+- 方向：改掉动画随机漂浮，替换为**静态热门节点列表 / 标签云**（信息密度优先，保留"点它开始漫游"的入口）。✅ v0.1.12：hero 改静态热门 tags（气泡 → 静态 `.bubble` 胶囊，移除 floaty 动画），嵌入时直接隐藏 hero-title/sub 聚焦搜索框。
 
 ## 四、P1 · 易用性高杠杆（独立使用 + 插件共用）
 
@@ -47,7 +46,7 @@
 
 1. **需要动引擎的**：#3 节点详情 API（`/api/node?id=`，登记契约）+ similar/export/touch-stats 三个端点（与 [`docs/backend-backlog.md`](backend-backlog.md) §三 同批登记）。其余纯前端。且天然契合"Web 层留口子"——语义候选将来可出现在节点详情的"相似节点"区（见 [`docs/positioning.md`](positioning.md) §五）。
 2. **iframe token 已兼容**：v0.1.8 token 服务端注入页面，iframe 直接 GET / 即得，插件零透传工作。
-3. 多语言尽早做（P0）：文案抽离后，后续所有新功能直接带 key，避免二次返工。
+3. 多语言尽早做（P0）：**全部用户可见文案中英双语**（含提示/错误/摘要/空状态），文案抽离后后续所有新功能直接带 key，避免二次返工。实现参考：虎鲸模板插件自带官方 l10n（`setupL10N(orca.state.locale, ...)`）——语言跟随宿主，默认中文、英文兜底；Obsidian 侧读 `navigator.language`。
 4. **〔2026-08-23 借鉴〕节点详情分级 L0/L1**（OpenViking，见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.2）：L0 = summary（Text 截断），L1 = overview（摘要 + 邻居导航）——#3 节点详情 API 天然分两级（默认截断摘要、展开给邻居清单）。同源还有「确定性排序」（稳定采样，印证锚点排序需稳定 = Resolve map 序）与「簇级导航」（按 hop 分组展示 roam 结果，远期可读性方向）。
 
 ## 七、后续动作
@@ -64,9 +63,10 @@
 |---|---|---|
 | **节点详情 API**（[`docs/backend-backlog.md`](backend-backlog.md) §六 graph.node，MCP 与 Web 同源） | 卡片「预览」按钮 + 详情浮层（Text 摘要 + 邻居 + 被引用）——**一次实现两端受益** | ✅ v0.1.11 已落地 |
 | **export 漫游导出**（[`docs/backend-backlog.md`](backend-backlog.md) §3.2） | 顶栏「导出」按钮 → `?export=1` 拿 Markdown 下载；默认路径零回归 | ✅ v0.1.11 已落地 |
-| **similar 结构相似**（[`docs/backend-backlog.md`](backend-backlog.md) §3.1） | 卡片「相似」按钮 + 独立折叠面板（与「关系」面板同级），展示共享邻居证据清单 | ✅ v0.1.11 已落地 |
-| **touch 统计 API**（[`docs/backend-backlog.md`](backend-backlog.md) §3.3） | 顶栏「统计」折叠面板（哪些节点被反复点击）——**只展示，绝不反馈排序**（红线 2） | ✅ v0.1.11 已落地 |
+| **similar 结构相似**（[`docs/backend-backlog.md`](backend-backlog.md) §3.1） | 卡片「相似」按钮 + 独立折叠面板（与「关系」面板同级），展示共享邻居证据清单 | ✅ v0.1.11 落地，v0.1.12 升级 Adamic-Adar |
+| **touch 统计 API**（[`docs/backend-backlog.md`](backend-backlog.md) §3.3） | 顶栏「统计」折叠面板（哪些节点被反复点击）——**只展示，绝不反馈排序**（红线 2） | ✅ v0.1.11 落地，v0.1.12 加幽灵 touch 过滤 |
 | **refresh 的 renamed 字段**（v0.1.5 已有） | 刷新摘要补「改名 N」展示 | ✅ v0.1.11 已落地 |
+| **communities 社区发现**（[`docs/backend-backlog.md`](backend-backlog.md) §3.4，v0.1.12） | `/api/communities`（Leiden）——诊断层展示库里主题簇（MCP graph.community + REST 同源）；前端后续可在侧滑抽屉加「社区」入口（未做，M2 酌情） | ✅ 后端 v0.1.12，前端 M2 可选 |
 | **MCP 接入配置说明** | serve 页面加「AI 接入」卡片：展示 `seren mcp <vault> --db <store>` 配置 + 一键复制——onboarding AI 消费 | P1（未做） |
 
 **MCP 配置说明（细节）**：注意 MCP 是独立子命令进程（`seren mcp`，stdio），不是 serve 的一部分——前端只能**展示配置模板供复制**，不能"开关"它（无开关意义，入口即开关，v0.1.9 已定）。配置模板由服务端提供（如 `/api/config` 返回 mcp 示例块）或前端按当前 source/vault 拼。
@@ -80,6 +80,33 @@
 1. **postMessage 协议必须宿主无关**：前端只发通用消息（如 `{type:'open', id}`），Obsidian 壳用 openLinkText、虎鲸壳用 invokeBackend 各自实现——协议契约定在引擎侧，两壳遵守同一份。
 2. **窄面板真正自适应**：虎鲸 ViewPanel 可能比 Obsidian 侧栏更窄，紧凑模式不能是固定宽度，需按 iframe 实际宽度响应（P0-1 强化）。
 3. **主题变量化**：两宿主各有主题系统，light/dark 两套 CSS 变量是硬要求（P1-7），且深色跟随宿主而非固定 Tokyo Night。
+
+### Web UI 宿主无关性的完整边界（2026-08-24 定稿）
+
+> 移植性保证：**Web UI 与后端核心同等可移植**——换宿主只重写壳（~20 行），UI 零改动。
+> 技术事实：iframe 跨源（localhost:端口 vs 宿主 app:// / orca:// 协议）**浏览器强制隔离**——Web UI 无法访问父 window 的宿主 API（`app.vault` / `orca.state`），物理上不可能绑定宿主。
+
+**Web UI 只认识三样东西**：
+1. `/api/*`（引擎 REST 契约）
+2. `localStorage`（自身偏好，白名单 key）
+3. `postMessage`（与壳的宿主上下文通道）
+
+**postMessage 完整协议（壳 ↔ Web UI）**：
+
+```
+壳 → Web UI（宿主上下文注入，UI 永远不需要知道宿主是谁）：
+  {type:'theme',   mode:'light'|'dark'}     # 主题跟随
+  {type:'locale',  lang:'zh'|'en'}          # 语言跟随（Obsidian 壳读 navigator.language / 虎鲸壳读 orca.state.locale）
+  {type:'activeFile', id:'xxx'}             # 命令锚点（用户当前在看哪篇）
+Web UI → 壳：
+  {type:'open', id:'xxx'}                   # 打开请求（唯一上行）
+```
+
+**规则**：
+- Web UI **绝不直接调宿主 API**（跨源也不允许，双保险）；需要宿主信息一律由壳注入
+- 壳是**唯一**接触宿主 API 的层（Obsidian openLinkText / 虎鲸 invokeBackend），只做翻译不塞逻辑
+- **壳设置保持宿主绑定**（seren.exe 路径/端口/自动启动存宿主 settings）——本就该绑，不抽象成通用协议（3 个字段不值得）
+- 换宿主 = 壳重写 postMessage 注入部分，UI / 引擎零改动
 
 ## 九、UI/UX 打磨规范（美术 + 易用性，详细可执行）
 
@@ -175,25 +202,26 @@
 
 ### 9.9 可执行改动清单（标优先级，开发 agent 照做）
 
-**P0（随插件化，视觉收敛）**
-- [ ] 9.2 搜索框窄面板 sticky 常驻
-- [ ] 9.3 卡片 `.id` 收敛为悬停提示；`.scores` 默认折叠（hover 展开）
-- [ ] 9.3 🎲 升级为带文字的主按钮「随便逛逛」
-- [ ] 9.6 hover 效果修正（translateX → 边框提亮 + 上浮）
-- [ ] 9.4 侧滑抽屉统一面板（关系/参数/相似/统计/详情）
-- [ ] 9.2 source/revision/埋点 移页脚
+**P0（随插件化，视觉收敛）—— ✅ v0.1.12 全部落地**
+- [x] 9.2 搜索框窄面板 sticky 常驻
+- [x] 9.3 卡片 `.id` 收敛为悬停提示；`.scores` 默认折叠（hover 展开）
+- [x] 9.3 🎲 升级为带文字的主按钮「随便逛逛」
+- [x] 9.6 hover 效果修正（translateX → 边框提亮 + 上浮）
+- [x] 9.4 侧滑抽屉统一面板（关系/参数/相似/统计/详情）
+- [x] 9.2 source/revision/埋点 移页脚
 
-**P1（易用性）**
-- [ ] 9.3 `.path` 药丸链化（可点击中间节点续漫游）
-- [ ] 9.5 加载骨架屏 + 空簇按钮化 + 死路节点转相似按钮
-- [ ] 9.5 降级提示加关闭按钮
-- [ ] 9.6 focus-visible 轮廓 + active 点击反馈
-- [ ] 9.7 `?embed=1` 嵌入适配（搜索 sticky / open 常显 / 间距收紧）
+**P1（易用性）—— ✅ v0.1.12 部分落地**
+- [x] 9.3 `.path` 药丸链化（可点击中间节点续漫游）
+- [ ] 9.5 加载骨架屏 + 空簇按钮化 + 死路节点转相似按钮（空簇默认按钮化/死路仍提示，骨架屏未做）
+- [ ] 9.5 降级提示加关闭按钮（降级提示保留，关闭按钮未做）
+- [x] 9.6 focus-visible 轮廓 + active 点击反馈
+- [x] 9.7 `?embed=1` 嵌入适配（搜索 sticky / open 常显 / 间距收紧）
+- [x] 9.7 主题跟随宿主（light 变量 + postMessage {type:'theme'}）
 
-**P2（打磨）**
-- [ ] 9.8 深跳用弱紫替代纯灰
-- [ ] 9.6 键盘导航（`/` / Esc / ↑↓，配合 focus 规范）
-- [ ] 9.7 主题跟随宿主（light 变量）
+**P2（打磨）—— ✅ v0.1.12 部分落地**
+- [x] 9.8 深跳用弱紫替代纯灰（hop3 降饱和 + deep 弱化）
+- [x] 9.6 键盘导航（`/` 聚焦搜索 / Esc 关抽屉 / ↑↓ 选卡片——本版 `/`+Esc 已做，↑↓ 待补）
+- [x] 9.7 主题跟随宿主（light 变量）
 
 **改动范围**：全部在 `internal/web/static/index.html`（单文件），不引入依赖；`?embed=1` 逻辑复用现有 `toggle()` / `paramQS()` 模式；相似/统计面板复用 `toggle()` 单开模式。
 

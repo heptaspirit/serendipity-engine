@@ -1,4 +1,4 @@
-# MCP 暴露架构研究（v3，已落地 v0.1.9 / 扩至六工具 v0.1.11）
+# MCP 暴露架构研究（v3，已落地 v0.1.9 / 扩至七工具 v0.1.12）
 
 > 状态：**已落地**（v0.1.9，2026-08-23）。此前为研究稿（用户指示"先不开工，研究靠谱
 > 架构 + 不影响本体的接入方式"）。方向已在 design.md §6.10 拍板：**"AI 通道用 MCP
@@ -45,7 +45,7 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 - **接入 dsh**：dsh 支持配置 MCP server（stdio），指向 `seren mcp --db <store>`；
   dsh-mneme 类 agent 即可调用。这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
 
-## 3. Tools 设计（只读六工具；v0.1.9 四件套 + v0.1.11 扩 node/similar）
+## 3. Tools 设计（只读七工具；v0.1.9 四件套 + v0.1.11 扩 node/similar + v0.1.12 加 community）
 
 | tool | 入参 | 复用内核 | 说明 |
 |---|---|---|---|
@@ -54,7 +54,8 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 | `graph.random` | `top, seed, rand_alpha` | `roam.ComputeRandom` | 🎲 随机漫步（v0.1.7）：随机起点 + 簇——AI 无明确目标时的"随便逛逛"入口；`seed` 固定可复现 |
 | `graph.relation` | `from, to` | `Graph.ComputeRelation` | 两节点：最短路径 + 双向 PPR + 证据链（v0.1.5 已铺路） |
 | `graph.node` | `id` | `Graph.NodeDetail` | 单节点详情（v0.1.11）：L0 Text 摘要 + L1 邻居/被引用——AI 漫游到节点后"确认这是不是我要的" |
-| `graph.similar` | `id, k` | `Graph.Similar` | 结构相似节点（v0.1.11）：共同邻居多但互不链接（Jaccard），带共享邻居证据——AI 判断"哪些笔记说同一件事" |
+| `graph.similar` | `id, k` | `Graph.Similar` | 结构相似节点（v0.1.11 Jaccard → v0.1.12 **Adamic-Adar** 度加权）：共同邻居多但互不链接，带共享邻居证据——AI 判断"哪些笔记说同一件事" |
+| `graph.community` | `resolution, seed` | `Graph.Communities` | 社区发现（v0.1.12，Leiden）：把图拆成主题簇——AI 不用遍历全库就能定位"有哪些主题簇、哪块互不相连"（诊断层：知识缺口） |
 
 > 2026-08-23 用户指示：把随机漫游也加进 MCP（灵感：恐龙工具箱 SRS 的 roam /
 > 随机漫步交互）。`graph.random` 与 `graph.roam` 共用同一簇管线（clusterFromSeeds），
@@ -102,7 +103,7 @@ cmd/seren 子命令:
 1. **[x] 协议实验**：Go 里实现 `initialize` / `tools/list` / `tools/call` 的最小
    stdio JSON-RPC 服务（`internal/mcp`），单测覆盖生命周期与错误路径。
 2. **[x] `seren mcp` 子命令**：解析 `--db`（复用 storePathFor / loadSource 逻辑），
-   启动时建图，注册六件套 tools（stats / roam / random / relation / node / similar）。
+   启动时建图，注册七件套 tools（stats / roam / random / relation / node / similar / community）。
 3. **[x] 联调（本地验证）**：echo 管道调 `initialize` / `tools/list` / tools/call，
    验证返回结构与 AI 可读性；确认不触发任何写操作；import 边界守护（维护指南 §4.1）。
 4. **[✓ 已测 / ⏸ 临时停用] dsh 联调**：已在 DSH profile 的 `cordis.patch.yml` 注册 `mcp-seren`

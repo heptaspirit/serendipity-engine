@@ -15,12 +15,13 @@ note: 已归档（2026-08-24）——原为本地增补文档，现汇入 docs/h
 
 # Agent 记忆库研究：立场声明与借鉴清单
 
-> ⚠️ **历史记录（已归档）**：本文是 2026-08-23/24 agent 记忆库生态研究（OpenViking / Graphiti / A-MEM）的**立场结论 + 借鉴清单**。硬约束（真实性门槛 / 明确不做 / 第三方集成边界）已并入 [`docs/positioning.md`](../positioning.md) §六/§八；借鉴清单（Graphiti 增量摄入 / A-MEM 演化方向 / Leiden 社区发现选型 / graphwizard 参考）已并入 [`docs/backend-backlog.md`](../backend-backlog.md) §三/§四/§七；LLM Wiki adapter 方案（VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki`）已并入 [`docs/backend-backlog.md`](../backend-backlog.md) §3.5 与 [`docs/design.md`](../design.md) §6.8。保留本文作研究依据与选型溯源。
+> ⚠️ **历史记录（已归档）**：本文是 2026-08-23/24 agent 记忆库生态研究（OpenViking / Graphiti / A-MEM / GraphFlow）的**立场结论 + 借鉴清单**。硬约束（真实性门槛 / 明确不做 / 第三方集成边界）已并入 [`docs/positioning.md`](../positioning.md) §六/§八；借鉴清单（Graphiti 增量摄入 / A-MEM 演化方向 / GraphFlow 基准方法学 / Leiden 社区发现选型 / graphwizard 参考）已并入 [`docs/backend-backlog.md`](../backend-backlog.md) §三/§四/§七；LLM Wiki adapter 方案（VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki`）已并入 [`docs/backend-backlog.md`](../backend-backlog.md) §3.5 与 [`docs/design.md`](../design.md) §6.8。保留本文作研究依据与选型溯源。
 
 > 本文档是 serendipity-engine 对 agent 记忆库生态研究的**正式结论**。研究对象：
 > ① **OpenViking**（字节，agent 上下文数据库，文件系统范式）
 > ② **Graphiti / Zep**（Zep 的时序知识图谱引擎，~26.7k⭐）
 > ③ **A-MEM**（NeurIPS 2025，Zettelkasten 式自组织记忆）
+> ④ **GraphFlow**（Roarpeng，coding agent 的记忆与上下文引擎，纯 TS/Node 本地优先）
 >
 > 核心内容：① 我们对 LLM 生成记忆库的立场（明确不做什么）② 值得借鉴的设计点（已验证/远期可做）。
 > 给开发 agent 的用途：综合进项目文档时，本文档是"边界依据"——防止未来误入 LLM 二手内容筛选的歧途；借鉴清单（§四）按各自优先级进入 roadmap 评估。
@@ -147,7 +148,7 @@ Graphiti 是三个研究对象中**与 seren 的图最同构**的一个（节点
 
 ### 4.4 A-MEM（NeurIPS 2025，Zettelkasten 式自组织记忆）——演化方向的白盒对照
 
-A-MEM 是三个研究对象中**哲学与 seren 最接近**的（Zettelkasten 卡片网络 + 笔记互联）。它的核心机制恰好和 seren roadmap 里的"touch 边权演化"形成**同题对照**：
+A-MEM 是笔记域研究对象中**哲学与 seren 最接近**的（Zettelkasten 卡片网络 + 笔记互联，GraphFlow 的接近是代码域另说，见 §4.6）。它的核心机制恰好和 seren roadmap 里的"touch 边权演化"形成**同题对照**：
 
 | A-MEM 机制 | 细节 | 对 seren 的借鉴 |
 |---|---|---|
@@ -158,15 +159,30 @@ A-MEM 是三个研究对象中**哲学与 seren 最接近**的（Zettelkasten �
 
 **A-MEM 明确不学的**：LLM 笔记生成（关键词/标签/上下文全 LLM 写）、LLM 链接判断（embedding 邻居 + LLM 决策）、LLM 演化改写——黑盒 + 错误传播风险（论文自己承认"改错一次可能覆盖真实偏好"）。**这一条恰好是真实性门槛的活论据（见 §二）。**
 
-### 4.5 三个研究对象的横向结论
+### 4.5 四个研究对象的横向结论
 
 | 研究对象 | 范式 | 可借鉴（结构机制） | 不可借鉴（LLM 数据管线） |
 |---|---|---|---|
 | OpenViking | 文件系统树 + 语义 | L0/L1/L2 分级、目录级 sidecar、分数传播 | 意图分析、rerank、记忆提取 |
 | Graphiti | 时序知识图谱 | **边失效/双时态/增量摄入**、三层图、谱系 | LLM 提取、图数据库、rerank |
 | A-MEM | Zettelkasten 卡片网络 | **记忆演化方向**、链接类型化、相对检索 | LLM 笔记生成、LLM 链接/演化判断 |
+| GraphFlow | 代码图谱 + 上下文压缩 + 证据晋升 | **证据晋升门禁、黄金检索集基准、L0-L3 锚点契约**（详见 §4.6） | 学习飞轮自动捕获（LLM 二手物，虽带 commit 锚点）、AST 代码域 |
 
-**共同指向**：三个系统都验证了 seren 的两个 backlog 方向——**Store 增量写**（Graphiti 增量摄入）和 **touch 边权演化**（A-MEM 记忆演化）——是走在正确轨道上的；同时它们全都依赖 LLM 判断（黑盒），而 seren 用真实链接 + 用户行为（白盒），这正是差异化的根基。
+**共同指向**：四个系统都验证了 seren 的两个 backlog 方向——**Store 增量写**（Graphiti 增量摄入）和 **touch 边权演化**（A-MEM 记忆演化 / GraphFlow 证据晋升）——是走在正确轨道上的；同时它们全都依赖 LLM 判断（黑盒），而 seren 用真实链接 + 用户行为（白盒），这正是差异化的根基。**GraphFlow 是唯一把"证据锚定 + 晋升门禁"做成完整工程的产品——它证明白盒 + 证据这条路不仅能走通，还能自证（可复现基准）。**
+
+### 4.6 GraphFlow（Roarpeng，coding agent 记忆引擎）——证据晋升门禁的工程化范本
+
+> 研究日期：2026-08-24。定位：面向 **coding agent** 的「记忆与上下文引擎」——代码知识图谱（12 语言 AST）+ L0-L3 分层上下文压缩 + 学习飞轮。纯 TS/Node、完全离线、无 API key，MCP 暴露 10 工具（支持 15+ agent，含 DeepSeek Harness/dsh）。**域不同（代码 vs 笔记），不竞争不兼容——但对 seren 有 3 个直接可抄的机制。**
+
+| GraphFlow 机制 | 细节 | 对 seren 的借鉴 |
+|---|---|---|
+| **证据晋升门禁**（team-memory-security.md） | 记忆当代码对待：外部技能一律**未证实**（no direct trust），必须本地证据积累（pass/fail episodes）才晋升 `proven`；四类生命周期（proven/correctable/anti-pattern/noise）；金丝雀验证（真实任务验证后才影响规划）；anti-pattern **隔离不删除**（留审计、可追踪 blast radius）。核心句："假设传输不可信，信任决策全部放在晋升边界，本地证据是唯一通行证" | **stance 真实性门槛（§二）的最完整工程化参照**。如果将来 touch 数据真演化边权（roadmap M1 远期），四类生命周期 + 金丝雀门禁是现成模板——正好解决 A-MEM 承认的"改错一次覆盖真实偏好"问题（§4.4） |
+| **黄金检索集基准**（benchmark-standards.md） | 26 条 retrieval-golden 查询（10 条 **indirect**：golden 节点与查询词零 token 重叠，纯检索必失败）+ 36 条 HARD 集（cross-module/disambiguation/indirect）；A/B 对照（ON 100% vs OFF 56.5%，rescued/hurt 分析）；**commit 锚定**（结果 JSON 带 commit hash，跨 commit 必须锚定）；自测 vs 独立复现边界诚实声明 | **roadmap #8 契约测试的升级模板**：固定查询集 + 预期结果 + commit 锚定。尤其 **indirect 任务思想**——构造"查询词与目标节点无文本重叠、只有结构信号能命中"的用例，正好验证 seren 结构激活的独有价值（纯文本检索做不到的事） |
+| **上下文契约 L0-L3 + refill**（context-contract.md） | L0 检索 → L1 锚点（File/Symbol，可扩展句柄）→ L2 模块概览 → L3 经验；**refill 模式**：先给锚点包（summary + anchors），按 `anchorId` 按需扩展单个锚点，不一次性倒全文；预览明确标注"preview ≠ 全文"（estimatedSavings ≠ 信息保真度） | **前端 #3 节点详情 API 的交互模型升级**：先给「摘要 + 邻居列表」锚点包，用户点某个邻居再 refill 扩展详情——比 OpenViking L0/L1/L2 多一个"按需扩展"维度；诚实标注预览与全文的边界与白盒哲学一致 |
+
+**GraphFlow 验证了什么**：① "Storage → Reflection → Experience"三段论——**"Without reflection, storage is only a log"** 正是 seren touch 表现状（只埋不消费）的一语道破；② 证据文化（"用证据说话，而非承诺"）与 seren 白盒哲学同源；③ 本地优先 + 反纯 RAG + 图结构（PageRank 压缩）——与 seren 定位完全平行，说明"结构派 agent 记忆"在代码域已被验证可做成完整产品。
+
+**明确不学的**：代码 AST 图谱（seren 不做代码域）；学习飞轮自动捕获（agent 经验自动写回 = LLM 二手物，与"官方不做 LLM 二手筛选"有张力——虽带 commit/diff/tests 锚点，可信度高于 OpenViking 但仍是二手）；TS/Node + npx 运行时（与 Go 零依赖冲突）；L3 经验注入（seren 不面向 prompt 注入）。
 
 ## 五、明确不学的（设计层面克制）
 
@@ -189,6 +205,8 @@ A-MEM 是三个研究对象中**哲学与 seren 最接近**的（Zettelkasten �
 | 4 | **借鉴点按优先级并入现有 roadmap**：节点详情分级（§4.2#1）可直接并入前端 #3 设计；多锚点漫游（§4.2#2）进机会文档评估；确定性排序（§4.2#3）与既有"锚点排序稳定"项合并 | 各 roadmap 迭代时 |
 | 5 | **本文件与 openviking-notes.md 的关系**：notes 是研究过程记录（含技术可行性细节），本文件是立场结论——综合进项目文档时以本文件为准，notes 作为背景材料 | 综合文档时 |
 | 6 | **LLM Wiki adapter 兼容**：VaultProfile 加 `ExcludedFiles` 字段 + 内置画像 `llm-wiki`（见 §七，方案已定）+ 可选结构发现器 | 综合文档时（顺手） |
+| 7 | **roadmap #8 契约测试升级为「检索黄金集」**（GraphFlow §4.6 借鉴）：固定查询集 + 预期结果 + commit 锚定；构造 **indirect 用例**（查询词与目标节点零文本重叠、只有结构信号能命中）验证 seren 结构激活独有价值 | roadmap #8 排期时 |
+| 8 | **前端 #3 节点详情采用「锚点包 + refill」交互**（GraphFlow §4.6 借鉴）：先给摘要 + 邻居列表，按需扩展单个锚点详情，预览与全文边界诚实标注 | 前端 #3 设计时 |
 
 **执行顺序建议**：先做 #1（改 positioning）→ #5（确定文档关系）→ #4（借鉴点归位）→ #6（LLM Wiki 画像，顺手）→ #3（M1 时兑现）→ #2（长期红线）。
 
@@ -313,6 +331,7 @@ Obsidian 里大量用户用 `index.md` 做 MOC（内容地图）——那是用�
 | OpenViking | 官方 docs（docs.openviking.ai/zh/concepts/01~09）+ GitHub（volcengine/OpenViking） | 2026-08-23 |
 | Graphiti | GitHub README（getzep/graphiti）+ 相关评测文章（Zep 论文 arXiv:2501.13956） | 2026-08-23 |
 | A-MEM | NeurIPS 2025 论文（arXiv:2502.12110）+ 两篇独立解读 | 2026-08-23 |
+| GraphFlow | GitHub（Roarpeng/GraphFlow）docs/：context-contract.md / benchmark-standards.md / experience-memory.md / team-memory-security.md | 2026-08-24 |
 
 > 研究过程记录（含各文档的技术细节摘录）见 `serendipity-openviking-notes.md`。
 

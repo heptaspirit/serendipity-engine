@@ -1,0 +1,28 @@
+# Serendipity Engine · 库画像（VaultProfile）
+# LLM Wiki（Karpathy 模式）——真实性门槛下唯一「可接受但默认谨慎」的 LLM 生成数据源。
+# 背景（agent-memory-research §7）：LLM Wiki 有 raw 事实锚点 + 人力维护（用户浏览/纠正），
+# 因此值得专门兼容。只认 wiki/ 里的 markdown，raw/ 整体不扫（零新增解析能力）。
+# 其余字段继承 default-obsidian（代码 ProfileByName 用默认填充缺省字段）。
+#
+# 边界（诚实声明，勿改）：
+#   - wiki/ 页面是 LLM 写的 → 进图 = 接受「二手编译内容」，白盒解释仍成立（链接真实），
+#     但内容可信度降级（§2.1「⚠️ 可接受但默认谨慎」）；
+#   - index.md 排除必须通过显式画像启用，绝不进默认画像（Obsidian 用户常拿 index.md
+#     做手写 MOC，文件名相同无法区分手写 vs LLM 生成——§7.5 关键权衡）。
+#
+# 用法：--profile-name llm-wiki（开箱即用）。魔改版目录结构请自行改 excluded_dirs/files。
+name: llm-wiki
+
+# LLM Wiki 约定：raw 是素材堆（含 .md 也不扫），audit 是人工反馈收件箱，output(s) 是成品
+excluded_dirs:
+  - raw
+  - audit
+  - output
+  - outputs
+
+# 文件名级排除：全局索引/操作日志/schema 行为规范（非知识，不进图）
+excluded_files:
+  - index.md
+  - log.md
+  - CLAUDE.md
+  - AGENTS.md

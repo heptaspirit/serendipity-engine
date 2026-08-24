@@ -97,9 +97,18 @@ func TestLoadRenamesRoundTrip(t *testing.T) {
 
 // TouchStats：只读统计聚合（v0.1.11，backlog §3.3）。
 // 验证被点击 TopN、来源 TopN、总数；且不写库（只读）。
+// v0.1.12：targets 关联 documents 过滤幽灵 touch——热点A/热点B 先存入 documents 表，
+// 未保存的幽灵节点被点后不进热度榜。
 func TestTouchStats(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "t.sqlite")
+	// 先保存两个真实节点（documents 表），否则 target 过滤会把它们全滤掉（v0.1.12）
+	if err := Save(dbPath, []*adapter.Document{
+		{ID: "热点A", Title: "A", Type: "note", Refs: []string{}},
+		{ID: "热点B", Title: "B", Type: "note", Refs: []string{}},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	// 插入埋点：target 聚焦少数节点，src 记录来源
 	for i := 0; i < 3; i++ {
 		if err := AppendTouch(dbPath, "热点A", "来源X"); err != nil {
@@ -112,20 +121,41 @@ func TestTouchStats(t *testing.T) {
 	if err := AppendTouch(dbPath, "热点B", ""); err != nil { // 无来源（src=NULL/空）
 		t.Fatalf("AppendTouch: %v", err)
 	}
+	if err := AppendTouch(dbPath, "幽灵节点", "来源Z"); err != nil { // 已删/不存在 → 应被过滤
+		t.Fatalf("AppendTouch: %v", err)
+	}
 	total, targets, sources, err := TouchStats(dbPath, 10)
 	if err != nil {
 		t.Fatalf("TouchStats: %v", err)
 	}
-	if total != 5 {
-		t.Fatalf("总数应 5：%d", total)
+	if total != 6 {
+		t.Fatalf("总数应 6：%d", total)
 	}
-	// 被点击：热点A(4) 应排首位
+	// 被点击：热点A(4) 应排首位；幽灵节点不存在于 documents → 被过滤
 	if len(targets) == 0 || targets[0].ID != "热点A" || targets[0].Count != 4 {
 		t.Fatalf("Targets 错误：%v", targets)
 	}
-	// 来源：来源X(3) 应排首位；空 src 应被排除
+	foundGhost := false
+	for _, r := range targets {
+		if r.ID == "幽灵节点" {
+			foundGhost = true
+		}
+	}
+	if foundGhost {
+		t.Fatalf("幽灵节点不应进热度榜：%v", targets)
+	}
+	// 来源：来源X(3) 应排首位；空 src 应被排除；来源Z（幽灵对应的来源）是自由文本，保留
 	if len(sources) == 0 || sources[0].ID != "来源X" || sources[0].Count != 3 {
 		t.Fatalf("Sources 错误：%v", sources)
+	}
+	foundZ := false
+	for _, r := range sources {
+		if r.ID == "来源Z" {
+			foundZ = true
+		}
+	}
+	if !foundZ {
+		t.Fatalf("src 是自由查询词，来源Z 应保留：%v", sources)
 	}
 	// 无埋点表 → 全零（不报错）
 	total2, _, _, err := TouchStats(filepath.Join(dir, "none.sqlite"), 10)

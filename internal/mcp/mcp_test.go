@@ -59,7 +59,7 @@ func runServe(t *testing.T, reqs string) []line {
 	return lines
 }
 
-// 主流程：初始化 / 列工具 / 六只读 tool / 错误路径 / 通知不响应。
+// 主流程：初始化 / 列工具 / 七只读 tool / 错误路径 / 通知不响应。
 func TestMCPLifecycle(t *testing.T) {
 	reqs := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
@@ -70,15 +70,16 @@ func TestMCPLifecycle(t *testing.T) {
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"graph.relation","arguments":{"from":"Alpha","to":"Beta"}}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"graph.node","arguments":{"id":"Alpha"}}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"graph.similar","arguments":{"id":"Alpha","k":5}}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"nope","params":{}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"graph.community","arguments":{"seed":42}}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"nope","params":{}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"ping"}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`, // 无 id → 不响应
 		`not json`,
 	}, "\n")
 	resps := runServe(t, reqs)
-	if len(resps) != 12 {
-		t.Fatalf("应有 12 个响应（11 请求 + 1 解析错误；通知不响应），got %d", len(resps))
+	if len(resps) != 13 {
+		t.Fatalf("应有 13 个响应（12 请求 + 1 解析错误；通知不响应），got %d", len(resps))
 	}
 
 	// id=1 initialize
@@ -95,17 +96,17 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("initialize 兜底 protocolVersion 应为 2024-11-05, got %v", init["protocolVersion"])
 	}
 
-	// id=2 tools/list → 6 个 tools，含 graph.random/node/similar
+	// id=2 tools/list → 7 个 tools，含 graph.random/node/similar/community
 	var tl struct{ Tools []struct{ Name string } }
 	json.Unmarshal(resps[1].Result, &tl)
-	if len(tl.Tools) != 6 {
-		t.Fatalf("应有 6 个 tools, got %d", len(tl.Tools))
+	if len(tl.Tools) != 7 {
+		t.Fatalf("应有 7 个 tools, got %d", len(tl.Tools))
 	}
 	names := map[string]bool{}
 	for _, x := range tl.Tools {
 		names[x.Name] = true
 	}
-	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar"} {
+	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar", "graph.community"} {
 		if !names[want] {
 			t.Fatalf("tools 缺 %s", want)
 		}
@@ -166,7 +167,7 @@ func TestMCPLifecycle(t *testing.T) {
 	var rel struct{ Content []struct{ Text string } }
 	json.Unmarshal(resps[5].Result, &rel)
 	var rl struct {
-		Affinity float64 `json:"affinity"`
+		Affinity float64  `json:"affinity"`
 		Path     []string `json:"path"`
 	}
 	json.Unmarshal([]byte(rel.Content[0].Text), &rl)
@@ -178,8 +179,8 @@ func TestMCPLifecycle(t *testing.T) {
 	var nd struct{ Content []struct{ Text string } }
 	json.Unmarshal(resps[6].Result, &nd)
 	var ndInfo struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
+		ID        string                `json:"id"`
+		Title     string                `json:"title"`
 		Neighbors []struct{ ID string } `json:"neighbors"`
 	}
 	json.Unmarshal([]byte(nd.Content[0].Text), &ndInfo)
@@ -207,21 +208,35 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("similar 应带共享邻居: %+v", smList)
 	}
 
-	// id=9 未知工具 → error -32602
-	if resps[8].Error == nil || resps[8].Error.Code != -32602 {
-		t.Fatalf("未知工具应 -32602, got %+v", resps[8].Error)
+	// id=9 graph.community → 社区结果（模块度 + 社区数 + membership）
+	var cm struct{ Content []struct{ Text string } }
+	json.Unmarshal(resps[8].Result, &cm)
+	var cmRes struct {
+		Modularity     float64           `json:"modularity"`
+		CommunityCount int               `json:"community_count"`
+		Membership     map[string]int    `json:"membership"`
+		Communities    []graph.Community `json:"communities"`
 	}
-	// id=10 未知方法 → error -32601
-	if resps[9].Error == nil || resps[9].Error.Code != -32601 {
-		t.Fatalf("未知方法应 -32601, got %+v", resps[9].Error)
+	json.Unmarshal([]byte(cm.Content[0].Text), &cmRes)
+	if cmRes.CommunityCount < 1 || cmRes.Modularity == 0 && cmRes.CommunityCount == 0 {
+		t.Fatalf("community 应返回有效社区: %+v", cmRes)
 	}
-	// id=11 ping → result {}
-	if string(resps[10].Result) != "{}" {
-		t.Fatalf("ping 应返回 {}, got %s", resps[10].Result)
+
+	// id=10 未知工具 → error -32602
+	if resps[9].Error == nil || resps[9].Error.Code != -32602 {
+		t.Fatalf("未知工具应 -32602, got %+v", resps[9].Error)
+	}
+	// id=11 未知方法 → error -32601
+	if resps[10].Error == nil || resps[10].Error.Code != -32601 {
+		t.Fatalf("未知方法应 -32601, got %+v", resps[10].Error)
+	}
+	// id=12 ping → result {}
+	if string(resps[11].Result) != "{}" {
+		t.Fatalf("ping 应返回 {}, got %s", resps[11].Result)
 	}
 	// 解析错误 → -32700
-	if resps[11].Error == nil || resps[11].Error.Code != -32700 {
-		t.Fatalf("解析错误应 -32700, got %+v", resps[11].Error)
+	if resps[12].Error == nil || resps[12].Error.Code != -32700 {
+		t.Fatalf("解析错误应 -32700, got %+v", resps[12].Error)
 	}
 }
 

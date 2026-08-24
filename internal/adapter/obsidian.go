@@ -74,6 +74,9 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
+		if containsStr(p.ExcludedFiles, d.Name()) {
+			return nil // v0.1.12：文件名级排除（画像 ExcludedFiles，LLM Wiki 的 index.md/log.md）
+		}
 		doc, err := ParseFile(path, root, p)
 		if err != nil {
 			return err
@@ -95,18 +98,21 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 // 未变的旧文档，只对变更/新增文件调 ParseFile。
 //
 // ▍语义与全量一致
-//   返回的 Document 列表与 ParseVault 等价（含同名消歧、ID 分配）——复用只是
-//   跳过"未变文件"的读取 + 正则解析（Obsidian 解析的主要开销）；消歧仍在
-//   扫描循环里统一跑（复用的旧文档 ID 先重置为 basename，还原未消歧形态）。
-//   删除检测天然成立：文件系统里消失的文件不会被扫描到，自然不在返回列表里
-//   （diff 报 deleted）。
+//
+//	返回的 Document 列表与 ParseVault 等价（含同名消歧、ID 分配）——复用只是
+//	跳过"未变文件"的读取 + 正则解析（Obsidian 解析的主要开销）；消歧仍在
+//	扫描循环里统一跑（复用的旧文档 ID 先重置为 basename，还原未消歧形态）。
+//	删除检测天然成立：文件系统里消失的文件不会被扫描到，自然不在返回列表里
+//	（diff 报 deleted）。
 //
 // ▍已知限制（v1.5 接受）
-//   mtime/size 相同但内容被改回（秒级精度 + 同字节数）会漏检——概率极低；
-//   文件系统 touch（改 mtime 不改内容）只会多触发一次重解析，无害。
+//
+//	mtime/size 相同但内容被改回（秒级精度 + 同字节数）会漏检——概率极低；
+//	文件系统 touch（改 mtime 不改内容）只会多触发一次重解析，无害。
 //
 // ▍返回值
-//   (docs, reused, err)：reused = 复用的旧文档数（调用方可用于日志/统计）。
+//
+//	(docs, reused, err)：reused = 复用的旧文档数（调用方可用于日志/统计）。
 func ParseVaultIncremental(root string, p *VaultProfile, old []*Document) ([]*Document, int, error) {
 	oldByPath := map[string]*Document{}
 	for _, d := range old {
@@ -127,6 +133,9 @@ func ParseVaultIncremental(root string, p *VaultProfile, old []*Document) ([]*Do
 		}
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
+		}
+		if containsStr(p.ExcludedFiles, d.Name()) {
+			return nil // v0.1.12：文件名级排除（与 ParseVault 同源，LLM Wiki 的 index.md/log.md）
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)

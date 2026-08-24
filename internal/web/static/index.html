@@ -7,45 +7,43 @@
     采用 dsh web 同款 design language（Tokyo Night 风格暗色）：
       背景 #181926 · 面板 #1e2030 · 浮起面板 #24273a · 交互按钮 #363a4f
       正文 #cad3f5 · 弱化 #6e738d · 强调蓝 #7aa2f7 · 边界 rgba(255,255,255,.06/.12)
-    保留原有 1/2/3-hop 配色（金/蓝/紫），整体更克制、贴近 dsh web。
+    保留 1/2/3-hop 配色（金/蓝/紫），整体更克制、贴近 dsh web。
 
   ▍功能
-    - 初始页：热门节点漂浮气泡（/api/hot），点击气泡开始漫游
-    - 搜索框：查询漫游（/api/roam），锚点按 match 级别/度展示前 5 个
-    - 🎲 随机漫步（/api/roam?random=1，v0.1.7）：随机 roll 起点 + 它的簇——
-      "节点 + 簇"一次给出；点簇内任意卡片即转入正常漫游
-    - 设置抽屉 ⚙：暴露安全可调参数（/api/config 白名单：top/hops/lambda/theta/
-      alpha/beta/rand_alpha），范围/步长/默认来自服务端，localStorage 记忆，可一键重置
-    - 关系查询（/api/relation，v0.1.5）：两节点最短路径 + 双向 PPR + 证据链
-    - 卡片：点击任意卡片 = 从该节点继续漫游（探索路径，push 历史栈）
-    - 历史栈与浏览器 history 同步：后退/前进键可用（?q= URL 同步）
-    - 打开跳转：卡片「打开 ↗」→ obsidian:// 或 orca-note://（server 端拼 URI）
-    - 反馈埋点：点击上报 /api/touch（独立表，仅记录不演化）
-    - 自动监听提示：轮询 /api/stats 对比 revision
-    - 深跳节点（score≤0）：不显示无意义的 0 分，改用「深跳」标签（serendipity 机制保留）
+    - 搜索漫游（/api/roam）+ 🎲 随机漫步（/api/roam?random=1）+ / 键聚焦搜索
+    - 卡片：点击任一卡片 = 从该节点继续漫游（push 历史栈）；预览（详情浮层）、
+      相似（结构相似 Jaccard/Adamic-Adar）、打开（obsidian:// / orca-note:// / postMessage）
+    - 侧滑抽屉：关系查询 / 相似 / 统计 / 参数 统一右侧抽屉（不挤占主区，主任务是漫游）
+    - 导出当前漫游为 Markdown（/api/roam?export=1）
+    - 反馈埋点（点击上报 /api/touch，只读统计 /api/touch/stats）
+    - 自动监听提示 + is_pending（库有变化）提示条（/api/stats，roadmap #14）
+    - 深跳节点（score≤0）：不显示无意义 0 分，改用「深跳」标签
+
+  ▍前端 P0（v0.1.12，插件化前置，roadmap 阶段 2 #1）
+    1. 紧凑嵌入模式：?embed=1 或 top!==self → body.embed 类——隐藏 hero/brand/页脚、
+       搜索框 sticky 常驻、卡片间距收紧、.open 常显（窄面板无 hover）。
+    2. postMessage 桥：嵌入时「打开」不跳外链，改发 {type:'open', id} 通知宿主就地打开
+       （Obsidian openLinkText / 虎鲸 invokeBackend）；宿主回传 {type:'theme'} /
+       {type:'locale'} / {type:'activeFile'}（Web UI 绝不直接调宿主 API，跨源也不允许）。
+    3. 节点详情预览 / node（P0 项，v0.1.11 已落地，本版保留）。
+    4. i18n（中英双语，覆盖全部用户可见文案）：文案集中一份字典，语言跟随宿主
+       （postMessage {type:'locale'} 或 navigator.language；默认中文、英文兜底）。
 
   ▍修改记录
     v0.1.0  初版：漫游/锚点/卡片/历史栈/回退/初始页气泡
-    v0.1.1  页面与画像改动无涉本文件
-    v0.1.2  刷新按钮 + diff 摘要展示
-    v0.1.3  锚点可点击；点击显示标题；孤立节点"到头了"提示；事件委托；onerror 可见
-    v0.1.4  反馈埋点 /api/touch；轮询 stats 提示"库已自动更新"
-    v0.1.5  关系查询 URI（后端）；本文件未涉
-    v0.1.6  dsh web 设计语言换肤；设置抽屉暴露安全参数（/api/config + clamp）；
-            深跳节点 score≤0 展示修复；接入 /api/relation 关系查询；交互与可用性优化
-    v0.1.7  🎲 随机漫步按钮（/api/roam?random=1）；随机起点标签 + 空簇提示；
-            设置抽屉新增"随机漫步·度加权"滑块（rand_alpha）
-    v0.1.8  安全前置：服务端注入 API token（__SEREN_TOKEN__），fetch 包装自动携带
-            X-Seren-Token 头——外部页面读不到 token，无法 CSRF 调用
-    v0.1.11 卡片「预览」（/api/node 详情浮层）与「相似」（/api/similar 折叠面板，
-            共享邻居证据）；顶栏「导出」（/api/roam?export=1 → Markdown 下载）与
-            「统计」（/api/touch/stats 折叠面板，只读展示）；刷新摘要补「改名 N」
+    v0.1.6  dsh web 设计语言换肤；设置抽屉暴露安全参数；深跳修复；关系查询
+    v0.1.7  🎲 随机漫步按钮；rand_alpha 滑块
+    v0.1.8  服务端注入 API token（__SEREN_TOKEN__），fetch 自动携带
+    v0.1.11 卡片预览/相似；顶栏导出/统计；刷新摘要补改名
+    v0.1.12 前端 P0：hero 改静态热门列表（移除漂浮气泡动画）、侧滑抽屉统一面板、
+           卡片 .id 收敛（悬停提示）/ .scores 折叠（hover 展开）、🎲 升级带文字主按钮、
+           ?embed=1 紧凑嵌入 + postMessage 桥、i18n 中英双语全部文案、is_pending 提示条。
 -->
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Serendipity Engine · 图谱漫游</title>
+<title>Serendipity Engine</title>
 <style>
   :root {
     /* dsh web 同款设计语言（Tokyo Night） */
@@ -59,6 +57,14 @@
     --shadow: 0 6px 20px rgba(0,0,0,.35);
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
             "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  }
+  /* 浅色主题（P1-7：主题跟随宿主；嵌入时宿主回传 {type:'theme', mode:'light'}） */
+  :root[data-theme="light"] {
+    --bg: #f5f6fa; --panel: #ffffff; --surface: #eef0f6; --elevated: #e3e6ef;
+    --text: #2a2f3f; --muted: #7a8195; --border: rgba(0,0,0,.08);
+    --border-strong: rgba(0,0,0,.14); --accent: #3a6ef0; --accent-2: #3757ff;
+    --primary: #4a6bd0; --primary-hover: #5b7ae0;
+    --shadow: 0 6px 18px rgba(0,0,0,.1);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -93,6 +99,7 @@
   .btn:hover { border-color: var(--accent); }
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.primary { background: var(--primary); color: #0e0f17; border-color: transparent; }
+  :root[data-theme="light"] .btn.primary { color: #fff; }
   .btn.primary:hover { background: var(--primary-hover); }
   .btn.ghost { background: transparent; }
   .btn.sm { padding: 4px 12px; font-size: 12.5px; font-weight: 500; }
@@ -113,14 +120,35 @@
   .source-line .tag { color: var(--muted); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 1px 6px; font-size: 11.5px; }
 
-  /* ---- 折叠面板（关系查询 / 参数设置） ---- */
-  .panel { background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px;
-    animation: fade .12s ease; }
-  .panel.hidden { display: none; }
-  @keyframes fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  /* 待刷新提示条（v0.1.12，roadmap #14） */
+  .pending { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: color-mix(in srgb, var(--warn) 14%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+    border-radius: var(--radius-sm); padding: 8px 12px; color: var(--warn);
+    font-size: 13px; margin-bottom: 12px; animation: fade .12s ease; }
+  .pending.hidden { display: none; }
+  .pending .btn { flex-shrink: 0; }
 
-  /* 关系查询 */
+  /* ---- 侧滑抽屉（v0.1.12，统一面板） ---- */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 30;
+    animation: fade .12s ease; }
+  .drawer-overlay.hidden { display: none; }
+  .drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 92%);
+    background: var(--panel); border-left: 1px solid var(--border-strong);
+    box-shadow: var(--shadow); z-index: 31; transform: translateX(100%);
+    transition: transform .2s ease; display: flex; flex-direction: column; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 700;
+    font-size: 15px; }
+  .drawer-head .dclose { cursor: pointer; color: var(--muted); font-size: 18px;
+    background: none; border: none; }
+  .drawer-head .dclose:hover { color: var(--accent); }
+  .drawer-body { padding: 16px 18px; overflow: auto; flex: 1; font-size: 13.5px; }
+  /* 嵌入时抽屉全宽 */
+  body.embed .drawer { width: 100%; }
+
+  /* 关系 + 相似 + 统计 + 参数 共用抽屉内容样式 */
   .rel-inputs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .rel-inputs input { flex: 1; min-width: 160px; background: var(--surface);
     border: 1px solid var(--border-strong); color: var(--text); padding: 10px 12px;
@@ -136,9 +164,8 @@
   .rel-stats { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
   .rel-empty { color: var(--muted); }
 
-  /* 设置抽屉 */
   .cfg-head { display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 12px; font-weight: 600; font-size: 14px; color: var(--text); }
+    margin-bottom: 12px; font-weight: 600; font-size: 14px; }
   .cfg-group-label { color: var(--muted); font-size: 12px; text-transform: uppercase;
     letter-spacing: .5px; margin: 12px 0 6px; }
   .cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -160,15 +187,18 @@
   .anchor.more { cursor: default; color: var(--muted); }
   .anchor.more:hover { border-color: var(--border-strong); color: var(--muted); }
 
-  /* ---- 卡片 ---- */
+  /* ---- 卡片（信息分级：标题/路径用户看，ID/分数 AI/调试看，后者默认收敛） ---- */
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 13px 16px; margin-bottom: 8px; cursor: pointer;
     transition: border-color .15s, transform .08s, background .15s; }
-  .card:hover { border-color: var(--accent); transform: translateX(3px); }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+  .card:active { transform: scale(.99); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .card .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .card .rank { color: var(--accent); font-weight: 700; min-width: 24px; font-size: 14px; }
   .card .title { font-size: 15px; font-weight: 600; }
-  .card .id { color: var(--muted); font-size: 12px; }
+  .card .id { display: none; } /* v0.1.12：ID 收敛为 title 悬停提示，不常显 */
   .card .type { font-size: 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
     padding: 1px 8px; color: var(--muted); }
   .card .hop { font-size: 11px; border-radius: var(--radius-sm); padding: 1px 8px; font-weight: 700; }
@@ -181,34 +211,32 @@
   .card .open:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .card .meta-line { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.6; }
   .card .path { color: var(--muted); font-size: 12px; margin-top: 5px; word-break: break-all; }
-  .card .scores { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+  .card .scores { color: var(--muted); font-size: 11.5px; margin-top: 3px;
+    opacity: .3; transition: opacity .15s; }
+  .card:hover .scores { opacity: 1; } /* v0.1.12：.scores 默认折叠，hover 展开 */
 
-  /* ---- 初始页 hero / 气泡 ---- */
-  .hero { position: relative; height: 56vh; min-height: 400px; margin-top: 14px;
-    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  /* ---- 初始页 hero（v0.1.12：改静态热门列表，移除漂浮气泡动画） ---- */
+  .hero { padding: 28px 20px 20px; margin-top: 8px; text-align: center;
+    border: 1px solid var(--border); border-radius: var(--radius);
     background: radial-gradient(ellipse at 30% 20%, var(--panel) 0%, var(--bg) 72%); }
-  .hero-title { text-align: center; padding-top: 40px; font-size: 30px; font-weight: 800;
-    color: var(--text); letter-spacing: .5px; }
+  .hero-title { font-size: 28px; font-weight: 800; color: var(--text); letter-spacing: .5px; }
   .hero-title .accent { color: var(--accent); }
-  .hero-sub { text-align: center; color: var(--muted); font-size: 13.5px; margin-top: 8px; }
-  .bubbles { position: absolute; inset: 0; }
-  .bubble { position: absolute; border-radius: var(--radius-pill); display: flex;
-    align-items: center; justify-content: center; cursor: pointer;
-    border: 1px solid var(--border-strong); background: var(--panel); color: var(--text);
-    font-size: 12.5px; text-align: center; padding: 6px 14px; font-weight: 500;
-    max-width: 160px; box-shadow: var(--shadow); overflow: hidden; text-overflow: ellipsis;
-    animation: floaty var(--dur) ease-in-out infinite alternate; user-select: none; white-space: nowrap; }
+  .hero-sub { color: var(--muted); font-size: 13.5px; margin: 8px 0 16px; }
+  .hot-tags { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 760px;
+    margin: 0 auto; }
+  .bubble { border-radius: var(--radius-pill); display: inline-flex; align-items: center;
+    justify-content: center; cursor: pointer; border: 1px solid var(--border-strong);
+    background: var(--panel); color: var(--text); font-size: 12.5px; padding: 6px 14px;
+    font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
   .bubble:hover { border-color: var(--accent); color: var(--accent); z-index: 2; }
-  @keyframes floaty {
-    from { transform: translate(0, 0); }
-    to { transform: translate(var(--dx), var(--dy)); }
-  }
   .type-人物 { border-color: color-mix(in srgb, var(--hop1) 55%, transparent); color: var(--hop1); }
   .type-设定 { border-color: color-mix(in srgb, var(--hop2) 55%, transparent); color: var(--hop2); }
   .type-线索 { border-color: color-mix(in srgb, var(--hop3) 55%, transparent); color: var(--hop3); }
   .type-ADR  { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); }
   .type-doc  { border-color: color-mix(in srgb, var(--hop2) 55%, transparent); color: var(--hop2); }
   .type-block{ border-color: color-mix(in srgb, var(--muted) 45%, transparent); color: var(--muted); }
+  .type-note { border-color: var(--border-strong); color: var(--muted); }
 
   .fallback { background: color-mix(in srgb, var(--warn) 12%, var(--panel));
     border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--radius-sm);
@@ -241,7 +269,8 @@
   .detail-card .dtitle { font-size: 17px; font-weight: 700; }
   .detail-card .dtype { font-size: 11px; border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm); padding: 1px 8px; color: var(--muted); }
-  .detail-card .dclose { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 18px; }
+  .detail-card .dclose { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 18px;
+    background: none; border: none; }
   .detail-card .dclose:hover { color: var(--accent); }
   .detail-card .dmeta { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; word-break: break-all; }
   .detail-card .dtext { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 12px;
@@ -255,18 +284,29 @@
   .detail-card .dnod:hover { border-color: var(--accent); color: var(--accent); }
   .detail-card .dempty { color: var(--muted); font-size: 12.5px; }
 
-  /* 相似面板（复用折叠 panel，v0.1.11） */
+  /* 相似/统计 list in drawer */
   #sim-result .sim-item { display: flex; align-items: center; justify-content: space-between;
     padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13.5px; }
   #sim-result .sim-item:hover { background: var(--surface); }
   #sim-result .sim-item .evi { color: var(--muted); font-size: 11.5px; }
-
-  /* 统计面板（v0.1.11） */
-  #stat-result { font-size: 13px; }
-  #stat-result .stat-line { color: var(--muted); margin: 6px 0; }
+  #stat-result .stat-line { color: var(--muted); margin: 6px 0; font-size: 13px; }
   #stat-result .stat-tag { display: inline-block; background: var(--surface);
     border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
     padding: 2px 8px; font-size: 12px; margin: 2px 3px 2px 0; }
+
+  @keyframes fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+  /* ---- 紧凑嵌入模式（v0.1.12，前端 P0-1） ---- */
+  body.embed header { padding: 8px 12px; }
+  body.embed .brand, body.embed .header-right .btn .txt { display: none; }
+  body.embed main { max-width: none; padding: 12px; }
+  body.embed .search { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: 8px 0; margin-bottom: 6px; }
+  body.embed .card { padding: 10px 12px; margin-bottom: 6px; }
+  body.embed .card .open { opacity: 1; }
+  body.embed .hint, body.embed .source-line .tag { display: none; }
+  body.embed .hero-title, body.embed .hero-sub { display: none; }
+
   @media (max-width: 560px) {
     .brand .tag { display: none; }
     .header-right .btn .txt { display: none; }
@@ -281,14 +321,14 @@
     <button id="home" class="icon-btn" title="回到初始页">⌂</button>
     <button id="back" class="icon-btn" disabled title="上一步">←</button>
     <button id="refresh" class="icon-btn" title="对账刷新：重新解析并同步增删改">↻</button>
-    <button id="dice" class="icon-btn" title="随机漫步：随机起点 + 它的簇">🎲</button>
   </div>
   <h1 id="brand" class="brand">Serendipity Engine <span class="tag" id="ver"></span></h1>
   <div class="header-right">
+    <button id="dice" class="btn primary sm" title="随机漫步：随机起点 + 它的簇"><span class="txt">🎲 随便逛逛</span></button>
     <button id="export" class="btn ghost sm" title="导出当前漫游为 Markdown"><span class="txt">导出</span></button>
-    <button id="stat-toggle" class="btn ghost sm" title="反馈埋点统计（只读）"><span class="txt">统计</span></button>
+    <button id="stat-toggle" class="btn ghost sm" title="反馈统计（只读，不参与排序）"><span class="txt">统计</span></button>
     <button id="rel-toggle" class="btn ghost sm" title="两节点关系查询"><span class="txt">关系</span></button>
-    <button id="cfg-toggle" class="btn ghost sm" title="调整漫游参数">⚙ <span class="txt">参数</span></button>
+    <button id="cfg-toggle" class="btn ghost sm" title="调整漫游参数"><span class="txt">⚙ 参数</span></button>
   </div>
 </header>
 <main>
@@ -298,57 +338,154 @@
   </div>
   <div id="source" class="source-line"></div>
 
-  <!-- 关系查询（可折叠） -->
-  <div id="rel-panel" class="panel hidden">
-    <div class="rel-inputs">
-      <input id="rel-from" placeholder="节点 A（名称/ID）">
-      <span class="rel-x">↔</span>
-      <input id="rel-to" placeholder="节点 B（名称/ID）">
-      <button id="rel-go" class="btn primary">查关系</button>
-    </div>
-    <div id="rel-result" class="rel-result"></div>
-  </div>
-
-  <!-- 相似面板（可折叠，v0.1.11 结构相似 Jaccard） -->
-  <div id="sim-panel" class="panel hidden">
-    <div class="cfg-head">
-      <span>相似节点 <small style="color:var(--muted);font-weight:400">共同邻居多但互不链接</small></span>
-      <button id="sim-close" class="btn ghost sm">关闭</button>
-    </div>
-    <div id="sim-result" class="rel-result"></div>
-  </div>
-
-  <!-- 统计面板（可折叠，v0.1.11 埋点只读） -->
-  <div id="stat-panel" class="panel hidden">
-    <div class="cfg-head">
-      <span>反馈统计 <small style="color:var(--muted);font-weight:400">只读，不参与排序</small></span>
-      <button id="stat-close" class="btn ghost sm">关闭</button>
-    </div>
-    <div id="stat-result"></div>
-  </div>
-
-  <!-- 参数设置抽屉（可折叠） -->
-  <div id="cfg-panel" class="panel hidden">
-    <div class="cfg-head">
-      <span>漫游参数</span>
-      <button id="cfg-reset" class="btn ghost sm">重置默认</button>
-    </div>
-    <div id="cfg-fields"></div>
+  <!-- 待刷新提示条（v0.1.12，roadmap #14） -->
+  <div id="pending-banner" class="pending hidden">
+    <span id="pending-text"></span>
+    <button id="pending-refresh" class="btn ghost sm">立即刷新</button>
   </div>
 
   <div id="meta" class="meta"></div>
   <div id="anchors" class="anchors"></div>
   <div id="fallback"></div>
   <div id="list"></div>
-  <div class="hint">🎲 随机漫步：随机起点 + 它的簇 · 点击任意卡片 → 从该节点继续漫游（探索路径）· 点击「⚙ 参数」可调整漫游设置</div>
+  <div class="hint" id="hint"></div>
 </main>
+
+<!-- 侧滑抽屉（v0.1.12，统一面板：关系/相似/统计/参数） -->
+<div id="drawer-overlay" class="drawer-overlay hidden"></div>
+<aside id="drawer" class="drawer">
+  <div class="drawer-head">
+    <span id="drawer-title"></span>
+    <button id="drawer-close" class="dclose" title="关闭">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 
-// ---- API 鉴权（v0.1.8 安全前置）：服务端注入 token，包装 fetch 自动携带 ----
-// 占位符 __SEREN_TOKEN__ 由 server.handleIndex 替换为真实 token；外部页面
-// 受同源策略限制读不到 → 拿不到 token → 无法调用 /api/*（防 CSRF）。
+// ==========================================================================
+// i18n（v0.1.12，前端 P0-4）：全部用户可见文案中英双语。
+// 语言跟随宿主：postMessage {type:'locale', lang} > navigator.language（zh→中文，
+// 其他→英文兜底）> localStorage 用户显式选择。默认中文。
+// ==========================================================================
+const I18N = {
+  zh: {
+    tag: '标签', node: '节点', edge: '边', source: '源',
+    home: '回到初始页', back: '上一步', refresh: '对账刷新：重新解析并同步增删改',
+    dice: '随机漫步：随机起点 + 它的簇', export: '导出', stats: '统计',
+    relation: '关系', params: '⚙ 参数', diceTitle: '🎲 随便逛逛',
+    exportTitle: '导出当前漫游为 Markdown', statsTitle: '反馈统计（只读，不参与排序）',
+    relTitle: '两节点关系查询', cfgTitle: '调整漫游参数', justRoam: '随便逛逛',
+    searchPh: '输入笔记名 / 标签 / 任意词…', roamBtn: '漫游',
+    relFromPh: '节点 A（名称/ID）', relToPh: '节点 B（名称/ID）', relGo: '查关系',
+    relEmpty: '请输入两个节点名称或 ID', relNoPath: '未找到连通路径',
+    relFail: '查询失败', relStats: '关系', relEvidence: '证据',
+    simTitle: '相似节点', simSub: '共同邻居多但互不链接', simEmpty: '没有相似节点',
+    simLoading: '查询相似…', simFail: '查询失败', simDirect: '直连',
+    statTitle: '反馈统计', statSub: '只读，不参与排序', statLoading: '读取统计…',
+    statTotal: '总点击', statTargets: '被反复点击', statSources: '点击来源',
+    statNoData: '无数据', statFoot: '仅记录与只读统计，不参与排序（红线）', statFail: '统计失败',
+    cfgTitle2: '漫游参数', cfgReset: '重置默认',
+    hint: '🎲 随便逛逛 · 点击任一卡片 → 从该节点继续漫游 · 点「⚙ 参数」可调整漫游设置',
+    loading: '加载中…', noResult: '无命中——库里没有相关内容',
+    deadend: '⚠ 这个节点到头了', deadendSub: '它没有关联的节点——试试搜索其他关键词，或点左上角「⌂」回初始页',
+    quiet: '🎲 这个节点比较安静，没有关联簇——再掷一次试试',
+    anchor: '锚', randomAnchor: '🎲 随机起点', moreAnchors: '… 共 {n} 个锚点',
+    fallbackSearch: '锚定失败 → 全文检索降级（搜索式）', fallbackSparse: '查询点无/少链接 → 全文检索降级',
+    roamFrom: '从「{x}」继续漫游', roaming: '漫游中: {x} …', randomStart: '🎲 随机起点（再点 🎲 换一个；点卡片从该节点继续漫游）',
+    preview: '预览', similar: '相似', open: '打开 ↗', deep: '深跳',
+    hitCount: '全文命中 {n} 次', updated: '库已自动更新（节点 {n}）',
+    refreshDone: '已刷新: 新增 {a} · 更新 {u} · 删除 {d} · 改名 {r} · 未变 {c}（{ms}ms，节点 {n}）',
+    refreshFail: '刷新失败', refreshing: '刷新中…', reqFail: '请求失败', pageErr: '页面错误',
+    detailFail: '详情失败', previewTextNone: '（无正文摘要）', neighbors: '邻居', backlinks: '被引用',
+    noNeighbors: '无邻居', noBacklinks: '无被引用', deg: '度',
+    pendingText: '库有变化，将在 1 分钟后自动刷新', pendingNow: '立即刷新',
+    exportName: 'serendipity-roam.md', exportTitle2: '导出 Markdown',
+  },
+  en: {
+    tag: 'tag', node: 'nodes', edge: 'edges', source: 'source',
+    home: 'Home', back: 'Back', refresh: 'Refresh (re-parse & sync)',
+    dice: 'Random walk', export: 'Export', stats: 'Stats',
+    relation: 'Relation', params: '⚙ Params', diceTitle: '🎲 Roam',
+    exportTitle: 'Export current roam as Markdown', statsTitle: 'Click stats (read-only)',
+    relTitle: 'Relation lookup', cfgTitle: 'Roam params', justRoam: 'Roam',
+    searchPh: 'Note name / tag / any word…', roamBtn: 'Roam',
+    relFromPh: 'Node A (name/ID)', relToPh: 'Node B (name/ID)', relGo: 'Query',
+    relEmpty: 'Enter two node names or IDs', relNoPath: 'No path found',
+    relFail: 'Query failed', relStats: 'relation', relEvidence: 'evidence',
+    simTitle: 'Similar nodes', simSub: 'share neighbors but not linked', simEmpty: 'No similar nodes',
+    simLoading: 'Querying similar…', simFail: 'Query failed', simDirect: 'shared',
+    statTitle: 'Click stats', statSub: 'read-only, no ranking impact', statLoading: 'Reading stats…',
+    statTotal: 'Total clicks', statTargets: 'Most clicked', statSources: 'Click sources',
+    statNoData: 'no data', statFoot: 'Recorded & read-only — no ranking impact (red-line)', statFail: 'Stats failed',
+    cfgTitle2: 'Roam params', cfgReset: 'Reset defaults',
+    hint: '🎲 Roam · click any card to continue from that node · ⚙ Params to tune',
+    loading: 'Loading…', noResult: 'No hit — nothing in the library',
+    deadend: '⚠ This node is a dead end', deadendSub: 'It has no related nodes — try another keyword, or press ⌂ to go home',
+    quiet: '🎲 This node is quiet, no cluster — roll again',
+    anchor: 'anchor', randomAnchor: '🎲 Random start', moreAnchors: '… {n} anchors total',
+    fallbackSearch: 'Anchor failed → fallback to full-text search', fallbackSparse: 'Query node has few links → full-text fallback',
+    roamFrom: 'Continue from "{x}"', roaming: 'Roaming: {x} …', randomStart: '🎲 Random start (roll again for another; click a card to continue)',
+    preview: 'Preview', similar: 'Similar', open: 'Open ↗', deep: 'deep',
+    hitCount: 'hit {n} times', updated: 'Library updated (nodes {n})',
+    refreshDone: 'Refreshed: +{a} ~{u} -{d} ↦{r} ~{c} ({ms}ms, {n} nodes)',
+    refreshFail: 'Refresh failed', refreshing: 'Refreshing…', reqFail: 'Request failed', pageErr: 'Page error',
+    detailFail: 'Detail failed', previewTextNone: '(no text summary)', neighbors: 'Neighbors', backlinks: 'Backlinks',
+    noNeighbors: 'no neighbors', noBacklinks: 'no backlinks', deg: 'deg',
+    pendingText: 'Library changed, auto-refresh in ~1 min', pendingNow: 'Refresh now',
+    exportName: 'serendipity-roam.md', exportTitle2: 'Export Markdown',
+  }
+};
+let lang = (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+function t(key, vars) {
+  let s = (I18N[lang] || I18N.zh)[key];
+  if (s === undefined) s = I18N.zh[key] || key;
+  if (vars) for (const k in vars) s = s.replace('{' + k + '}', vars[k]);
+  return s;
+}
+
+// ---- 紧凑嵌入模式（前端 P0-1）：?embed=1 或 不在顶层（iframe 嵌入）→ body.embed ----
+if (new URLSearchParams(location.search).has('embed') || window.top !== window.self) {
+  document.body.classList.add('embed');
+}
+const embedded = document.body.classList.contains('embed');
+
+// ==========================================================================
+// postMessage 桥（前端 P0-2）：Web UI 只发 {type:'open', id}；宿主注入 theme/locale/activeFile。
+// 跨源 iframe 物理隔离 → UI 绝不直接调宿主 API；换宿主只重写壳的注入部分。
+// ==========================================================================
+window.addEventListener('message', e => {
+  const d = e.data || {};
+  if (d.type === 'theme' && (d.mode === 'light' || d.mode === 'dark')) {
+    document.documentElement.dataset.theme = d.mode;
+  } else if (d.type === 'locale' && (d.lang === 'zh' || d.lang === 'en')) {
+    lang = d.lang;
+    applyStaticI18n();
+  } else if (d.type === 'activeFile' && d.id) {
+    // 宿主告知当前在看哪篇 → 可作命令锚点（预留；本版仅记录）
+    window.__activeFile = d.id;
+  }
+}, false);
+
+// 打开请求：嵌入时走 postMessage 桥（宿主 openLinkText/invokeBackend），否则跳外链。
+function openNode(uri, id) {
+  if (embedded) {
+    window.parent.postMessage({ type: 'open', id }, '*');
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = uri || '#';
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// ==========================================================================
+// API 鉴权（v0.1.8）：服务端注入 token，包装 fetch 自动携带。
+// ==========================================================================
 const __API_TOKEN__ = '__SEREN_TOKEN__';
 const __origFetch = window.fetch;
 window.fetch = (url, opts) => {
@@ -357,103 +494,73 @@ window.fetch = (url, opts) => {
   return __origFetch(url, opts);
 };
 
-// ---- 可调参数状态（默认来自 /api/config，localStorage 记忆）----
-let params = {};        // {key: value}
-let paramDefs = [];     // /api/config 返回的白名单定义
+// ---- 可调参数状态（默认 /api/config，localStorage 记忆）----
+let params = {};
+let paramDefs = [];
 const PARAMS_KEY = 'seren.params';
-
-function loadSavedParams() {
-  try { return JSON.parse(localStorage.getItem(PARAMS_KEY) || '{}'); }
-  catch (e) { return {}; }
-}
-function saveParams() {
-  try { localStorage.setItem(PARAMS_KEY, JSON.stringify(params)); } catch (e) {}
-}
-// 把当前参数拼成 /api/roam 的 query 后缀
-function paramQS() {
-  return Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
-}
-
-// 从配置文件填充 params（localStorage 覆盖默认值；只认识白名单内的 key）
+function loadSavedParams() { try { return JSON.parse(localStorage.getItem(PARAMS_KEY) || '{}'); } catch (e) { return {}; } }
+function saveParams() { try { localStorage.setItem(PARAMS_KEY, JSON.stringify(params)); } catch (e) {} }
+function paramQS() { return Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&'); }
 function initParams(cfg) {
   paramDefs = cfg.params || [];
   const saved = loadSavedParams();
   params = {};
-  for (const d of paramDefs) {
-    params[d.key] = (saved[d.key] !== undefined) ? +saved[d.key] : +d.default;
-  }
+  for (const d of paramDefs) params[d.key] = (saved[d.key] !== undefined) ? +saved[d.key] : +d.default;
   renderCfg();
 }
 
-// 渲染设置抽屉的滑块/输入
-function renderCfg() {
-  const box = $('#cfg-fields');
-  if (!box) return;
-  const groups = {};
-  for (const d of paramDefs) {
-    (groups[d.group || '其他'] = groups[d.group || '其他'] || []).push(d);
-  }
-  let html = '';
-  for (const g of Object.keys(groups)) {
-    html += '<div class="cfg-group-label">' + esc(g) + '</div><div class="cfg-grid">';
-    for (const d of groups[g]) {
-      const v = params[d.key];
-      const val = d.type === 'int' ? Math.round(v) : (+v).toFixed(d.step < 0.05 ? 2 : 1);
-      html += '<div class="cfg-field">' +
-        '<div class="row"><span class="lbl">' + esc(d.label) + '</span>' +
-        '<span class="val" id="cfg-val-' + esc(d.key) + '">' + val + '</span></div>' +
-        '<input type="range" min="' + d.min + '" max="' + d.max + '" step="' + d.step +
-        '" value="' + v + '" data-key="' + esc(d.key) + '">' +
-        '<span class="hint">' + esc(d.hint || '') + '</span></div>';
-    }
-    html += '</div>';
-  }
-  box.innerHTML = html;
-  $$('#cfg-fields input[type=range]').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const d = defFor(inp.dataset.key);
-      const v = d.type === 'int' ? Math.round(+inp.value) : +inp.value;
-      params[inp.dataset.key] = v;
-      const el = $('#cfg-val-' + inp.dataset.key);
-      if (el) el.textContent = d.type === 'int' ? v : (+v).toFixed(d.step < 0.05 ? 2 : 1);
-      saveParams();
-      reRoamDebounced();   // 松手后再真正重查（防拖动刷爆 API）
-    });
-  });
+// ---- 静态 i18n：给带 data-i18n 的元素与 placeholder 填充文案 ----
+function applyStaticI18n() {
+  $$('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  $$('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+  $$('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
+  if ($('#q')) $('#q').placeholder = t('searchPh');
+  const go = $('#go'); if (go) go.textContent = t('roamBtn');
+  const hint = $('#hint'); if (hint) hint.textContent = t('hint');
+  const dice = $('#dice'); if (dice) dice.innerHTML = '<span class="txt">' + t('diceTitle') + '</span>';
+  updateSourceLine();
 }
-function defFor(key) { return paramDefs.find(d => d.key === key); }
-
-// 重置参数为默认并重查
-function resetParams() {
-  for (const d of paramDefs) params[d.key] = +d.default;
-  saveParams();
-  renderCfg();
-  reRoam();
+function updateSourceLine() {
+  const line = $('#source');
+  if (!line) return;
+  const src = (line.dataset.source || ''), nodes = line.dataset.nodes, edges = line.dataset.edges;
+  if (!src) return;
+  line.innerHTML = '<span class="tag">' + t('source') + '</span> ' + esc(src) +
+    '<span class="tag">' + t('node') + ' ' + nodes + '</span><span class="tag">' + t('edge') + ' ' + edges + '</span>';
 }
 
-let reRoamTimer = null;
-function reRoamDebounced() {
-  clearTimeout(reRoamTimer);
-  reRoamTimer = setTimeout(reRoam, 350);
+// ---- 侧滑抽屉（v0.1.12，前端 9.4）----
+const drawer = $('#drawer');
+function openDrawer(title, html) {
+  $('#drawer-title').textContent = title;
+  $('#drawer-body').innerHTML = html;
+  $('#drawer-overlay').classList.remove('hidden');
+  drawer.classList.add('open');
 }
-// 重新执行当前查询（应用新参数）；空查询则回初始页
-function reRoam() {
-  const q = $('#q').value.trim();
-  if (q) roam(q, 'replace'); else renderHome();
+function closeDrawer() {
+  $('#drawer-overlay').classList.add('hidden');
+  drawer.classList.remove('open');
 }
+$('#drawer-overlay').onclick = closeDrawer;
+$('#drawer-close').onclick = closeDrawer;
 
-// ---- 显示版本 & 源信息（/api/config + /api/stats）----
+// ==========================================================================
+// 显示版本 & 源信息
+// ==========================================================================
 fetch('/api/config').then(r => r.json()).then(cfg => {
   initParams(cfg);
   if (cfg.version && $('#ver')) $('#ver').textContent = cfg.version;
-  if (cfg.source) $('#source').innerHTML = '<span class="tag">源</span> ' + esc(cfg.source) +
-    '<span class="tag">节点 ' + cfg.nodes + '</span><span class="tag">边 ' + cfg.edges + '</span>';
+  const line = $('#source');
+  if (cfg.source) {
+    line.dataset.source = cfg.source; line.dataset.nodes = cfg.nodes; line.dataset.edges = cfg.edges;
+    updateSourceLine();
+  }
 }).catch(() => {
-  // 降级：即便 config 失败也不阻塞，用默认值
   fetch('/api/stats').then(r => r.json()).then(s => {
     if (s.version && $('#ver')) $('#ver').textContent = s.version;
   }).catch(() => {});
 });
+applyStaticI18n();
 
 // ---- 漫游历史栈（与浏览器 history 同步）----
 let stack = [];
@@ -466,19 +573,12 @@ async function roam(query, mode, display) {
     const url = '/api/roam?q=' + encodeURIComponent(query) + (qs ? '&' + qs : '');
     const r = await fetch(url);
     d = await r.json();
-  } catch (e) {
-    $('#meta').textContent = '请求失败: ' + e.message;
-    return;
-  }
+  } catch (e) { $('#meta').textContent = t('reqFail') + ': ' + e.message; return; }
   $('#q').value = display || query;
-  if (display && mode === 'push') {
-    $('#meta').textContent = '从「' + display + '」继续漫游';
-  }
-
+  if (display && mode === 'push') $('#meta').textContent = t('roamFrom', { x: display });
   if (mode === 'push') {
     stack = stack.slice(0, pos + 1);
-    stack.push(query);
-    pos++;
+    stack.push(query); pos++;
     history.pushState({ q: query }, '', '?q=' + encodeURIComponent(query));
   } else if (mode === 'replace') {
     history.replaceState({ q: query }, '', '?q=' + encodeURIComponent(query));
@@ -487,81 +587,65 @@ async function roam(query, mode, display) {
   renderOutcome(d, query, false);
 }
 
-// 🎲 随机漫步（v0.1.7）：服务端 roll 随机起点 + 它的簇。
-// 不进历史栈——"随便逛逛"不该打断/污染回退路径；点簇内任意卡片即转入正常漫游。
 async function roamRandom() {
   let d;
   try {
     const qs = paramQS();
-    const url = '/api/roam?random=1' + (qs ? '&' + qs : '');
-    const r = await fetch(url);
+    const r = await fetch('/api/roam?random=1' + (qs ? '&' + qs : ''));
     d = await r.json();
-  } catch (e) {
-    $('#meta').textContent = '请求失败: ' + e.message;
-    return;
-  }
+  } catch (e) { $('#meta').textContent = t('reqFail') + ': ' + e.message; return; }
   const anchor = (d.anchors || [])[0];
   $('#q').value = anchor && anchor.title ? anchor.title : '';
-  $('#meta').textContent = '🎲 随机起点（再点 🎲 换一个；点卡片从该节点继续漫游）';
+  $('#meta').textContent = t('randomStart');
   renderOutcome(d, '', true);
 }
 
-// 渲染 roam 响应（锚点/降级/列表）。listMode=true 时空查询也渲染列表（随机漫步）。
 function renderOutcome(d, query, listMode) {
-  // ---- 锚点：按 match 级别降序、同级别按度降序，只显示前 5 个"重的" ----
   const anchors = (d.anchors || []).slice().sort((a, b) => (b.match - a.match) || (b.deg - a.deg));
   const shownA = anchors.slice(0, 5);
   $('#anchors').innerHTML = '';
   if (shownA.length) {
     $('#anchors').innerHTML = shownA.map(a =>
       `<span class="anchor" data-id="${esc(a.id)}" data-title="${esc(a.title)}"
-         title="点击从该节点继续漫游">${a.random ? '🎲 随机起点' : '锚'}: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
+         title="${t('roamFrom', { x: a.title })}">${a.random ? t('randomAnchor') : t('anchor')}: ${esc(a.title)} (${esc(a.type)})</span>`).join('');
     if (anchors.length > shownA.length) {
       const more = document.createElement('span');
       more.className = 'anchor more';
-      more.textContent = '… 共 ' + anchors.length + ' 个锚点';
+      more.textContent = t('moreAnchors', { n: anchors.length });
       $('#anchors').appendChild(more);
     }
   }
-
   $('#fallback').innerHTML = '';
-  if (d.fallback === 1) {
-    $('#fallback').innerHTML = '<div class="fallback">锚定失败 → 全文检索降级（搜索式）</div>';
-  } else if (d.fallback === 2) {
-    $('#fallback').innerHTML = '<div class="fallback">查询点无/少链接 → 全文检索降级</div>';
-  }
+  if (d.fallback === 1) $('#fallback').innerHTML = '<div class="fallback">' + t('fallbackSearch') + '</div>';
+  else if (d.fallback === 2) $('#fallback').innerHTML = '<div class="fallback">' + t('fallbackSparse') + '</div>';
 
   const list = $('#list');
   if (!query && !listMode) { renderHome(); return; }
-
   const cards = (d.results || []).concat((d.fallback_hits || []).map(h => ({
     id: h.id, title: h.title, type: h.type, hops: 0,
-    path: h.id, note: '全文命中 ' + h.count + ' 次'
+    path: h.id, note: t('hitCount', { n: h.count })
   })));
   if (!cards.length) {
     const isRandom = !!(d.anchors || [])[0] && d.anchors[0].random;
     if (d.fallback === 2) {
-      list.innerHTML = `<div class="deadend">⚠ 这个节点到头了
-        <div class="deadend-sub">它没有关联的节点——试试搜索其他关键词，或点左上角「⌂」回初始页</div></div>`;
+      list.innerHTML = `<div class="deadend">${t('deadend')}<div class="deadend-sub">${t('deadendSub')}</div></div>`;
     } else if (isRandom) {
-      list.innerHTML = '<div class="empty">🎲 这个节点比较安静，没有关联簇——再掷一次试试</div>';
+      list.innerHTML = '<div class="empty">' + t('quiet') + '</div>';
     } else {
-      list.innerHTML = '<div class="empty">无命中——库里没有相关内容</div>';
+      list.innerHTML = '<div class="empty">' + t('noResult') + '</div>';
     }
     return;
   }
   list.innerHTML = cards.map((c, i) => cardHTML(c, i)).join('');
 }
 
-// 深跳节点分数展示：score≤0 时 min-max 归一化后分数无区分度，
-// 显示 "score=0.000" 难看且误导 → 改用「深跳」标签（serendipity 机制本身保留）。
 function scoreLine(c) {
-  if (c.note) return c.note; // 全文降级命中
+  if (c.note) return c.note;
   const parts = [];
   if (c.score !== undefined && c.score > 0) parts.push('score ' + (+c.score).toFixed(3));
   if (c.ppr !== undefined && c.ppr > 0) parts.push('ppr ' + (+c.ppr).toFixed(4));
   if (c.act !== undefined && c.act > 0) parts.push('act ' + (+c.act).toFixed(3));
-  return parts.join(' · ') || '深跳';
+  return parts.join(' · ') || t('deep');
 }
 
 function cardHTML(c, i) {
@@ -569,11 +653,21 @@ function cardHTML(c, i) {
   const hopCls = c.hops === 1 ? 'hop-1' : c.hops === 2 ? 'hop-2' : c.hops >= 3 ? 'hop-3' : '';
   const hopLabel = c.hops ? c.hops + '-hop' : '';
   const hopEl = hopLabel
-    ? `<span class="hop ${hopCls}${isDeep && c.hops >= 3 ? ' deep' : ''}">${hopLabel}${isDeep && c.score <= 0 ? ' 深跳' : ''}</span>`
+    ? `<span class="hop ${hopCls}${isDeep && c.hops >= 3 ? ' deep' : ''}">${hopLabel}${isDeep && c.score <= 0 ? ' ' + t('deep') : ''}</span>`
     : '';
-  const openLink = c.uri ? `<a class="open" href="${esc(c.uri)}" onclick="event.stopPropagation()" title="在笔记软件中打开">打开 ↗</a>` : '';
-  return `<div class="card" data-id="${esc(c.id)}" data-title="${esc(c.title)}">
-    <div class="top">
+  const openLink = c.uri ? `<a class="open" data-uri="${esc(c.uri)}" data-id="${esc(c.id)}" href="${esc(c.uri)}" onclick="event.stopPropagation()" title="${t('open')}">${t('open')}</a>` : '';
+  // v0.1.12：.id 收敛为 title 悬停提示（不常显）；path 药丸链化、中间节点可点击续漫游。
+  // path 在 REST 里是数组（roamItem.Path []string），也可能为旧字符串，兼容两者。
+  const pathArr = Array.isArray(c.path) ? c.path
+    : (typeof c.path === 'string' && c.path ? c.path.split('→') : []);
+  const pathPills = pathArr.length > 1
+    ? `<div class="path">${pathArr.map(pid => {
+        const id = String(pid).trim();
+        return `<span class="rel-node path-node" data-id="${esc(id)}" data-title="${esc(id)}">${esc(id)}</span>`;
+      }).join('<span class="rel-arrow">→</span>')}</div>`
+    : (pathArr.length ? `<div class="path">${esc(pathArr.join('→'))}</div>` : '');
+  return `<div class="card" data-id="${esc(c.id)}" data-title="${esc(c.title)}" tabindex="0">
+    <div class="top" title="${esc(c.id)}">
       <span class="rank">${i + 1}</span>
       <span class="title">${esc(c.title)}</span>
       <span class="id">${esc(c.id)}</span>
@@ -581,53 +675,37 @@ function cardHTML(c, i) {
       ${hopEl}
       ${openLink}
     </div>
-    ${c.path ? `<div class="path">${esc(c.path)}</div>` : ''}
+    ${pathPills}
     <div class="scores">${esc(scoreLine(c))}</div>
     <div class="actions">
-      <button class="act" data-preview="${esc(c.id)}" onclick="event.stopPropagation(); showPreview(this.dataset.preview)">预览</button>
-      <button class="act" data-similar="${esc(c.id)}" onclick="event.stopPropagation(); showSimilar(this.dataset.similar)">相似</button>
+      <button class="act" data-preview="${esc(c.id)}" onclick="event.stopPropagation(); showPreview(this.dataset.preview)">${t('preview')}</button>
+      <button class="act" data-similar="${esc(c.id)}" onclick="event.stopPropagation(); showSimilar(this.dataset.similar)">${t('similar')}</button>
     </div>
   </div>`;
 }
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-// ---- 初始页：热门节点漂浮气泡 ----
+// ---- 初始页：静态热门节点标签云（v0.1.12，P0.5：移除漂浮气泡动画）----
 async function renderHome() {
   $('#list').innerHTML = `<div class="hero">
       <div class="hero-title">图谱<span class="accent">漫游</span></div>
-      <div class="hero-sub">你问一个点，它给你一片 —— 点击气泡开始漫游</div>
-      <div class="bubbles" id="bubbles"></div>
+      <div class="hero-sub">${t('hint').split('·')[0]}</div>
+      <div class="hot-tags" id="bubbles"></div>
     </div>`;
   $('#anchors').innerHTML = '';
   $('#meta').textContent = '';
   let hot = [];
-  try {
-    const r = await fetch('/api/hot?n=24');
-    hot = await r.json();
-  } catch (e) { hot = []; }
+  try { const r = await fetch('/api/hot?n=24'); hot = await r.json(); } catch (e) { hot = []; }
   const box = $('#bubbles');
   if (!box) return;
-  const pool = hot.slice().sort(() => Math.random() - 0.5).slice(0, 10);
-  if (!pool.length) {
-    box.innerHTML = '<div class="empty">库里还没有节点</div>';
-    return;
-  }
-  box.innerHTML = pool.map(b => {
-    const w = 84 + Math.random() * 60;
-    const style = 'left:' + (Math.random() * 82 + 5).toFixed(1) + '%;' +
-      'top:' + (Math.random() * 62 + 26).toFixed(1) + '%;' +
-      'width:' + w.toFixed(0) + 'px;' +
-      '--dx:' + (Math.random() * 60 - 30).toFixed(0) + 'px;' +
-      '--dy:' + (Math.random() * 40 - 20).toFixed(0) + 'px;' +
-      '--dur:' + (8 + Math.random() * 8).toFixed(1) + 's;' +
-      'animation-delay:' + (-Math.random() * 8).toFixed(1) + 's';
-    return `<div class="bubble type-${esc(b.type)}" data-id="${esc(b.id)}" data-title="${esc(b.title)}"
-        style="${style}" title="${esc(b.title)}">${esc(b.title)}</div>`;
-  }).join('');
+  const pool = hot.slice().sort(() => Math.random() - 0.5).slice(0, 16);
+  if (!pool.length) { box.innerHTML = '<div class="empty">' + t('noResult') + '</div>'; return; }
+  box.innerHTML = pool.map(b =>
+    `<span class="bubble type-${esc(b.type || 'note')}" data-id="${esc(b.id)}" data-title="${esc(b.title)}" title="${esc(b.title)}">${esc(b.title)}</span>`).join('');
 }
 
 // ---- 关系查询（/api/relation）----
@@ -635,105 +713,163 @@ async function queryRelation() {
   const from = $('#rel-from').value.trim();
   const to = $('#rel-to').value.trim();
   const box = $('#rel-result');
-  if (!from || !to) { box.innerHTML = '<div class="rel-empty">请输入两个节点名称或 ID</div>'; return; }
-  box.innerHTML = '<div class="loading">查询关系…</div>';
+  if (!from || !to) { box.innerHTML = '<div class="rel-empty">' + t('relEmpty') + '</div>'; return; }
+  box.innerHTML = '<div class="loading">' + t('loading') + '</div>';
   try {
     const r = await fetch('/api/relation?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
     const d = await r.json();
     if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
-    // 最短路径 + 双向 PPR 强度 + 激活值（white-box）
     let pathHtml = '';
-    const path = d.path || [];
-    const pathNodes = d.path_nodes || [];
+    const path = d.path || [], pathNodes = d.path_nodes || [];
     if (Array.isArray(path) && path.length) {
-      // 优先用 path_nodes 的标题（web 层补全），否则退回 ID
-      const frags = path.map((id, idx) => {
+      const frags = path.map(id => {
         const pn = pathNodes.find(n => n.id === id);
         const title = pn ? pn.title : id;
         return `<span class="rel-node" data-id="${esc(id)}" data-title="${esc(title)}">${esc(title)}</span>`;
       });
       pathHtml = '<div class="rel-path">' + frags.join('<span class="rel-arrow">→</span>') + '</div>';
-    } else {
-      pathHtml = '<div class="rel-empty">未找到连通路径</div>';
-    }
+    } else { pathHtml = '<div class="rel-empty">' + t('relNoPath') + '</div>'; }
     const stats = [];
     if (d.affinity !== undefined) stats.push('affinity ' + (+d.affinity).toFixed(4));
-    if (d.activation !== undefined) stats.push('激活 ' + (+d.activation).toFixed(3) + (d.hops >= 0 ? ' (' + d.hops + '-hop)' : ''));
+    if (d.activation !== undefined) stats.push(t('relStats') + ' ' + (+d.activation).toFixed(3) + (d.hops >= 0 ? ' (' + d.hops + '-hop)' : ''));
     if (d.ppr_from_to !== undefined) stats.push('ppr→ ' + (+d.ppr_from_to).toFixed(4));
     if (d.ppr_to_from !== undefined) stats.push('ppr← ' + (+d.ppr_to_from).toFixed(4));
     const evi = (d.evidence || []).map(ev => (ev.witnesses || []).join('、')).filter(Boolean);
     box.innerHTML = pathHtml +
       (stats.length ? '<div class="rel-stats">' + stats.join(' · ') + '</div>' : '') +
-      (evi.length ? '<div class="rel-stats">证据: ' + esc(evi.join('；')) + '</div>' : '');
-  } catch (e) {
-    box.innerHTML = '<div class="rel-empty">查询失败: ' + esc(e.message) + '</div>';
-  }
+      (evi.length ? '<div class="rel-stats">' + t('relEvidence') + ': ' + esc(evi.join('；')) + '</div>' : '');
+  } catch (e) { box.innerHTML = '<div class="rel-empty">' + t('relFail') + ': ' + esc(e.message) + '</div>'; }
 }
 
-// ---- 节点详情预览（v0.1.11，前端 #3）：点卡片「预览」看 /api/node ----
+// ---- 节点详情预览（/api/node）----
 async function showPreview(id) {
   let d;
   try {
     const r = await fetch('/api/node?id=' + encodeURIComponent(id));
     d = await r.json();
     if (d.error) throw new Error(d.error);
-  } catch (e) {
-    return alert('详情失败: ' + e.message);
-  }
+  } catch (e) { return alert(t('detailFail') + ': ' + e.message); }
   const overlay = document.createElement('div');
   overlay.className = 'detail-overlay';
-  const nb = (d.neighbors || []).map(n =>
-    `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
-  const bl = (d.backlinks || []).map(n =>
-    `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
+  const nb = (d.neighbors || []).map(n => `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
+  const bl = (d.backlinks || []).map(n => `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
   overlay.innerHTML = `<div class="detail-card" onclick="event.stopPropagation()">
-    <div class="dhead">
-      <span class="dtitle">${esc(d.title || d.id)}</span>
+    <div class="dhead"><span class="dtitle">${esc(d.title || d.id)}</span>
       <span class="dtype">${esc(d.type || '')}</span>
-      <span class="dclose" title="关闭">✕</span>
-    </div>
-    <div class="dmeta">id: ${esc(d.id)}${d.deg !== undefined ? ' · 度 ' + d.deg : ''}</div>
-    <div class="dtext">${esc(d.text || '（无正文摘要）')}</div>
-    <div class="dsec">邻居（${(d.neighbors || []).length}）</div>
-    ${nb || '<div class="dempty">无邻居</div>'}
-    <div class="dsec">被引用（${(d.backlinks || []).length}）</div>
-    ${bl || '<div class="dempty">无被引用</div>'}
+      <button class="dclose" title="close">✕</button></div>
+    <div class="dmeta">id: ${esc(d.id)}${d.deg !== undefined ? ' · ' + t('deg') + ' ' + d.deg : ''}</div>
+    <div class="dtext">${esc(d.text || t('previewTextNone'))}</div>
+    <div class="dsec">${t('neighbors')}（${(d.neighbors || []).length}）</div>
+    ${nb || `<div class="dempty">${t('noNeighbors')}</div>`}
+    <div class="dsec">${t('backlinks')}（${(d.backlinks || []).length}）</div>
+    ${bl || `<div class="dempty">${t('noBacklinks')}</div>`}
   </div>`;
   overlay.addEventListener('click', () => overlay.remove());
   overlay.querySelector('.dclose').onclick = () => overlay.remove();
-  // 邻居/被引用点击 → 从该节点继续漫游 + 关闭详情
   overlay.querySelectorAll('.dnod').forEach(n => {
     n.onclick = () => { overlay.remove(); roam(n.dataset.id, 'push', n.dataset.title || n.dataset.id); };
   });
   document.body.appendChild(overlay);
 }
 
-// ---- 结构相似（v0.1.11，backlog §3.1）：卡片「相似」→ 折叠面板 ----
+// ---- 结构相似（/api/similar）→ 抽屉 ----
 async function showSimilar(id) {
-  openOnly('#sim-panel');
+  openDrawer(t('simTitle'), `<div class="cfg-head"><span>${t('simTitle')} <small style="color:var(--muted);font-weight:400">${t('simSub')}</small></span></div><div id="sim-result" class="rel-result"></div>`);
   const box = $('#sim-result');
-  box.innerHTML = '<div class="loading">查询相似…</div>';
+  if (!box) return;
+  box.innerHTML = '<div class="loading">' + t('simLoading') + '</div>';
   try {
     const r = await fetch('/api/similar?id=' + encodeURIComponent(id) + '&k=12');
     const d = await r.json();
     if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
     const list = d.results || [];
-    if (!list.length) { box.innerHTML = '<div class="rel-empty">没有相似节点</div>'; return; }
+    if (!list.length) { box.innerHTML = '<div class="rel-empty">' + t('simEmpty') + '</div>'; return; }
     box.innerHTML = list.map(s => {
-      let title = s.title || s.id;
-      // 显示当前查询节点标题为上下文
+      const title = s.title || s.id;
       const evi = (s.shared_titles || []).slice(0, 4).join('、');
       return `<div class="sim-item" data-id="${esc(s.id)}" data-title="${esc(title)}">
         <span>${esc(title)} <small style="color:var(--muted)">[${esc(s.type)}]</small></span>
-        <span class="evi">${esc(evi ? '直连: ' + evi : '')}</span>
+        <span class="evi">${esc(evi ? t('simDirect') + ': ' + evi : '')}</span>
       </div>`;
     }).join('');
-  } catch (e) {
-    box.innerHTML = '<div class="rel-empty">查询失败: ' + esc(e.message) + '</div>';
-  }
+  } catch (e) { box.innerHTML = '<div class="rel-empty">' + t('simFail') + ': ' + esc(e.message) + '</div>'; }
 }
 
-// ---- 导出当前漫游为 Markdown（v0.1.11，backlog §3.2）----
+// ---- 反馈统计（/api/touch/stats）→ 抽屉 ----
+async function showStats() {
+  openDrawer(t('statTitle'), `<div class="cfg-head"><span>${t('statTitle')} <small style="color:var(--muted);font-weight:400">${t('statSub')}</small></span></div><div id="stat-result"></div>`);
+  const box = $('#stat-result');
+  if (!box) return;
+  box.innerHTML = '<div class="loading">' + t('statLoading') + '</div>';
+  try {
+    const r = await fetch('/api/touch/stats?n=10');
+    const d = await r.json();
+    if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
+    const tag = x => `<span class="stat-tag">${esc(x.id)} <b>${x.count}</b></span>`;
+    const targets = (d.targets || []).map(tag).join('') || `<span style="color:var(--muted)">${t('statNoData')}</span>`;
+    const sources = (d.sources || []).map(tag).join('') || `<span style="color:var(--muted)">${t('statNoData')}</span>`;
+    box.innerHTML =
+      `<div class="stat-line">${t('statTotal')}：<b>${d.total || 0}</b></div>` +
+      `<div class="stat-line">${t('statTargets')}：</div><div>${targets}</div>` +
+      `<div class="stat-line">${t('statSources')}：</div><div>${sources}</div>` +
+      `<div style="color:var(--muted);font-size:11.5px;margin-top:8px">${t('statFoot')}</div>`;
+  } catch (e) { box.innerHTML = '<div class="rel-empty">' + t('statFail') + ': ' + esc(e.message) + '</div>'; }
+}
+
+// ---- 参数抽屉 ----
+function renderCfg() {
+  const box = $('#drawer-body');
+  // 参数内容只在 cfg 抽屉打开时渲染；这里操作 #cfg-fields（如存在）
+  const grid = $('#cfg-fields');
+  if (!grid) return;
+  const groups = {};
+  for (const d of paramDefs) (groups[d.group || '其他'] = groups[d.group || '其他'] || []).push(d);
+  let html = '';
+  for (const g of Object.keys(groups)) {
+    html += '<div class="cfg-group-label">' + esc(g) + '</div><div class="cfg-grid">';
+    for (const d of groups[g]) {
+      const v = params[d.key];
+      const val = d.type === 'int' ? Math.round(v) : (+v).toFixed(d.step < 0.05 ? 2 : 1);
+      html += '<div class="cfg-field"><div class="row"><span class="lbl">' + esc(d.label) + '</span>' +
+        '<span class="val" id="cfg-val-' + esc(d.key) + '">' + val + '</span></div>' +
+        '<input type="range" min="' + d.min + '" max="' + d.max + '" step="' + d.step +
+        '" value="' + v + '" data-key="' + esc(d.key) + '">' +
+        '<span class="hint">' + esc(d.hint || '') + '</span></div>';
+    }
+    html += '</div>';
+  }
+  grid.innerHTML = html;
+  $$('#cfg-fields input[type=range]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const d = defFor(inp.dataset.key);
+      const v = d.type === 'int' ? Math.round(+inp.value) : +inp.value;
+      params[inp.dataset.key] = v;
+      const el = $('#cfg-val-' + inp.dataset.key);
+      if (el) el.textContent = d.type === 'int' ? v : (+v).toFixed(d.step < 0.05 ? 2 : 1);
+      saveParams();
+      reRoamDebounced();
+    });
+  });
+}
+function defFor(key) { return paramDefs.find(d => d.key === key); }
+function openSettings() {
+  const groups = {};
+  for (const d of paramDefs) (groups[d.group || '其他'] = groups[d.group || '其他'] || []).push(d);
+  const grid = '<div id="cfg-fields"></div>';
+  openDrawer(t('cfgTitle2'), `<div class="cfg-head"><span>${t('cfgTitle2')}</span><button id="cfg-reset" class="btn ghost sm">${t('cfgReset')}</button></div>${grid}`);
+  renderCfg();
+  $('#cfg-reset').onclick = resetParams;
+}
+function resetParams() {
+  for (const d of paramDefs) params[d.key] = +d.default;
+  saveParams(); renderCfg(); reRoam();
+}
+
+let reRoamTimer = null;
+function reRoamDebounced() { clearTimeout(reRoamTimer); reRoamTimer = setTimeout(reRoam, 350); }
+function reRoam() { const q = $('#q').value.trim(); if (q) roam(q, 'replace'); else renderHome(); }
+
+// ---- 导出当前漫游为 Markdown（/api/roam?export=1）----
 function exportMarkdown() {
   const q = $('#q').value.trim();
   let url = '/api/roam?export=1' + (q ? '&q=' + encodeURIComponent(q) : '');
@@ -741,42 +877,13 @@ function exportMarkdown() {
   if (qs) url += '&' + qs;
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'serendipity-roam.md';
+  a.download = t('exportName');
   document.body.appendChild(a);
-  a.click();
-  a.remove();
+  a.click(); a.remove();
 }
 
-// ---- 反馈统计（v0.1.11，backlog §3.3）：只读展示 ----
-async function showStats() {
-  openOnly('#stat-panel');
-  const box = $('#stat-result');
-  box.innerHTML = '<div class="loading">读取统计…</div>';
-  try {
-    const r = await fetch('/api/touch/stats?n=10');
-    const d = await r.json();
-    if (d.error) { box.innerHTML = '<div class="rel-empty">' + esc(d.error) + '</div>'; return; }
-    const tag = (x) => `<span class="stat-tag">${esc(x.id)} <b>${x.count}</b></span>`;
-    const targets = (d.targets || []).map(tag).join('') || '<span style="color:var(--muted)">无数据</span>';
-    const sources = (d.sources || []).map(tag).join('') || '<span style="color:var(--muted)">无数据</span>';
-    box.innerHTML =
-      `<div class="stat-line">总点击：<b>${d.total || 0}</b> 次</div>` +
-      `<div class="stat-line">被反复点击：</div><div>${targets}</div>` +
-      `<div class="stat-line">点击来源：</div><div>${sources}</div>` +
-      `<div style="color:var(--muted);font-size:11.5px;margin-top:8px">仅记录与只读统计，不参与排序（红线）</div>`;
-  } catch (e) {
-    box.innerHTML = '<div class="rel-empty">统计失败: ' + esc(e.message) + '</div>';
-  }
-}
-
-// ---- 回到初始页 ----
-function goHome() {
-  stack = [''];
-  pos = 0;
-  roam('', 'replace');
-}
-
-// 浏览器前进/后退
+// ---- 回到初始页 / 浏览器历史 ----
+function goHome() { stack = ['']; pos = 0; roam('', 'replace'); }
 window.addEventListener('popstate', e => {
   const q = (e.state && e.state.q) || '';
   if (pos > 0 && stack[pos - 1] === q) { pos--; }
@@ -787,24 +894,19 @@ window.addEventListener('popstate', e => {
 
 // ---- 事件委托：卡片 / 气泡 / 锚点 / 关系节点 / 相似项 统一点击 ----
 document.addEventListener('click', e => {
-  if (e.target.closest('a')) return; // 「打开 ↗」链接不拦截
+  if (e.target.closest('a.open')) return; // 「打开 ↗」走 openNode（桥或外链）
   const rel = e.target.closest('.rel-node');
   if (rel && rel.dataset.id) {
-    // 关系节点点击 → 填入"从"并漫游
-    $('#rel-from').value = rel.dataset.title || rel.dataset.id;
+    $('#rel-from') && ($('#rel-from').value = rel.dataset.title || rel.dataset.id);
     $('#q').value = rel.dataset.title || rel.dataset.id;
     roam(rel.dataset.id, 'push', rel.dataset.title || rel.dataset.id);
     return;
   }
-  // 相似面板项点击（v0.1.11）
   const si = e.target.closest('.sim-item');
-  if (si && si.dataset.id) {
-    roam(si.dataset.id, 'push', si.dataset.title || si.dataset.id);
-    return;
-  }
+  if (si && si.dataset.id) { roam(si.dataset.id, 'push', si.dataset.title || si.dataset.id); return; }
   const el = e.target.closest('.card, .bubble, #anchors .anchor[data-id]');
   if (el && el.dataset.id) {
-    $('#meta').textContent = '漫游中: ' + (el.dataset.title || el.title) + ' …';
+    $('#meta').textContent = t('roaming', { x: el.dataset.title || el.title });
     fetch('/api/touch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: el.dataset.id, from: $('#q').value || '' })
@@ -813,25 +915,39 @@ document.addEventListener('click', e => {
   }
 });
 
-// ---- 自动监听提示（轮询 stats 对比 revision）----
+// 「打开 ↗」：嵌入时 postMessage 桥，否则外链
+document.addEventListener('click', e => {
+  const o = e.target.closest('a.open');
+  if (!o) return;
+  e.preventDefault();
+  openNode(o.dataset.uri, o.dataset.id);
+});
+
+// ---- 自动监听提示 + is_pending 提示条（轮询 /api/stats，roadmap #14）----
 let lastRevision = null;
-setInterval(async () => {
+async function pollStats() {
   try {
     const s = await (await fetch('/api/stats')).json();
+    if (s.is_pending) {
+      const b = $('#pending-banner');
+      if (b) { b.classList.remove('hidden'); $('#pending-text').textContent = t('pendingText'); }
+    } else {
+      const b = $('#pending-banner');
+      if (b) b.classList.add('hidden');
+    }
     if (lastRevision === null) { lastRevision = s.revision || 0; return; }
     if ((s.revision || 0) !== lastRevision) {
       lastRevision = s.revision || 0;
       const m = $('#meta');
-      if (m) m.textContent = '库已自动更新（节点 ' + s.nodes + '）——点击任意卡片可看最新，或点 ↻ 查看明细';
+      if (m) m.textContent = t('updated', { n: s.nodes });
     }
   } catch (e) { /* 轮询失败静默 */ }
-}, 30000);
+}
+setInterval(pollStats, 30000);
+$('#pending-refresh').onclick = () => $('#refresh').click();
 
 // ---- 页面 JS 错误可见 ----
-window.addEventListener('error', e => {
-  const m = $('#meta');
-  if (m) m.textContent = '页面错误: ' + (e.message || 'unknown');
-});
+window.addEventListener('error', e => { const m = $('#meta'); if (m) m.textContent = t('pageErr') + ': ' + (e.message || 'unknown'); });
 
 // ---- 交互绑定 ----
 $('#back').onclick = () => { if (pos > 0) history.back(); };
@@ -840,69 +956,59 @@ $('#brand').onclick = goHome;
 $('#go').onclick = () => { const q = $('#q').value.trim(); if (q) roam(q, 'push'); };
 $('#dice').onclick = roamRandom;
 $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
-$('#rel-go').onclick = queryRelation;
-$('#rel-from').addEventListener('keydown', e => { if (e.key === 'Enter') queryRelation(); });
-$('#rel-to').addEventListener('keydown', e => { if (e.key === 'Enter') queryRelation(); });
-$('#cfg-reset').onclick = resetParams;
-
-function toggle(id, btn) {
-  const el = $(id);
-  const on = el.classList.toggle('hidden');
-  if (btn && on) { btn.classList.add('active'); } else if (btn) { btn.classList.remove('active'); }
-  // 同时只开一个面板，避免页面堆叠
-  if (!el.classList.contains('hidden')) {
-    ['#rel-panel', '#cfg-panel', '#sim-panel', '#stat-panel'].forEach(o => {
-      if (o !== id) $(o).classList.add('hidden');
-    });
-  }
-}
-// openOnly：直接打开指定面板并关掉其它（相似/统计按钮不需要"再点一次关闭"逻辑用）
-function openOnly(id) {
-  ['#rel-panel', '#cfg-panel', '#sim-panel', '#stat-panel'].forEach(o => {
-    $(o).classList.add('hidden');
-  });
-  $(id).classList.remove('hidden');
-}
-$('#rel-toggle').onclick = () => toggle('#rel-panel');
-$('#cfg-toggle').onclick = () => toggle('#cfg-panel');
-// 统计/相似按钮点击 → 打开面板并加载数据（showStats/showSimilar 内部通过 openOnly
-// 打开面板并关掉其它——只开一个，避免与 toggle 的开关语义打架）
-$('#stat-toggle').onclick = () => showStats();
-$('#sim-close').onclick = () => $('#sim-panel').classList.add('hidden');
-$('#stat-close').onclick = () => $('#stat-panel').classList.add('hidden');
+$('#rel-toggle').onclick = () => openDrawer(t('relTitle'), `
+  <div class="rel-inputs"><input id="rel-from" placeholder="${t('relFromPh')}"><span class="rel-x">↔</span>
+    <input id="rel-to" placeholder="${t('relToPh')}"><button id="rel-go" class="btn primary">${t('relGo')}</button></div>
+  <div id="rel-result" class="rel-result"></div>`);
+$('#cfg-toggle').onclick = openSettings;
+$('#stat-toggle').onclick = showStats;
 $('#export').onclick = exportMarkdown;
 
-// ---- 对账刷新 ----
+// 关系抽屉内绑定（每次打开重建，需重新绑定）
+document.addEventListener('click', e => {
+  if (e.target.id === 'rel-go') {
+    const ef = $('#rel-from'), et = $('#rel-to');
+    const f = ef.value.trim(), to = et.value.trim();
+    if (f && to) queryRelation(); else $('#rel-result').innerHTML = '<div class="rel-empty">' + t('relEmpty') + '</div>';
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.target.id === 'rel-from' || e.target.id === 'rel-to')) queryRelation();
+});
+
+// ---- 对账刷新（POST /api/refresh）----
 $('#refresh').onclick = async () => {
   const btn = $('#refresh');
   btn.disabled = true;
   const hint = $('#meta');
-  hint.textContent = '刷新中…';
+  hint.textContent = t('refreshing');
   try {
     const r = await fetch('/api/refresh', { method: 'POST' });
     const d = await r.json();
-    if (d.error) { hint.textContent = '刷新失败: ' + d.error; return; }
-    hint.textContent = '已刷新: 新增 ' + d.added + ' · 更新 ' + d.updated +
-      ' · 删除 ' + d.deleted + ' · 改名 ' + (d.renamed || 0) + ' · 未变 ' + d.unchanged +
-      '（' + d.duration_ms + 'ms，节点 ' + d.nodes + '）';
-    // 刷新后源信息可能变化
+    if (d.error) { hint.textContent = t('refreshFail') + ': ' + d.error; return; }
+    hint.textContent = t('refreshDone', {
+      a: d.added, u: d.updated, d: d.deleted, r: (d.renamed || 0), c: d.unchanged,
+      ms: d.duration_ms, n: d.nodes
+    });
     fetch('/api/config').then(r => r.json()).then(c => {
-      if (c.source) $('#source').innerHTML = '<span class="tag">源</span> ' + esc(c.source) +
-        '<span class="tag">节点 ' + c.nodes + '</span><span class="tag">边 ' + c.edges + '</span>';
+      const line = $('#source');
+      if (c.source) { line.dataset.source = c.source; line.dataset.nodes = c.nodes; line.dataset.edges = c.edges; updateSourceLine(); }
     }).catch(() => {});
     const q = $('#q').value.trim();
     if (q) roam(q, 'replace'); else renderHome();
-  } catch (e) {
-    hint.textContent = '刷新失败: ' + e.message;
-  } finally {
-    btn.disabled = false;
-  }
+  } catch (e) { hint.textContent = t('refreshFail') + ': ' + e.message; }
+  finally { btn.disabled = false; }
 };
 
-// 初始：把初始状态入栈
+// ---- 键盘导航简版（v0.1.12）：/ 聚焦搜索，Esc 关抽屉/浮层 ----
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
+  else if (e.key === 'Escape') { closeDrawer(); }
+});
+
+// 初始：把当前状态入栈
 const initQ = new URLSearchParams(location.search).get('q') || '';
-stack = [initQ];
-pos = 0;
+stack = [initQ]; pos = 0;
 roam(initQ, 'replace');
 </script>
 </body>
