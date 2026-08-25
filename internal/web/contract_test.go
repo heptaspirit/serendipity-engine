@@ -69,6 +69,7 @@ func TestEndpointJSONContract(t *testing.T) {
 		{"GET", "/api/roam?random=1&seed=42", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
 		{"GET", "/api/relation?from=Alpha&to=Beta", []string{"path", "path_nodes", "affinity"}},
 		{"GET", "/api/similar?id=Alpha", []string{"id", "results"}},
+		{"GET", "/api/suggest-links?k=10", []string{"count", "results"}},
 		{"GET", "/api/node?id=Beta", []string{"id", "title", "type", "text", "deg", "neighbors", "backlinks"}},
 		{"GET", "/api/communities?seed=42", []string{"modularity", "community_count", "membership", "communities"}},
 		{"GET", "/api/hot?n=10", nil},

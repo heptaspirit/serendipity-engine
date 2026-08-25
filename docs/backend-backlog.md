@@ -45,6 +45,62 @@
 
 **〔2026-08-23 外部验证〕Store 增量写获 Graphiti（Zep 时序知识图谱）印证**——其「增量 episode 摄入」机制（新数据只动它触及的实体/边，不批量重算）正是本 backlog「增量 vs 全量对账」的成熟实现参考。见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.3。
 
+### 二.1 存储层选型：SQLite → bbolt（2026-08-24 已定，✅ v0.1.13 已落地）
+
+> **决策**：把 `modernc.org/sqlite` 换成 `go.etcd.io/bbolt`（MIT，etcd 团队维护的 BoltDB 活跃 fork，Kubernetes 全集群状态生产验证）。用户拍板"收益明确，何乐而不为"。
+> **状态（v0.1.13，2026-08-25）**：✅ 已落地——`store.go` 整体换 bbolt v1.5.0（四个 bucket：docs/links/touch/renames），签名保持、调用点零改动；无迁移（旧 `.sqlite` 直接删，refresh 重建）；端到端验证通过（真实 vault 150 文档 + 幂等刷新「未变 150」+ roam 回读）。现代编译从分钟级 → 秒级。**注意**：`modernc.org/sqlite` 仍留在依赖中——`internal/adapter/orca.go` 用它解析虎鲸活库快照（源数据读取，与 store 持久化无关）。
+
+- **为什么值得换（seren 的 SQLite 是「伪关系型」，SQL 能力没用足）**：
+  - 四张表实际用法全是 KV 语义：documents（全量快照 id→Document）/ links（有向行 a\x00b→1.0）/ touch（自增事件流+5000 截断）/ renames（映射 old→new）——bbolt 四个 bucket 一一映射，比关系模型更自然
+  - 唯一"SQL 味"的 TouchStats（GROUP BY）对 5000 条事件，内存遍历毫秒级即可替代
+  - **编译时间**：modernc 是 C→Go 翻译（生成代码百万行级），`go build` 分钟级地狱；bbolt 原生 Go 秒级
+  - **二进制体积 / 哲学纯度**：modernc 驱动几 MB 且是"纯 Go 零依赖"里最不纯的一块（C 翻译）；bbolt 是 etcd 官方原生库
+- **为什么代价可控（关键红利）**：
+  - **无迁移负担**——SQLite 存的是派生快照（源数据 = vault，源数据权威原则），换 bbolt 后旧 sqlite 直接删，下次 refresh 重建
+  - **侵入面 = internal/store 包内**——Save/Load/AppendTouch/TouchStats/LoadRenames 等签名保持（它们不暴露 SQL 类型），sync/web/mcp/cmd 调用点零改动
+  - bbolt 写事务串行（单写者）——seren 单进程无并发写者，天然适配
+- **bucket 布局**：`docs`（id→docRow JSON，去 Refs）/ `links`（a\x00b→1.0）/ `touch`（seq→{ts,target,src}，cursor 截断 5000）/ `renames`（old→new）
+- **注意点**：touch 截断语义保持（删最旧）；幽灵 touch 过滤改为遍历时查 docs bucket 存在性（O(1)，P5）；DBPath 语义保持（<vault>/.serendipity/db-<hash>，扩展名已定为 **.bbolt**）
+- **与 gonum 无关**：bbolt 是存储层接受，不构成"算法框架层"（gonum）也接受的依据——见 agent-memory-research.md D.4.2/D.4.3 边界澄清
+- **时机**：✅ 已落地（v0.1.13，2026-08-25），2 阶段（插件薄壳）开始前的基础设施收尾完成；roadmap #16
+
+### 二.2 bbolt 解锁的有趣能力（候选，非承诺，2026-08-25 梳理）
+
+bbolt 不是"更轻的 SQLite"——它的三个硬特性（**零 schema / COW 多版本 / 单文件纯 Go 可嵌入**）解锁的是 SQLite 不擅长、但契合 serendipity 精神（漫游 / 探索 / 白盒 / 离线）的能力。下面按"工程优化"与"有趣"两档列候选，**#16 落地后再评估排期**，不在 M1/M2 阻塞项内。对**已有端点**的性能 / 准确性增强（增量写、PPR 缓存、TextSearch 索引、幽灵过滤 O(1) 等）已单列精确映射至 **§二.3**。
+
+**A. 工程优化（顺手可得，几乎免费）**
+1. **真·增量写（v1.5 优化自然落地）**：当前 `Save` 全量 `DELETE+INSERT`（幂等但 O(N)）。bbolt 单写者 + 逐 key `Put`，可只写变更文档/边——大库 refresh 从"全量重写"变"差量落盘"，秒级→亚秒；无需 schema 迁移（建 bucket 零成本）。
+2. **幽灵过滤 O(1)**：touch/链接指向已删节点，bbolt 用 `bucket.Has(id)` 一次命中，替代现在 SQLite 的 `IN (SELECT id FROM documents)` 子查询。dead-link 检测从此零成本——可升格为"知识缺口 / 断链"一等功能。
+3. **PPR / 激活结果缓存**：per-node 缓存 keyed `(node, paramHash)` 落 bucket，roam 首算后"瞬时"回访；参数变才失效。白盒可解释性不变（缓存只加速，不污染算法）。
+
+**B. 有趣（bbolt 独有、契合漫游精神）**
+4. **图谱时间旅行（版本化快照）**：bbolt 的 COW 天然适合存多版本——每次 refresh 把图状态（docs/links/潜在关联）快照进 `snap-<ts>` bucket。用户可"回到上周的图谱"，看某条潜在关联是何时浮现、哪些边是 AI 后来加的。探索的"成长史"成为可回看的对象。
+5. **探索日志 / 偶遇时刻（append-only event log）**：touch 已是事件流，bbolt 顺序键 append 超顺——把它升格为完整"探索日志"：记录每次漫游起点、走过的路径、点击的节点。由此生成"本周你探索了哪些角落""两篇看似无关的笔记其实通过 N 跳相连（**偶遇时刻**）"。这是 serendipity 字面意义的"奇遇记"。
+6. **离线优先的插件侧缓存 / AI 边 sidecar**：bbolt 纯 Go 可嵌入——插件不再依赖外部 JSON 文件存 AI 确认边，而可携一个微型 bbolt 库（`<vault>/.serendipity-ai/links.bbolt`），离线、原子、可被引擎开机探活。AI 边与引擎派生图彻底解耦又便携（呼应 plugin-ai-cooperation.md 的 sidecar 方案）。
+7. **跨库元索引（multi-vault）**：引擎已支持多 vault，bbolt 单文件可移植——建中心 `index` bucket 映射 `node→vault`，让漫游跨越多个笔记库形成统一知识网（"我在 A 库写的 X 和 B 库写的 Y 其实是同一主题"）。
+8. **What-if 实验图（fork 即建桶）**：建 bucket 零成本——用户可 fork 当前图、套用 AI 建议边、对比"加之前 vs 加之后"的漫游差异，满意再 commit 回主图。把"AI 补图"从黑箱变成可 A/B 的实验。
+
+**C. 边界（别过度）**
+- bbolt 无查询语言：`TextSearch`（前缀/模糊搜）可借 bucket 有序键自建索引，但复杂全文检索仍别硬上（必要时外挂）。
+- 上述均不引入新算法依赖，符合"组件即插即用、不引入框架"的边界（§二.1 末）。
+
+### 二.3 bbolt 对已有能力的性能 / 准确性增强（候选，依赖 #16，2026-08-25）
+
+下列**不是新功能**，而是让已上线的 11 个端点更快 / 更准。每一项对应一个具体现有能力，bbolt 的硬特性（零 schema / mmap / MVCC / 有序键 / O(1) Has）是其前提。**#16 落地后评估排期，均为 ⏸ 可选。** 与 §二.2 的关系：本节 = **增强已有能力**（用户可感知的性能 / 准确性，优先级更高）；§二.2 B = **净新增有趣能力**（时间旅行 / 探索日志等）。
+
+| # | 增强对象（现有能力） | bbolt 机制 | 效果（before → after） | 状态 |
+|---|---|---|---|---|
+| P1 | `/api/refresh` 全量写（`Save` DELETE+INSERT，O(N)） | 单写者 + 逐 key `Put`，diff 只写变更文档/边 | refresh 成本随**变化量**而非总量 → 大库秒级→亚秒，watch 频繁刷新更顺 | ✅ v0.1.13（差值 Put/Delete，重复 Save 零写入；实测幂等刷新「未变 150」零写） |
+| P2 | 启动 `Load` / 每次 refresh 开库 | mmap 内存映射，无 WAL 恢复、无 SQL 解析 | 开库/加载更快；serve 启动更轻 | ✅ v0.1.13（bbolt 原生 mmap；AppendTouch 高频路径 NoSync） |
+| P3 | `/api/roam`、`/api/relation` 的 PPR（每次调用从零迭代） | `ppr` bucket 缓存 `PPR(node, paramsHash)` | 同锚点/同参数重复查询瞬时；首次仍走算法，白盒不变 | ⏸ 可选（graph 层改造，等规模信号） |
+| P4 | `/api/similar` 的 Adamic-Adar（每次 O(邻居²)） | `similar` bucket 缓存 `AA(node)` | 重复查同节点相似瞬时；证据/排除逻辑不变 | ⏸ 可选（graph 层改造，等规模信号） |
+| P5 | `/api/touch/stats` 幽灵过滤（`IN (SELECT id FROM documents)` 子查询 join） | `bucket.Has(id)` O(1) | 5000 行聚合免 join；幽灵过滤零成本，热度榜更稳 | ✅ v0.1.13（docs bucket 存在性判断替代 SQL join） |
+| P6 | `/api/stats` 悬空链接计算（`graph.Build` 逐边查存在性） | 链接目标存在性 `bucket.Has` O(1) | dangling 计算更快；可给**完整**明细（非截断 50），断链诊断更准 | ⏸ 可选（graph.Build 内存态，当前无瓶颈） |
+| P7 | `graph.TextSearch`（漫游 `q` / fallback 的全文扫描，O(N) 内存扫） | bbolt 有序键建 `idx` bucket（token/前缀 → nodeIDs） | 前缀/子串检索瞬时；支撑搜索框 autocomplete，不再每次扫全库正文 | ⏸ 可选（graph 层改造，等规模信号） |
+| P8 | serve-while-refresh（`is_pending` 自动刷新时仍服务） | MVCC：刷新写事务与漫游读事务互不阻塞，读见一致快照 | 刷新不再短暂阻塞读；大库自动刷新体验更顺 | ✅ 内存层已有（server.go RWMutex 换图，读接口持 RLock 不阻塞）；bbolt MVCC 无额外收益 |
+
+> 说明：P1–P2 属"存储层自身提速"；P3–P4 属"算法结果缓存"（缓存只加速、不污染白盒）；P5–P6 属"存在性查询 O(1)"（顺带让 dangling 从截断升级为完整）；P7 属"索引提速已有搜索"；P8 属"并发读不阻塞"。均不新增算法依赖。
+
 ## 三、功能缺口
 
 ### 3.1 结构相似节点（similar）—— 最高价值
@@ -91,22 +147,53 @@
 - **watch 排除同源**（缺口③）：`watch.NewVaultChecker` 现同时接受画像 `ExcludedDirs`（目录）与 `ExcludedFiles`（文件名）——与 ParseVault 排除同源，raw/（及 index.md/log.md）变化不再无效触发刷新。
 - **边界（诚实声明）**：wiki/ 页面是 LLM 写的，进图 = 接受「二手编译内容」（链接仍真实，内容可信度降级）；`index.md` 排除**必须**通过显式画像启用，绝不进默认画像（Obsidian 用户常拿 index.md 做 MOC，文件名相同无法区分手写 vs LLM 生成）；raw/ 整体不扫（含其中 .md）——零新增解析能力，只认 wiki/ 里的 markdown。
 
-### 3.6 mentions API（虚拟引用 / 未链接提及，2026-08-24 讨论，可选做）
+### 3.6 潜在关联（restrained approximate edges；用户向名，内部沿用「近似边 / kind=approx」，2026-08-25 重新定调）
 
-- **价值**：发现「正文提到但没链上」的潜在关系（Obsidian unlinked mentions 同款）。三个利用方向：
-  1. **潜在链接发现**：`/api/mentions?id=X` 返回「提到了你但没链你」的节点清单 → 用户决定补不补 `[[]]`。
-  2. **诊断层信号**：**隐藏枢纽**（被大量提及但零链接的节点 = 库里最值得整理的待连节点）+ 库级「链接成熟度」指标（提及数/节点数）。
-  3. **touch 转化（远期）**：插件里候选点击确认 → 虚拟引用转真实链接，本身是高质量 touch 事件。
-- **红线：绝不进图**——虚拟引用是引擎「猜」的边，不是用户写的；进图污染「图 = 真实链接」信任承诺（stance §二）。只做只读建议层 API，永不为边。
-- **与 similar 互补**：similar = 结构侧（共同邻居），mentions = 文本侧（标题/别名出现在正文）——同一需求的两个正交维度。
-- **实现 = 反向 Resolve**：对每篇文档 Text 找出哪些节点的 Title/Alias 出现其中、且不在该文档 Refs 里；复用 Resolve 锚定语义（MatchTitle / MatchAlias 级别，graph.go:217）。
-- **性能方案（用户实测过万级节点，必须按此实现）**：
-  - ❌ 朴素「每文档 × 每节点标题」子串匹配 = O(N² × TextLen)，万级节点 ≈ 1 亿次 Contains，不可接受。
-  - ✅ **refresh 时建提及索引**：Aho-Corasick（或等价多模式扫描）把所有 Title/Alias 作模式，单遍扫描每篇 Text（O(总文本长度)），存 `mentionedTerm → []docIDs` 反向索引；查询 O(1)。refresh 本来就全量重建图，顺带建索引是自然延伸——与 Stats 缓存同一哲学（查询无关计算移到 refresh）。
-  - 误报控制：标题长度阈值（≤2 字符跳过，防「数据」类泛词）；中文无空格分词，按子串 + 长度阈值即可，可接受。
-  - 存储：内存索引，随图重建不落盘（派生数据，源数据权威原则——索引可重建）。
-- **落点**：引擎 `/api/mentions`（与 similar/export/touch-stats 同批登记 api-contract.md）；前端节点详情页（frontend #3）加「未链接提及」区；诊断层（#10）落地时可取「隐藏枢纽」信号。
-- **优先级**：可选做（低优先）——价值成立但非核心闭环；M1 内随手可做（与 #13 同批也行）。
+> 取代原「mentions API（虚拟引用 / 未链接提及，AC 文本扫描）」方案。原方案对 Obsidian 正文做标题子串扫描、把命中当"虚拟边"——经外部审计与虎鲸真实库验证后**否决**：暴力枚举会成倍加边、中文子串边界无解、且虎鲸根本没有模糊提及通道（见下方实测）。新方案改为**引擎从拓扑多算法估算近似边**，与「AI 生态补位」定位一致。
+
+- **定位（克制 + AI 补位）**：用户完全可以把笔记成批喂给 LLM 让它判链接——那是 AI 的生态位，引擎**不占**。引擎只做**算法层、永远在线、免费、可解释**的拓扑近似：用多重算法评估两个已有节点"近似相关"的程度，结果作为**有界、明确标注为近似**的边。这是 agent 记忆生态的**补位**，不是对手。
+- **红线改写（关键）**：
+  - ❌ 旧：「虚拟引用是引擎猜的边，绝不进图」。
+  - ✅ 新：**禁语义/LLM 推断边；允许有界、明确标注 `kind=approx`、带算法溯源与低权的拓扑潜在关联（内部称近似边）**。潜在关联永远显示来源（"与 B 共享 3 邻居，AA=2.1 + 常先后打开"），反而更白盒。
+- **算法（多算法评估，复用 #12 底座）**：
+  1. **候选生成有界**：只对每节点 2-hop 邻域打分（图稀疏，O(N·d²)），不枚举全图。
+  2. **拓扑指数**：Adamic-Adar / Jaccard / Resource-Allocation（取公共邻居，与 #12 similar 共用 `commonNeighbors`）。
+  3. **行为信号（来自插件运行期，非 adapter）**：`touch` 表的共现频率（已有 5000 上限，按"**插件上报**的同窗口先后打开"增量累加，零刷新成本）——第二正交信号。**关键澄清**：co-touch 只有插件 L1 知道（用户在看哪两篇、先后关系）；adapter 是静态摄入翻译器（读文件/库快照），`Document` 只有 `MTime`（修改时间）无访问时间，**绝不在 adapter 里扫描 co-touch**。引擎 touch 表本就从外部事件累加，自洽。
+  4. **排名聚合**：Borda / 加权聚合多指数 → 每节点取 **top-K**（K=2~3）最近似者。
+  5. **节流是防爆核心**：边数硬上限 = K×N（与图密度无关），区别于暴力文本扫描的"每匹配都成边"。
+- **落图与可解释**：近似边 `kind=approx`、低权（λ′<λ，或 AA/RA 分数作权重）进入 PPR/Activate；roam 输出**永远标注 kind + 算法名**。`Stats` 暴露 link/approx 边构成。
+- **性能（2026-08-25 估算 + TestOrca 实测印证极稀疏）**：refresh 期一次性 pass，候选来自 2-hop（O(sparse)）；N=540（TestOrca 实测）边 188、平均度 0.7，2-hop 候选极少；推算 N=100k/d=5 约 1–2s、产出 ≤30 万近似边、~12MB。查询零新增开销（预计算缓存）。原 #5「PPR 提前收敛」因边数有界，优先级下调。
+- **adapter 解耦（实测关键结论）**：**近似边完全在引擎层算，适配器只给真实链接**——Obsidian 的 `[[ ]]`/md 链接、虎鲸的 `BlockRef` 都是结构化真实边，适配器无需任何正文扫描。这彻底删掉了原方案的"adapter 模糊提及能力声明 / Document.Mentions"复杂度，**多软件适配反而零额外成本**。
+- **虎鲸实测验证（TestOrca，2026-08-25）**：复制副本离线解析（遵守不读活库红线）。`integrity_check=ok`；表清单无 mention/backlink/unlinked 表，链接 100% 来自 `BlockRef`（结构化 ID 引用，type 1/2）；`Block/BlockAlias/BlockRef` schema 与适配器逐列对齐；悬空引用 0/0；聚合 540 文档、解析边 188（自环 0、悬空 0）、平均度 0.7（极稀疏）。→ **确认虎鲸无模糊提及通道，适配器只吃真实链接即可，与克制设计完美契合**。附带：`BlockAlias.name_p = to_pinyin(name)` 生成列要求确定性函数，适配器 `init()` 注册 `to_pinyin` stub（已验证必要，否则 schema 复制/校验报 malformed）。
+- **与 similar / 诊断层互补**：similar（#12）= 结构相似入口；潜在关联层 = 把"近似"固化成可漫游的有界边；诊断层（#10）可取"高近似度但零真实链接"的隐藏枢纽信号。
+- **落点（✅ v0.1.13 已落地）**：引擎层潜在关联 pass（`graph.PotentialLinks`，2-hop + AA/Jaccard/RA + Borda 聚合 + top-K 节流）→ 暴露 `GET /api/suggest-links`（top-K 待审清单，替代原 `/api/mentions`；登记 api-contract §12）。**未落图**：候选是 kind=approx 形态而非真实边，不进 PPR/Activate——落图需带权边改造 + 改变已验证 roam 行为（红线 1 精神），留待 M2 插件 AI 协作真正需要漫游进近似边时评估（plugin-ai-cooperation Flow 1 消费 suggest-links 即可）。**co-touch 行为信号**：需插件 L1 经 touch 通道喂入（backlog §3.6 #3 澄清），v0.1.13 为纯拓扑。前端节点详情页"潜在关联"展示留作 M2 插件 UI。
+- **优先级**：✅ v0.1.13 落地（roadmap #15）；落图/co-touch 与 #12（Adamic-Adar 底座）、#10（诊断层）、M2 插件协同。
+
+#### 3.6.0 与 similar / 旧「虚拟链接」的区别（命名澄清）
+
+三者都围绕「没明文写的联系」，但机制与产物不同，避免混淆：
+
+| 项目 | 机制 | 产物 | 状态 |
+|---|---|---|---|
+| 旧「虚拟链接 / mentions」（已否决） | 扫描笔记**正文文本**（标题子串）把命中当虚拟边 | 虚拟边 | ❌ 否决：暴力枚举 / 中文边界无解 / 虎鲸无模糊提及通道 |
+| similar（#1/#12，已上线） | **查询**：给定节点实时算结构相似排行（Adamic-Adar） | 带证据的 ranked 列表，**不往图里加边** | ✅ 已上线 |
+| **潜在关联（本功能，#15）** | **落图**：refresh 时从**真实链接图**算有界、低权、`kind=approx` 的近似边并写入图 | 可漫游的 `kind=approx` 边，参与 roam/Activate | ✅ v0.1.13 候选清单已落地（suggest-links）；**落图留 M2** |
+
+- 潜在关联与 similar **共用 Adamic-Adar 算法**（复用 #12 的 `commonNeighbors` 底座），但一个是「查看器」、一个是「富集器」：`similar` 回答"X 跟谁像"，而潜在关联把"像"固化成可漫游的边。
+- 潜在关联是旧「虚拟链接 / mentions」诉求的**克制重做版**：机制从"扫文本造虚拟边"换成"从真实图估算拓扑近似边"，不再依赖正文扫描。内部技术名仍沿用「近似边 / kind=approx」，对外统称「潜在关联」。
+
+> **用户视角文案（届时用于 UI / README）**
+> serendipity 发现你没写、但结构上看似相关的笔记对，自动标成「潜在关联」——权重低、标注来源，漫游时会顺着它们扩散，你也可以忽略。
+
+#### 3.6.1 对照 Obsidian / 虎鲸开发文档的 adapter 复核（2026-08-25）
+
+读完两份官方开发文档后，对已完成 adapter 工作的复核结论（多数确认无问题，三处需记）：
+
+- **共现/touch 信号不来自 adapter（对 §3.6 #3 的纠错澄清）**：「同窗口先后打开」的 co-touch 源头是**插件运行期（L1）**——只有插件知道用户当前在看哪篇、开了哪两篇以及先后。`ParseVault`/`ParseOrcaDB` 是**静态摄入翻译器**（读文件 / 库快照），`Document` 只有 `MTime`（修改时间）没有访问时间，无法派生 co-touch。→ 近似边的行为信号**必须经插件运行时通道喂给引擎**（touch 事件流 / overlay），绝不能回头去 adapter 扫描。引擎 `touch` 表本就从外部累加，这一点自洽。
+- **Obsidian `.canvas` 白板不可见（已知缺口，**远期 / M2 之后，低优先**）**：开发文档确认 Canvas 是 Obsidian 一等节点，存为 `.canvas` JSON（nodes/edges），**非 markdown**。当前 `ParseVault` 只 `WalkDir` `.md`（obsidian.go:74），白板节点及其到 `.md` 的引用**完全不进图**。v1 可接受（个人库白板多作草稿）；**用户本人使用 `.canvas` 也很少，对其功用与使用环境尚不清晰，故不纳入 M2 排期，列为远期项**。待明确需求后再做 `obsidian_canvas.go` 解析 canvas 节点（按 path 引用 `.md`）补为 `Refs`。
+- **悬空链接不建 phantom 节点（与 Obsidian 开世界图的有意差异）**：`graph.Build`（graph.go:58-62）对 `Refs` 指向的不存在节点只记 `Dangling`、不建节点。Obsidian 自身会显示 `[[不存在笔记]]` 的幽灵节点，我们只渲染已存在文档。**这是有意的闭世界选择**（不无中生有；近似边 / AI 建议边也只挂已有节点），但需用户知晓此差异——插件 / AI 层未来可把「你链了 X 但 X 不存在」做成创建提示。
+- **已确认无问题的部分**：`![[...]]` 嵌入被 `linkRe`（`\[\[([^\]]+)\]\]`）正常捕获为链接（合理，嵌入是强关系信号）；虎鲸 `CopyDBForRead` + `to_pinyin` 确定性 stub 双路径快照经 TestOrca 实测稳健；`BlockRef` 只取结构化真实边，与克制设计完美契合。
+- **可选增强（非必须，不立即做）**：虎鲸 `BlockRef.type`（1/2/3）暂被扁平成无类型 `Refs`（alias 列留作边标签备用，orca.go:177）。若未来做 typed overlay 边可保留 `refType`，但当前克制设计下不必。
 
 ## 四、风险分析与红线（防污染已验证行为）
 
@@ -261,11 +348,11 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 - [x] Stats 缓存与 refresh 换图联动失效（✅ v0.1.11：Graph 不可变 memoize，换图即新缓存）
 - [x] graph.node 与前端节点详情 API 一起实现（✅ v0.1.11，两端受益）
 - [x] CLI 三件套（help/--json/退出码）完成（✅ v0.1.11，onboarding 体验）
-- [ ] 重建 seren.exe（源码 v0.1.12；仓库根 seren.exe 为旧二进制，用 GitHub Actions 平台构建，本地进制不入库——**注：用户拍板本版暂不做 GitHub Actions 自动构建**，本地 `scratch/seren.exe` 仅供本地联调）
+- [ ] 重建 seren.exe（源码 v0.1.13；仓库根 seren.exe 为旧二进制，用 GitHub Actions 平台构建，本地进制不入库——**注：用户拍板本版暂不做 GitHub Actions 自动构建**，本地 `scratch/seren.exe` 仅供本地联调）
 - [x] LLM Wiki adapter 画像：VaultProfile `ExcludedFiles` + 内置画像 `llm-wiki` + 结构发现器（✅ v0.1.12，含 watch 排除同源——缺口③）
 - [x] 社区发现（Leiden）实现（✅ v0.1.12：/api/communities + MCP graph.community）
 - [x] 边际情况三待办（✅ v0.1.12）：缺口① 悬挂链接明细 DanglingRefs（stats.dangling_refs）、缺口② 幽灵 touch 过滤（targets 关联 documents）
 - [x] 刷新体验增强（✅ v0.1.12）：/api/stats 加 `is_pending` + 前端"有待刷新"提示条 + 手动刷新清 pending
-- [ ] mentions API（§3.6，可选低优先）：refresh 时建提及索引（AC 多模式扫描） + `/api/mentions` + 契约登记；**绝不进图**（留待诊断层/引用索引排期）
+- [ ] 潜在关联（§3.6，✅ v0.1.13 候选清单落地）：`graph.PotentialLinks` + `/api/suggest-links`（2-hop + AA/Jaccard/RA + Borda + top-K 节流，带算法与共享邻居证据）；**剩余留 M2**：落图进 PPR（带权边改造）、co-touch 行为信号（插件 L1 喂入）、前端"潜在关联"展示。**禁语义/LLM 推断边**；共现信号须由插件 L1 经 touch 通道喂入，不在 adapter 扫描。
 - [x] renames 中间环清理（✅ v0.1.11：MergeRenames 链式折叠，只留链头→最终目标）
 - [x] store 加 `PRAGMA wal_autocheckpoint=1000`（✅ v0.1.11）

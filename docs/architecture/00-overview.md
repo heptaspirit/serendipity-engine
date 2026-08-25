@@ -72,7 +72,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-依赖极简：标准库 + `gopkg.in/yaml.v3` + `modernc.org/sqlite`（纯 Go 零 CGO）。
+依赖极简：标准库 + `gopkg.in/yaml.v3` + `go.etcd.io/bbolt`（存储，原生 Go 零 CGO；v0.1.13 起替代 modernc sqlite）+ `modernc.org/sqlite`（仅 adapter 解析虎鲸活库快照）。
 无网络出口；第三方依赖仅限 vendor 锁版本的算法库（设计哲学 §2.6，first case：
 Leiden 的 `leiden-go`，MIT——引库不破坏单二进制与离线构建）。
 

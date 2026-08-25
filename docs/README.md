@@ -1,6 +1,8 @@
 # 文档导航（docs/）
 
 > 本目录按**主题分层**组织 Serendipity Engine 的文档。除组件架构（`architecture/`）与历史归档（`history/`）外，均为当前有效的设计文档。改算法前请先读对应分层文档。
+>
+> **AI agent 入口**：根目录 [`AGENTS.md`](../AGENTS.md)（30 秒定位 / 命令 / 仓库地图 / 红线）——本文档是完整的分层导航。
 
 ## 分层速览
 
@@ -24,6 +26,7 @@
 | 文档 | 说明 |
 |---|---|
 | [`roadmap.md`](roadmap.md) | **总路线图（唯一权威）**：阶段 1 引擎核心+Web UI 完善(作者自用) / 2 插件薄壳(M2)，含依赖链与状态快照。 |
+| [`plugin-dev-plan.md`](plugin-dev-plan.md) | **插件开发计划（M2）**：生命周期四态机 / 多平台分发 / 插件×AI 协作。⚠️ 具体插件代码在独立仓库开发（不在本仓库），本仓库仅放引擎内核（与插件唯一的共享物是 `api-contract.md`） |
 | [`frontend.md`](frontend.md) | **前端计划（Web UI）**：插件化前置、易用性、UI/UX 打磨规范 + 测试速查与交接。 |
 | [`backend-backlog.md`](backend-backlog.md) | **后端积压清单**：性能优化、功能缺口（similar/export/touch 统计）、CLI 三件套、MCP 工具扩展、风险红线与优先级。 |
 

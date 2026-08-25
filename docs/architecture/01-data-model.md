@@ -52,16 +52,18 @@ type Graph struct {
   orca 过滤空壳时宿主 Refs 里指向空壳的目标会被一并清理（见 04-sync）。
 - **Hub 排除**：`Stats().Nodes / 2` 度以上的节点在漫游中被当"目录枢纽"排除。
 
-## 3. SQLite 存储（`internal/store`）
+## 3. bbolt 存储（`internal/store`）（v0.1.13：SQLite → bbolt，#16）
 
-默认路径 `<vault>/.serendipity/db-<库路径 hash12>.sqlite`（`DBPath`），WAL 模式。
+默认路径 `<vault>/.serendipity/db-<库路径 hash12>.bbolt`（`DBPath`）。bbolt 原生 mmap，无 WAL；单进程单写者天然适配。
 
-| 表 | 内容 | 写入方式 |
+| bucket | 内容 | 写入方式 |
 |---|---|---|
-| `documents(id PK, title, type, path, mtime, size, tags, aliases, text)` | 图节点 | **Save 全量重写**（DELETE + INSERT 于一个事务，幂等） |
-| `links(a, b, weight, PK(a,b))` | **有向引用行**（v0.1.5 修正：a 链接 b，保方向） | 同上 |
-| `touch(id AUTOINC, ts, target, src)` | 反馈埋点（点击记录） | **AppendTouch 增量**，Save 不清除；容量上限 5000 条（超限删最旧） |
-| `renames(old_id PK, new_id)` | 改名迁移映射（v0.1.5，修订 #8） | **SaveRenames 全量重写**（随每次刷新） |
+| `docs`（id → docRow JSON，去 Refs） | 图节点 | **Save 差值写**（v0.1.13 P1：对比旧值只 Put/Delete 变更，幂等；重复 Save 零写入） |
+| `links`（a\x00b → 1.0） | **有向引用行**（v0.1.5 修正：a 链接 b，保方向） | 同上（Save 差值写） |
+| `touch`（seq 8B BE → {ts,target,src} JSON） | 反馈埋点（点击记录） | **AppendTouch 增量**（NextSequence 自增），Save 不清除；容量上限 5000 条（超限删最旧） |
+| `renames`（old → new） | 改名迁移映射（v0.1.5，修订 #8） | **SaveRenames 全量重写**（随每次刷新） |
+
+> 无迁移（#16 红利）：旧 `.sqlite` 是派生快照（源数据 = vault），直接删，下次 refresh 重建。
 
 ### 关键语义
 

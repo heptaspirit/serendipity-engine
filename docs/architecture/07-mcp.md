@@ -69,7 +69,7 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 
 ## 4. 数据加载（图生命周期）
 
-- `seren mcp --db <store.sqlite>`：从持久化存储加载图（复用 `store.Load` +
+- `seren mcp --db <store.bbolt>`：从持久化存储加载图（复用 `store.Load` +
   `graph.Build`，含改名重定向），**启动时加载一次**，会话期间持有内存图。
 - 与 serve 同构但**无自动监听**：AI 会话短、不需要实时；库更新了重开会话即可。
   （若未来需要，加 `graph.refresh` tool 显式触发——默认不做，克制。）

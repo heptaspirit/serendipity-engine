@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.12 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.1.13 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -212,6 +212,33 @@ Leiden 社区检测（`github.com/vsuryav/leiden-go`，MIT，vendor）——把�
 参数：`resolution`（默认 1.0，越大社区越碎）、`seed`（0=随机；固定值可复现）。
 孤立节点（度=0）在检测前过滤。失败 → `{"error":"..."}`。
 
+## 12. `GET /api/suggest-links?k=50` · 潜在关联待审清单（v0.1.13）
+
+引擎从拓扑多算法估算"近似相关"的候选对（roadmap #15，backlog §3.6）——**有界、
+标注算法与共享邻居证据、未落图**（kind=approx 的候选形态，不是真实边）。消费方 =
+插件 AI 研判（plugin-ai-cooperation Flow 1：取候选 + 笔记正文判定，接受者写回
+kind=ai 边）。只读、无副作用。
+
+`k` 最大条数（默认 50，上限 200）。
+
+**响应**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `count` | int | 实际返回条数 |
+| `results[]` | array | 候选对（Borda 聚合分降序） |
+| `results[].a/b` | string | 端点 ID（a < b，无向对规范化） |
+| `results[].a_title/b_title` | string | 端点标题 |
+| `results[].score` | float | **Borda 聚合分** = 3（三算法命中基础分）+ 三算法各自名次分（AA/Jaccard/RA 分别排序） |
+| `results[].algorithms` | string[] | 命中算法（`aa` / `jaccard` / `ra`） |
+| `results[].shared` | string[] | 共享邻居 ID（证据："都链接了 X/Y"） |
+| `results[].a_uri/b_uri` | string | 端点跳转（obsidian:// / orca-note://） |
+
+候选生成有界：只对每节点 2-hop 邻域打分（图稀疏 O(N·d²)）；top-K 节流
+（每节点 K=2，全局上限 ≤ 2N）。排除口径同 similar：自身/直接邻居/目录枢纽/
+结构类型/空标题/孤立。co-touch 行为信号需插件 L1 经 touch 通道喂入，v0.1.13
+暂为纯拓扑。
+
 ---
 
 ## 变更登记
@@ -227,6 +254,7 @@ Leiden 社区检测（`github.com/vsuryav/leiden-go`，MIT，vendor）——把�
 | v0.1.8 | **全 API 加鉴权**（X-Seren-Token 头 / ?token=）+ Host 校验 |
 | v0.1.11 | 新增 /api/similar（Jaccard）、/api/node（详情）、/api/touch/stats（只读统计）；roam 加 `?export=1`（text/markdown 卡片清单） |
 | v0.1.12 | similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；stats 加 `is_pending`（库变化待刷新）+ `dangling_refs`（悬空明细）；touch/stats targets 过滤幽灵 touch；**新增 /api/communities**（Leiden 社区发现，诊断层）；MCP tools 扩至 7（+graph.community） |
+| v0.1.13 | **新增 /api/suggest-links**（潜在关联待审清单：2-hop + AA/Jaccard/RA + Borda 聚合 + top-K 节流，未落图）；存储层 SQLite → bbolt（扩展名 .bbolt，无迁移） |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

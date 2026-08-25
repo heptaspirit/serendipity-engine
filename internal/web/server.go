@@ -185,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/roam", s.handleRoam)
 	mux.HandleFunc("/api/relation", s.handleRelation)
 	mux.HandleFunc("/api/similar", s.handleSimilar)
+	mux.HandleFunc("/api/suggest-links", s.handleSuggestLinks)
 	mux.HandleFunc("/api/node", s.handleNode)
 	mux.HandleFunc("/api/communities", s.handleCommunities)
 	mux.HandleFunc("/api/config", s.handleConfig)
@@ -388,6 +389,60 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, map[string]any{"id": id, "results": out})
+}
+
+// handleSuggestLinks GET /api/suggest-links?k=：潜在关联待审清单（v0.1.13，
+// roadmap #15，backlog §3.6）。引擎从拓扑多算法（AA/Jaccard/RA + Borda 聚合）
+// 估算"近似相关"的候选对——有界、标注算法与共享邻居证据、**未落图**。
+// 消费方 = 插件 AI 研判（plugin-ai-cooperation Flow 1：取候选 + 笔记正文判定，
+// 接受者写回 kind=ai 边）。只读、无副作用。
+func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
+	k := atoiDefault(r.URL.Query().Get("k"), 50)
+	if k > 200 {
+		k = 200
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	structural := map[string]bool{}
+	for _, t := range s.P.StructuralTypes {
+		structural[t] = true
+	}
+	links := s.G.PotentialLinks(2, structural)
+	// top-K 节流：per-node K=2 已限总量（≤2N），这里再按请求条数截断
+	if len(links) > k {
+		links = links[:k]
+	}
+	out := make([]suggestItem, 0, len(links))
+	for _, e := range links {
+		out = append(out, suggestItem{
+			A: e.A, B: e.B, Score: e.Score, Algorithms: e.Algorithms, Shared: e.Shared,
+			ATitle: s.titleOf(e.A), BTitle: s.titleOf(e.B),
+			AURI: s.uriFor(nodePath(s.G, e.A), e.A),
+			BURI: s.uriFor(nodePath(s.G, e.B), e.B),
+		})
+	}
+	writeJSON(w, map[string]any{"count": len(out), "results": out})
+}
+
+// suggestItem 潜在关联响应项（web 层补充端点标题/跳转，证据保持白盒）。
+type suggestItem struct {
+	A          string   `json:"a"`
+	B          string   `json:"b"`
+	Score      float64  `json:"score"`      // Borda 聚合分（≥3：三算法命中 + 名次）
+	Algorithms []string `json:"algorithms"` // 命中算法（aa/jaccard/ra）
+	Shared     []string `json:"shared"`     // 共享邻居 ID（证据："都链接了 X/Y"）
+	ATitle     string   `json:"a_title"`
+	BTitle     string   `json:"b_title"`
+	AURI       string   `json:"a_uri,omitempty"`
+	BURI       string   `json:"b_uri,omitempty"`
+}
+
+// titleOf 节点标题（不存在/空 → 用 ID 兜底，展示不崩）。
+func (s *Server) titleOf(id string) string {
+	if n, ok := s.G.Node(id); ok && n.Title != "" {
+		return n.Title
+	}
+	return id
 }
 
 // handleNode GET /api/node?id=：单节点详情（v0.1.11，roadmap M1 #2 / 前端 #3）。

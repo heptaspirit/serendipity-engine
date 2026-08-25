@@ -396,13 +396,15 @@ Go 生态两个候选（均已核对源码/仓库/许可证）：
 
 **选用理由（三条硬理由）**：① seren 节点 ID 是 string，leiden-go 输入输出全 string，天然直通；② 零依赖新增，保住 go.mod 只 2 个直接依赖的克制；③ 输入格式与 seren 邻接表同构（无向、无权、去重、无自环——正好满足 leiden-go "边对称/权重正/自环不推荐"）。graphwizard 的价值建立在"gonum 当图底座"之上，而 seren 的底座是自研的——为拿一个 Leiden 引入全家桶不符合项目哲学。
 
+**〔2026-08-24 更新〕gonum 已加入 Leiden，但选型不变**：复查发现 gonum/graph 在 2026 年新增了 `community.Leiden`（Traag 2019，含 refinement 阶段）——当初"gonum 只有 Louvain"的认知已过时。**仍选 leiden-go，理由不变**：string ID 直通 vs gonum int64 适配层、零依赖 vs 整棵 gonum 依赖树、leiden-go 自带 Modularity 输出。gonum 有 Leiden 只说明"社区检测在主流库不缺位"，不构成换的理由。
+
 #### D.4.3 graphwizard 其余算法的处置（诚实评估）
 
 逐包核对后，**大部分与 seren 手写实现重复，不引入**：
 
 | graphwizard 能力 | 处置 |
 |---|---|
-| centrality（PPR/PageRank/Betweenness…） | ❌ PPR 已手写（且 gonum 的 PageRank 不支持个性化） |
+| centrality（PPR/PageRank/Betweenness…） | ❌ PPR 已手写（且 gonum 的 PageRank 不支持个性化——只有标准版；graphwizard 的 PersonalizedPageRank 也仅单 seed，seren 是多锚点定制管线） |
 | connectivity（并查集/WCC/桥） | ❌ 并查集已有（`Stats()`） |
 | paths / traverse | ❌ 无权图 BFS 已是最优，已有 |
 | LouvainQ（模块度评估） | ⚠️ 有用但 leiden-go 的 `result.Modularity` 已自带 |
@@ -411,6 +413,11 @@ Go 生态两个候选（均已核对源码/仓库/许可证）：
 | embedding（Node2Vec/DeepWalk） | ⚠️ 远期笔记向量化再评估（现代做法是调 embedding API），不为它引入 gonum |
 
 **原则延续**：需要什么手写什么（seren 一贯风格），不背 gonum。
+
+**〔2026-08-24 边界澄清：bbolt 接受 ≠ gonum 接受〕**：同日决定存储层从 SQLite 换 bbolt（backend-backlog §二.1，MIT，etcd 维护）。bbolt 被接受**不构成** gonum 也接受的依据，二者性质不同：
+- **bbolt 是存储引擎**（基础设施层）——seren 的 store 语义（全量快照/有界事件流/映射）本来就是 KV 语义，bbolt 是"更贴合的底座"，换来收益明确（编译/体积/纯度）且签名透明
+- **gonum 是算法框架层**（业务逻辑层）——它的价值必须通过"塞进 gonum 的 graph.Graph 接口（int64 ID）"兑现，对 seren 意味着适配层成本；而 seren 的核心算法（查询锚定 PPR + 激活扩散）是定制的、gonum 无对应物；gonum 能给的（Leiden）已被 leiden-go 覆盖；剩下的诊断层小算法手写 15-100 行白盒可控
+- **"成熟算法优先"原则（用户提出，正确）的落法**：**选择性地用成熟组件**（存储用 bbolt、社区发现用 leiden-go），而不是**引入算法框架依赖树**（gonum）。边界 = 组件是否"即插即用、签名直通"；需要适配层/全家桶的就是负债。graphwizard/gonum 保留为"正确性参考"（附录 E 对拍验证）
 
 #### D.4.4 接入方式与合规（执行方案）
 

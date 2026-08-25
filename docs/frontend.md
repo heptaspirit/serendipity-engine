@@ -233,7 +233,7 @@ Web UI → 壳：
 
 ```powershell
 # 虎鲸库（TestOrca，推荐，数据丰富）
-seren serve "D:\WorkSpace\NoteLib\TestOrca\TestOrca.db" --port 8910 --store <临时store.sqlite> --repo TestOrca
+seren serve "D:\WorkSpace\NoteLib\TestOrca\TestOrca.db" --port 8910 --store <临时store.bbolt> --repo TestOrca
 
 # Obsidian vault（另备测试库）
 seren serve "D:\WorkSpace\WriteLib\Novel_AI_Helper" --port 8901

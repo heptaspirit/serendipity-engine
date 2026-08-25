@@ -6,6 +6,14 @@
 # Scratch 临时工作区（探针脚本 / 库拷贝 / 构建缓存，不入库）
 scratch/
 
+# Go 构建缓存（沙箱下指向工作区内的 .gomod-cache/.gocache）
+.gomod-cache/
+.gocache/
+
+# GraphFlow 图存储与缓存（工具产物，不入库）
+graphflow-out/
+.graphflow-cache/
+
 # vendor/（本仓库用 go.sum 锁版本，不入库；第三方算法库 MIT 经 go.sum 锁定）
 /vendor/
 

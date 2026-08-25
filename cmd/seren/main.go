@@ -13,7 +13,7 @@
 //	  version        打印版本（与 git tag 同步）
 //
 // ▍数据源自动识别（parseSource，优先级从高到低）
-//  1. --db <file.sqlite>   从持久化存储读图（跳过解析）
+//  1. --db <file.bbolt>   从持久化存储读图（跳过解析）
 //  2. 虎鲸库（扩展名 .db） 先 CopyDBForRead 一致性快照（VACUUM INTO，含 WAL）再解析
 //  3. Obsidian vault       按 VaultProfile 解析（见 adapter/obsidian.go、profile.go）
 //
@@ -68,6 +68,10 @@
 //	         LLM Wiki 结构探测提示（DetectLLMWiki）；MCP 扩至七工具（graph.community）；
 //	         前端 P0（紧凑嵌入 / postMessage 桥 / i18n 双语）——见 internal/web/static。
 //	         本版不做 GitHub Actions 自动构建（用户拍板），本地 scratch/seren.exe 仅联调不入库。
+//	v0.1.13 M1 收官（#16 + #15）：存储层 SQLite → bbolt（#16，四 bucket 无迁移，
+//	         P1 增量写 / P2 mmap+NoSync / P5 幽灵过滤 O(1)，扩展名 .bbolt）；
+//	         潜在关联 suggest-links 待审清单（#15：2-hop + AA/Jaccard/RA + Borda +
+//	         top-K 节流 → /api/suggest-links，未落图，co-touch 留 M2）。
 //
 // ============================================================================
 package main
@@ -99,7 +103,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.12"
+const version = "v0.1.13"
 
 func main() {
 	code := run(os.Args[1:])
@@ -154,7 +158,7 @@ func usageFor(cmd string) {
 			"  seren index <vault|OrcaNote.db> [--profile-name <名>] [--db <store>] [--persist|--store <file>]\n" +
 			"  --profile-name  内置画像 (default-obsidian / okf / example-wiki)\n" +
 			"  --db            从持久化存储读图（跳过解析）\n" +
-			"  --persist       解析后持久化到库内 .serendipity/db-<hash>.sqlite\n" +
+			"  --persist       解析后持久化到库内 .serendipity/db-<hash>.bbolt\n" +
 			"  --store         指定持久化路径（覆盖默认）"
 	case "roam":
 		text = "roam: 查询漫游 → top-N 节点簇（--random 随机漫步）\n" +
@@ -224,9 +228,9 @@ flags:
 画像/存储:
   --profile <file.yaml>       显式画像文件
   --profile-name <name>       内置画像名 (default-obsidian / okf / example-wiki)
-  --db <file.sqlite>          从持久化存储读图（跳过解析）
-  --persist                   解析后持久化到库内 .serendipity/db-<hash>.sqlite
-  --store <file.sqlite>       指定持久化路径（覆盖默认）
+  --db <file.bbolt>           从持久化存储读图（跳过解析）
+  --persist                   解析后持久化到库内 .serendipity/db-<hash>.bbolt
+  --store <file.bbolt>        指定持久化路径（覆盖默认）
 监听/跳转/埋点:
   --watch-off                 关闭自动监听（默认开：轮询变化→节流合并刷新）
   --watch-interval N          监听轮询间隔秒（默认 10）
@@ -516,7 +520,7 @@ func cmdIndex(args []string) int {
 		fmt.Printf("  %-28s deg=%-4d type=%s title=%s\n", h.ID, h.Deg, h.Type, h.Title)
 	}
 
-	// 持久化（设计 §6.8：SQLite 主存储，库内 .serendipity/db-<hash>.sqlite）
+	// 持久化（设计 §6.8：bbolt 主存储 v0.1.13，库内 .serendipity/db-<hash>.bbolt）
 	if flags["persist"] != "" || flags["store"] != "" {
 		base := vault
 		if adapter.IsOrcaDB(vault) {
@@ -888,7 +892,7 @@ func cmdMCP(args []string) int {
 		return 0
 	}
 	if len(pos) < 1 {
-		usageErr("用法: seren mcp <vault> [--db <store.sqlite>]（库来源同 roam；--db 读持久化存储免重解析）")
+		usageErr("用法: seren mcp <vault> [--db <store.bbolt>]（库来源同 roam；--db 读持久化存储免重解析）")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
