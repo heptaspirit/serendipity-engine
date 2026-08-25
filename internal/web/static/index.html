@@ -298,7 +298,9 @@
 
   /* ---- 紧凑嵌入模式（v0.1.12，前端 P0-1） ---- */
   body.embed header { padding: 8px 12px; }
-  body.embed .brand, body.embed .header-right .btn .txt { display: none; }
+  /* 只藏品牌，不藏 header-right 按钮文字——那些按钮（随便逛逛/导出/统计/关系/参数）
+     是纯文字无图标，藏了文字按钮就成空壳不可见。窄屏(<560px)仍由下方 media 藏文字。 */
+  body.embed .brand { display: none; }
   body.embed main { max-width: none; padding: 12px; }
   body.embed .search { position: sticky; top: 0; z-index: 5; background: var(--bg);
     padding: 8px 0; margin-bottom: 6px; }
@@ -460,6 +462,17 @@ window.addEventListener('message', e => {
   const d = e.data || {};
   if (d.type === 'theme' && (d.mode === 'light' || d.mode === 'dark')) {
     document.documentElement.dataset.theme = d.mode;
+    // 宿主（Obsidian 插件）注入其主题配色 → 用内联变量覆盖本引擎 token，
+    // 使界面颜色跟随宿主主题。宿主空值（某一 CSS 变量未定义）跳过。
+    if (d.colors) {
+      const map = { '--bg': d.colors.bg, '--panel': d.colors.panel,
+        '--surface': d.colors.surface, '--text': d.colors.text, '--muted': d.colors.muted,
+        '--accent': d.colors.accent, '--accent-2': d.colors.accent,
+        '--primary': d.colors.accent, '--border': d.colors.border,
+        '--border-strong': d.colors.border };
+      const st = document.documentElement.style;
+      for (const k in map) if (map[k]) st.setProperty(k, map[k]);
+    }
   } else if (d.type === 'locale' && (d.lang === 'zh' || d.lang === 'en')) {
     lang = d.lang;
     applyStaticI18n();
@@ -470,9 +483,10 @@ window.addEventListener('message', e => {
 }, false);
 
 // 打开请求：嵌入时走 postMessage 桥（宿主 openLinkText/invokeBackend），否则跳外链。
+// 带上 uri（obsidian:// / orca-note://）——宿主优先用其解码 file 路径跳回（更可靠）。
 function openNode(uri, id) {
   if (embedded) {
-    window.parent.postMessage({ type: 'open', id }, '*');
+    window.parent.postMessage({ type: 'open', id, uri }, '*');
     return;
   }
   const a = document.createElement('a');

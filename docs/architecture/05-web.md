@@ -61,7 +61,25 @@
 - **自动更新提示**：每 30s 轮询 `/api/stats`，revision 变化 → "库已自动更新"。
 - 点击卡片输入框显示节点**标题**（而非 ID）——查询词仍是 ID（精确锚定）。
 
-## 3. serve 组装（cmd/seren）
+### 嵌入契约（iframe 壳 / postMessage 桥，v0.1.12 前端 P0）
+
+> 前端被 Obsidian/虎鲸插件嵌进面板时（`?embed=1` 或 `window.top !== window.self`），
+> 进入 **紧凑嵌入模式**（`body.embed`）：隐藏 hero/brand/hint、收窄 padding、
+> 顶栏按钮文字仅窄屏（<560px）才隐藏（纯文字按钮不因藏 `.txt` 变空壳）。
+
+**宿主 → 页面 `postMessage`**：
+
+| 类型 | 载荷 | 说明 |
+|---|---|---|
+| `theme` | `{mode:'light'\|'dark', colors?}` | `mode` 设 `data-theme`；`colors` 可选，覆盖 `--bg/--panel/--surface/--text/--muted/--accent/--primary/--border/--border-strong` 等 token（Obsidian 插件注入其主题配色，使界面颜色跟随宿主） |
+| `locale` | `{lang:'zh'\|'en'}` | 覆盖语言（默认 `navigator.language`） |
+| `activeFile` | `{id}` | 宿主告知当前笔记路径（记录到 `window.__activeFile`，预留命令锚点） |
+
+**页面 → 宿主 `postMessage`**：嵌入态点「打开 ↗」→ `{type:'open', id, uri}`；
+宿主**优先用 `uri` 解码出的 file 路径**跳回（llm-wiki/路径化 id 下更可靠），失败退回 `id`。
+非嵌入态则 `window.open(uri)`（外链）。
+
+### serve 组装（cmd/seren）
 
 ```
 loadSource → g, docs, src

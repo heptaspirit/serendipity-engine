@@ -95,11 +95,11 @@
 
 ```
 壳 → Web UI（宿主上下文注入，UI 永远不需要知道宿主是谁）：
-  {type:'theme',   mode:'light'|'dark'}     # 主题跟随
+  {type:'theme',   mode:'light'|'dark', colors?:{bg,panel,surface,text,muted,accent,border}} # 主题跟随；colors 可选，覆盖引擎 CSS token
   {type:'locale',  lang:'zh'|'en'}          # 语言跟随（Obsidian 壳读 navigator.language / 虎鲸壳读 orca.state.locale）
   {type:'activeFile', id:'xxx'}             # 命令锚点（用户当前在看哪篇）
 Web UI → 壳：
-  {type:'open', id:'xxx'}                   # 打开请求（唯一上行）
+  {type:'open', id:'xxx', uri?:'obsidian://…|orca-note://…'} # 打开请求（唯一上行）；uri 供宿主解码 file 路径跳回（更可靠）
 ```
 
 **规则**：

@@ -118,6 +118,11 @@ type touchEntry struct {
 // 毫秒级事务变微秒级；本地持久化 + 单进程，崩溃最多丢最近一次事务
 // （touch 埋点属可重建反馈数据，非源数据权威，风险可接受）。
 func open(dbPath string) (*bolt.DB, error) {
+	// bbolt.Open 会创建文件但不会创建父目录（<vault>/.serendipity/）；serve 的
+	// /api/refresh 首次写库即在此失败（"cannot find path specified"）。此处建父目录。
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, err
+	}
 	return bolt.Open(dbPath, 0o600, &bolt.Options{NoSync: true})
 }
 
