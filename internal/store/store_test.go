@@ -2,11 +2,14 @@
 // 回归守护：此前排序 pairKey 去重导致字典序较大的端点回读后 Refs 为空，
 // 对账 diff 每次刷新报虚假 "refs +1" 永不收敛。
 // #16（v0.1.13）：SQLite → bbolt 后测试全部走 store API，不依赖 SQL。
+// §3.7（v0.1.14）：touch 拆独立 store——touch 相关测试用独立 touchPath，
+// TouchStats/幽灵过滤跨库（touchPath + graphPath）。
 package store
 
 import (
 	"encoding/binary"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -15,6 +18,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 	"serendipity-engine/internal/adapter"
 )
+
+// touchPair 测试辅助：touch 独立库 + 图库双路径（§3.7.1）。
+func touchPair(t *testing.T) (touchPath, graphPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	return filepath.Join(dir, "touch.bbolt"), filepath.Join(dir, "graph.bbolt")
+}
 
 func TestSaveLoadDirectedRefs(t *testing.T) {
 	dir := t.TempDir()
@@ -56,19 +66,18 @@ func loadTouches(t *testing.T, dbPath string) [][2]string {
 }
 
 func TestRenameTouchPlaceholder(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "t.bbolt")
-	if err := AppendTouch(dbPath, "旧A", "来源"); err != nil {
+	touchPath, _ := touchPair(t)
+	if err := AppendTouch(touchPath, "旧A", "来源"); err != nil {
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	if err := AppendTouch(dbPath, "旧B", "旧A"); err != nil {
+	if err := AppendTouch(touchPath, "旧B", "旧A"); err != nil {
 		t.Fatalf("AppendTouch: %v", err)
 	}
 	// 链式：旧A→旧B→新B
-	if err := RenameTouch(dbPath, map[string]string{"旧A": "旧B", "旧B": "新B"}); err != nil {
+	if err := RenameTouch(touchPath, map[string]string{"旧A": "旧B", "旧B": "新B"}); err != nil {
 		t.Fatalf("RenameTouch: %v", err)
 	}
-	got := loadTouches(t, dbPath)
+	got := loadTouches(t, touchPath)
 	// 传递解析后：target 旧A→新B、旧B→新B；src 旧A 也解到 新B（来源身份同样迁移）
 	want := [][2]string{{"新B", "来源"}, {"新B", "新B"}}
 	if !reflect.DeepEqual(got, want) {
@@ -94,41 +103,41 @@ func TestLoadRenamesRoundTrip(t *testing.T) {
 
 // TouchStats：只读统计聚合（v0.1.11，backlog §3.3）。
 // 验证被点击 TopN、来源 TopN、总数；且不写库（只读）。
-// v0.1.12：targets 关联 documents 过滤幽灵 touch——热点A/热点B 先存入 documents 表，
+// v0.1.12：targets 关联 documents 过滤幽灵 touch——热点A/热点B 先存入图库 documents，
 // 未保存的幽灵节点被点后不进热度榜。
+// §3.7（v0.1.14）：touch 独立库，幽灵过滤跨图库（graphPath）。
 func TestTouchStats(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "t.bbolt")
-	// 先保存两个真实节点（docs bucket），否则 target 过滤会把它们全滤掉（v0.1.12）
-	if err := Save(dbPath, []*adapter.Document{
+	touchPath, graphPath := touchPair(t)
+	// 先保存两个真实节点到图库（docs bucket），否则 target 过滤会把它们全滤掉（v0.1.12）
+	if err := Save(graphPath, []*adapter.Document{
 		{ID: "热点A", Title: "A", Type: "note", Refs: []string{}},
 		{ID: "热点B", Title: "B", Type: "note", Refs: []string{}},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// 插入埋点：target 聚焦少数节点，src 记录来源
+	// 插入埋点（touch 独立库）：target 聚焦少数节点，src 记录来源
 	for i := 0; i < 3; i++ {
-		if err := AppendTouch(dbPath, "热点A", "来源X"); err != nil {
+		if err := AppendTouch(touchPath, "热点A", "来源X"); err != nil {
 			t.Fatalf("AppendTouch: %v", err)
 		}
 	}
-	if err := AppendTouch(dbPath, "热点A", "来源Y"); err != nil {
+	if err := AppendTouch(touchPath, "热点A", "来源Y"); err != nil {
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	if err := AppendTouch(dbPath, "热点B", ""); err != nil { // 无来源（src 空）
+	if err := AppendTouch(touchPath, "热点B", ""); err != nil { // 无来源（src 空）
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	if err := AppendTouch(dbPath, "幽灵节点", "来源Z"); err != nil { // 已删/不存在 → 应被过滤
+	if err := AppendTouch(touchPath, "幽灵节点", "来源Z"); err != nil { // 已删/不存在 → 应被过滤
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	total, targets, sources, err := TouchStats(dbPath, 10)
+	total, targets, sources, err := TouchStats(touchPath, graphPath, 10)
 	if err != nil {
 		t.Fatalf("TouchStats: %v", err)
 	}
 	if total != 6 {
 		t.Fatalf("总数应 6：%d", total)
 	}
-	// 被点击：热点A(4) 应排首位；幽灵节点不存在于 docs → 被过滤
+	// 被点击：热点A(4) 应排首位；幽灵节点不存在于图库 docs → 被过滤
 	if len(targets) == 0 || targets[0].ID != "热点A" || targets[0].Count != 4 {
 		t.Fatalf("Targets 错误：%v", targets)
 	}
@@ -154,8 +163,8 @@ func TestTouchStats(t *testing.T) {
 	if !foundZ {
 		t.Fatalf("src 是自由查询词，来源Z 应保留：%v", sources)
 	}
-	// 无库文件 → 全零（不报错）
-	total2, _, _, err := TouchStats(filepath.Join(dir, "none.bbolt"), 10)
+	// 无 touch 库文件 → 全零（不报错）
+	total2, _, _, err := TouchStats(filepath.Join(t.TempDir(), "none.bbolt"), graphPath, 10)
 	if err != nil || total2 != 0 {
 		t.Fatalf("无库应全零：total=%d err=%v", total2, err)
 	}
@@ -163,16 +172,15 @@ func TestTouchStats(t *testing.T) {
 
 // TestTouchTruncate：容量上限 touchMax 截断（删最旧，保留最近）。
 func TestTouchTruncate(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "t.bbolt")
+	touchPath, _ := touchPair(t)
 	// 超上限写入（touchMax 是包内常量；这里写 touchMax+5 条）
 	n := touchMax + 5
 	for i := 0; i < n; i++ {
-		if err := AppendTouch(dbPath, "T", ""); err != nil {
+		if err := AppendTouch(touchPath, "T", ""); err != nil {
 			t.Fatalf("AppendTouch #%d: %v", i, err)
 		}
 	}
-	rows := loadTouches(t, dbPath)
+	rows := loadTouches(t, touchPath)
 	if len(rows) != touchMax {
 		t.Fatalf("截断后应 %d 条，实际 %d", touchMax, len(rows))
 	}
@@ -255,7 +263,7 @@ func readTouches(dbPath string) ([][2]string, error) {
 	}
 	defer db.Close()
 	err = db.View(func(tx *bolt.Tx) error {
-		tb := tx.Bucket(bTouch)
+		tb := tx.Bucket(bTouchB)
 		if tb == nil {
 			return nil
 		}
@@ -281,4 +289,156 @@ func readTouches(dbPath string) ([][2]string, error) {
 		return nil
 	})
 	return rows, err
+}
+
+// ---- digest 子系统（§3.7，v0.1.14） ----
+
+// TestMaybeDigestCountTrigger：计数触发（主）——累计 ≥ digest_count 生成 digest，
+// 内容为窗口聚合（幽灵过滤 + 标题）；未达阈值不生成。
+func TestMaybeDigestCountTrigger(t *testing.T) {
+	touchPath, graphPath := touchPair(t)
+	if err := Save(graphPath, []*adapter.Document{
+		{ID: "A", Title: "甲", Type: "note", Refs: []string{}},
+		{ID: "B", Title: "乙", Type: "note", Refs: []string{}},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfg := DefaultTouchConfig()
+	cfg.DigestCount = 3
+	// 未达阈值：2 次 → 不生成
+	for i := 0; i < 2; i++ {
+		if err := AppendTouch(touchPath, "A", "q"); err != nil {
+			t.Fatalf("AppendTouch: %v", err)
+		}
+	}
+	if gen, err := MaybeDigest(touchPath, graphPath, cfg); err != nil || gen {
+		t.Fatalf("未达阈值不应生成：gen=%v err=%v", gen, err)
+	}
+	// 达阈值：再 1 次（累计 3）→ 生成
+	if err := AppendTouch(touchPath, "B", "q"); err != nil {
+		t.Fatalf("AppendTouch: %v", err)
+	}
+	gen, err := MaybeDigest(touchPath, graphPath, cfg)
+	if err != nil || !gen {
+		t.Fatalf("达阈值应生成：gen=%v err=%v", gen, err)
+	}
+	dig, err := LatestDigest(touchPath)
+	if err != nil || dig == nil {
+		t.Fatalf("LatestDigest: %v", err)
+	}
+	if dig.Total != 3 {
+		t.Fatalf("窗口总数应 3：%d", dig.Total)
+	}
+	if len(dig.Targets) != 2 || dig.Targets[0].ID != "A" || dig.Targets[0].Count != 2 {
+		t.Fatalf("Targets 错误：%v", dig.Targets)
+	}
+	if dig.Targets[0].Title != "甲" || dig.Targets[1].Title != "乙" {
+		t.Fatalf("标题解析错误：%v", dig.Targets)
+	}
+	// ack 语义：未 ack → available；ack 后 → 不可用
+	if !DigestAvailable(touchPath) {
+		t.Fatalf("新 digest 应 available")
+	}
+	if err := AckDigest(touchPath, dig.ID); err != nil {
+		t.Fatalf("AckDigest: %v", err)
+	}
+	if DigestAvailable(touchPath) {
+		t.Fatalf("ack 后不应 available")
+	}
+}
+
+// TestMaybeDigestGhostFilter：digest 窗口内幽灵 touch（图库不存在）不进 targets。
+func TestMaybeDigestGhostFilter(t *testing.T) {
+	touchPath, graphPath := touchPair(t)
+	if err := Save(graphPath, []*adapter.Document{
+		{ID: "A", Title: "甲", Type: "note", Refs: []string{}},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfg := DefaultTouchConfig()
+	cfg.DigestCount = 2
+	for i := 0; i < 2; i++ {
+		if err := AppendTouch(touchPath, "幽灵", "q"); err != nil {
+			t.Fatalf("AppendTouch: %v", err)
+		}
+	}
+	if _, err := MaybeDigest(touchPath, graphPath, cfg); err != nil {
+		t.Fatalf("maybeDigest: %v", err)
+	}
+	dig, _ := LatestDigest(touchPath)
+	if dig == nil {
+		t.Fatal("digest 应存在")
+	}
+	if len(dig.Targets) != 0 {
+		t.Fatalf("幽灵 touch 应被过滤：%v", dig.Targets)
+	}
+	if dig.Total != 2 {
+		t.Fatalf("Total 仍应计窗口事件（幽灵也计入总数）：%d", dig.Total)
+	}
+}
+
+// TestMaybeDigestBackupRotate：backups 轮转——超过 backup_max 删最旧。
+func TestMaybeDigestBackupRotate(t *testing.T) {
+	touchPath, graphPath := touchPair(t)
+	if err := Save(graphPath, []*adapter.Document{
+		{ID: "A", Title: "甲", Type: "note", Refs: []string{}},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfg := DefaultTouchConfig()
+	cfg.DigestCount = 1
+	cfg.BackupMax = 2
+	for i := 0; i < 4; i++ {
+		if err := AppendTouch(touchPath, "A", "q"); err != nil {
+			t.Fatalf("AppendTouch: %v", err)
+		}
+		if _, err := MaybeDigest(touchPath, graphPath, cfg); err != nil {
+			t.Fatalf("maybeDigest #%d: %v", i, err)
+		}
+	}
+	db, err := open(touchPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	n := 0
+	_ = db.View(func(tx *bolt.Tx) error {
+		bb := tx.Bucket(bBackups)
+		if bb == nil {
+			return nil
+		}
+		return bb.ForEach(func(_, _ []byte) error {
+			n++
+			return nil
+		})
+	})
+	if n != cfg.BackupMax {
+		t.Fatalf("backups 应保留 %d 份：%d", cfg.BackupMax, n)
+	}
+}
+
+// TestLoadTouchConfig：touch.yaml 解析 + 钳制；缺失 → 默认。
+func TestLoadTouchConfig(t *testing.T) {
+	dir := t.TempDir()
+	if cfg := LoadTouchConfig(dir); cfg != DefaultTouchConfig() {
+		t.Fatalf("无配置应默认：%+v", cfg)
+	}
+	vault := filepath.Join(dir, "v")
+	if err := os.MkdirAll(filepath.Join(vault, ".serendipity"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yamlStr := "digest_count: 700\nbackup_max: 3\n"
+	if err := os.WriteFile(filepath.Join(vault, ".serendipity", "touch.yaml"), []byte(yamlStr), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg := LoadTouchConfig(vault)
+	if cfg.DigestCount != 600 { // 700 钳到上限 600
+		t.Fatalf("digest_count 应钳到 600：%d", cfg.DigestCount)
+	}
+	if cfg.DigestDays != 3 { // 未写 → 默认
+		t.Fatalf("digest_days 应默认 3：%d", cfg.DigestDays)
+	}
+	if cfg.BackupMax != 3 {
+		t.Fatalf("backup_max 应 3：%d", cfg.BackupMax)
+	}
 }

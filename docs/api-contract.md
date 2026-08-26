@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.13 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.1.14 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -28,11 +28,12 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `version` | string | 引擎版本（如 `v0.1.12`） |
 | `revision` | int | 图版本号：自动/手动刷新后 +1（前端轮询对比以提示"库已更新"） |
 | `is_pending` | bool | 库有变化待刷新（v0.1.12）：watch 检测到但节流窗口未到 → true；自动/手动刷新成功 → false。前端据以显示"库有变化，将自动刷新 · 立即刷新"提示条 |
+| `digest_available` | bool | 有未读 touch digest（v0.1.14，§3.7）：引擎生成新 digest 且未被 ack → true。插件据以显示"有新的 digest 可供查看"轻量状态提醒（被动、非弹窗） |
 | `dangling` | int | 悬空链接总条数（指向不存在文件的链接） |
 | `dangling_refs[]` | array | 悬空链接明细 `{source,target}`（v0.1.12，截断上限 50；`source`=引用方节点 ID，`target`=悬空目标） |
 
 ```json
-{"nodes":235,"edges":318,"version":"v0.1.12","revision":3,"is_pending":false,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
+{"nodes":235,"edges":318,"version":"v0.1.14","revision":3,"is_pending":false,"digest_available":true,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
 ```
 
 ## 2. `GET /api/hot?n=20` · 热门节点（初始页气泡）
@@ -239,6 +240,35 @@ kind=ai 边）。只读、无副作用。
 结构类型/空标题/孤立。co-touch 行为信号需插件 L1 经 touch 通道喂入，v0.1.13
 暂为纯拓扑。
 
+## 13. touch digest（v0.1.14，backlog §3.7）—— 行为信号子系统只读出口
+
+> 引擎零写 vault：digest 内容经本组只读接口暴露，`serendipity-digest-*.md`
+> 由前端插件在用户主动导出时写入（引擎保持"源数据权威原则"下零写 vault 边界）。
+
+### 13.1 `GET /api/touch/digest` · 最新 digest 查询
+
+只读、被动（仅主动查询返回；不主动推送、不弹窗）。无 digest → `{"digest":null,"available":false}`。
+
+**响应**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `digest` | object\|null | 最新 digest（无 → null） |
+| `digest.id` | string | 唯一 id（unix 纳秒） |
+| `digest.generated_at` | int | 生成时间（unix 秒） |
+| `digest.window_start` | int | 窗口起点（上次 digest 时间，unix 秒） |
+| `digest.since` | string | 窗口起点人读串 |
+| `digest.total` | int | 窗口新增 touch 数 |
+| `digest.targets[]` | array | TopN `{id,title,count}`（幽灵过滤 + 标题解析，降序） |
+| `digest.sources[]` | array | TopN 来源词 `{id,count}`（降序） |
+| `available` | bool | 有未读 digest（`digest_available` 的独立查询形态） |
+
+### 13.2 `POST /api/touch/digest/ack` · 标记已读
+
+请求体：`{"id":"<digest.id>"}`。响应：`{"ok":true}`。只写 touch store meta
+（`last_ack_id`），不碰 touch 事件、不反馈排序（红线）。`available` / `digest_available`
+随 ack 转 false。
+
 ---
 
 ## 变更登记
@@ -255,6 +285,7 @@ kind=ai 边）。只读、无副作用。
 | v0.1.11 | 新增 /api/similar（Jaccard）、/api/node（详情）、/api/touch/stats（只读统计）；roam 加 `?export=1`（text/markdown 卡片清单） |
 | v0.1.12 | similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；stats 加 `is_pending`（库变化待刷新）+ `dangling_refs`（悬空明细）；touch/stats targets 过滤幽灵 touch；**新增 /api/communities**（Leiden 社区发现，诊断层）；MCP tools 扩至 7（+graph.community） |
 | v0.1.13 | **新增 /api/suggest-links**（潜在关联待审清单：2-hop + AA/Jaccard/RA + Borda 聚合 + top-K 节流，未落图）；存储层 SQLite → bbolt（扩展名 .bbolt，无迁移） |
+| v0.1.14 | **新增 touch digest 子系统（§3.7）**：/api/touch/digest（只读查询）+ /api/touch/digest/ack（已读）+ stats 加 `digest_available`；**MCP tools 扩至 8（+seren.touch_digest）**；touch 拆独立 store（`touch-<hash>.bbolt`，touch/meta/backups） |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

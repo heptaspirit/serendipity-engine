@@ -72,6 +72,11 @@
 //	         P1 增量写 / P2 mmap+NoSync / P5 幽灵过滤 O(1)，扩展名 .bbolt）；
 //	         潜在关联 suggest-links 待审清单（#15：2-hop + AA/Jaccard/RA + Borda +
 //	         top-K 节流 → /api/suggest-links，未落图，co-touch 留 M2）。
+//	v0.1.14 M2 §3.7 touch 行为信号子系统：touch 拆独立 store touch-<hash>.bbolt
+//	         （touch/meta/backups，图库重建不再连坐）；digest 触发（计数≥digest_count
+//	         主 / 间隔≥digest_days 兜底 + 启动补查）+ /api/touch/digest + ack +
+//	         /api/stats.digest_available + MCP seren.touch_digest（只读）；touch.yaml
+//	         配置（YAML 钳制）；引擎零写 vault（digest md 由插件导出）。
 //
 // ============================================================================
 package main
@@ -103,7 +108,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.13"
+const version = "v0.1.14"
 
 func main() {
 	code := run(os.Args[1:])
@@ -359,6 +364,21 @@ func storePathFor(vault string, storeFlag string) string {
 	return store.DBPath(base)
 }
 
+// touchPathFor 计算 touch 独立 store 路径（§3.7，v0.1.14）：与图库同源派生，
+// 虎鲸库同样取库所在目录（touch 与图库成对）。
+func touchPathFor(vault string) string {
+	return store.TouchDBPath(baseOf(vault))
+}
+
+// baseOf 库根目录：虎鲸库（db 文件）取所在目录，Obsidian vault 即自身。
+// 用于 touch 独立库与 touch.yaml 的路径派生（§3.7.1 / §3.7.5）。
+func baseOf(vault string) string {
+	if adapter.IsOrcaDB(vault) {
+		return filepath.Dir(vault)
+	}
+	return vault
+}
+
 // cmdRefresh 对账刷新：全量重解析 → 与上次持久化状态 diff → 输出明细 → 写回存储。
 func cmdRefresh(args []string) int {
 	pos, flags := parseArgs(args)
@@ -396,7 +416,7 @@ func cmdRefresh(args []string) int {
 	if err := store.SaveRenames(storePath, merged); err != nil {
 		fatal("改名映射持久化失败: %v", err)
 	}
-	if err := store.RenameTouch(storePath, merged); err != nil {
+	if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
 		fatal("touch 迁移失败: %v", err)
 	}
 	if err := store.Save(storePath, docs); err != nil {
@@ -709,13 +729,24 @@ func cmdServe(args []string) int {
 		}
 		return res, ng, err
 	}
-	// 反馈埋点闭包（克制：仅记录，写 store touch 表；失败静默）
-	touchFn := func(target, from string) error { return store.AppendTouch(storePath, target, from) }
+	// 反馈埋点闭包（克制：仅记录，写 touch 独立 store；失败静默）
+	// §3.7（v0.1.14）：touch 独立库 touch-<hash>.bbolt；每次上报后检查 digest 阈值
+	// （计数优先 + 间隔兜底，maybeDigest 内部判定；失败静默不影响埋点主流程）。
+	touchPath := touchPathFor(vault)
+	touchCfg := store.LoadTouchConfig(baseOf(vault))
+	touchFn := func(target, from string) error {
+		if err := store.AppendTouch(touchPath, target, from); err != nil {
+			return err
+		}
+		_, _ = store.MaybeDigest(touchPath, storePath, touchCfg) // 通知先于淘汰；失败静默
+		return nil
+	}
 	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
 	srv.OrcaRepo = orcaRepo
 	// 埋点只读统计闭包（v0.1.11，backlog §3.3）：只读聚合，绝不反馈排序/hot
+	// §3.7（v0.1.14）：touch 独立库 + 幽灵过滤跨图库（双路径）。
 	srv.SetTouchStats(func() (int, []web.TouchRow, []web.TouchRow, error) {
-		total, targets, sources, err := store.TouchStats(storePath, 10)
+		total, targets, sources, err := store.TouchStats(touchPath, storePath, 10)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -728,6 +759,20 @@ func cmdServe(args []string) int {
 		}
 		return total, toRows(targets), toRows(sources), nil
 	})
+	// §3.7（v0.1.14）：digest 只读接口闭包（查询 / ack / available）
+	srv.SetTouchDigest(func() (*web.Digest, error) {
+		d, err := store.LatestDigest(touchPath)
+		if err != nil || d == nil {
+			return nil, err
+		}
+		return &web.Digest{
+			ID: d.ID, GeneratedAt: d.GeneratedAt, WindowStart: d.WindowStart,
+			Since: d.Since, Total: d.Total,
+			Targets: toWebDigestTargets(d.Targets), Sources: toWebRows(d.Sources),
+		}, nil
+	})
+	srv.SetTouchAck(func(id string) error { return store.AckDigest(touchPath, id) })
+	srv.SetDigestAvailable(func() bool { return store.DigestAvailable(touchPath) })
 	// v0.1.12：/api/stats 暴露 is_pending（roadmap #14）
 	srv.SetIsPending(func() bool { return pending.Load() })
 
@@ -786,13 +831,36 @@ func cmdServe(args []string) int {
 	if !isOrca && flags["profile-name"] == "" && flags["profile"] == "" && adapter.DetectLLMWiki(vault) {
 		fmt.Printf("提示: 检测到 LLM Wiki 结构（raw/ + wiki/index.md）——如需只扫 wiki/ 实体页并排除 index.md/log.md，加 --profile-name llm-wiki\n")
 	}
-	if n, err := store.TouchCount(storePath); err == nil && n > 0 {
+	if n, err := store.TouchCount(touchPath); err == nil && n > 0 {
 		fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
+	}
+	// §3.7（v0.1.14）启动补查：serve 启动时检查一次间隔兜底——引擎未跑期间
+	// 错过的 digest_days 不丢（成本 = touch 库 meta 一次读）。
+	if gen, _ := store.MaybeDigest(touchPath, storePath, touchCfg); gen {
+		fmt.Printf("touch digest: 启动补查生成新 digest（间隔兜底）\n")
 	}
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		fatal("服务失败: %v", err)
 	}
 	return 0
+}
+
+// toWebRows / toWebDigestTargets：store 聚合形态 → web 展示形态（闭包注入边界：
+// web 不 import store，main 负责映射，与 SetTouchStats 的 toRows 同模式）。
+func toWebRows(rs []store.TouchRow) []web.TouchRow {
+	out := make([]web.TouchRow, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, web.TouchRow{ID: r.ID, Count: r.Count})
+	}
+	return out
+}
+
+func toWebDigestTargets(ts []store.DigestTarget) []web.DigestTarget {
+	out := make([]web.DigestTarget, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, web.DigestTarget{ID: t.ID, Title: t.Title, Count: t.Count})
+	}
+	return out
 }
 
 // refreshFunc 构造 Web 端的刷新闭包：重解析 → 对账 diff → 改名迁移（合并持久化
@@ -819,7 +887,7 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err := store.SaveRenames(storePath, merged); err != nil {
 			return nil, nil, fmt.Errorf("改名映射持久化失败: %w", err)
 		}
-		if err := store.RenameTouch(storePath, merged); err != nil {
+		if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
 			return nil, nil, fmt.Errorf("touch 迁移失败: %w", err)
 		}
 		if err := store.Save(storePath, docs); err != nil {
@@ -903,10 +971,23 @@ func cmdMCP(args []string) int {
 	// 启动横幅仅在交互式终端（stdout 是 TTY）打印——DSH 等 MCP 客户端 spawn 时
 	// stdout 是管道，静默（否则每次重连/respawn 都在宿主控制台刷一行）。
 	if isTerminal(os.Stdout) {
-		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar/community\n",
+		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar/community/touch_digest\n",
 			src, g.Stats().Nodes)
 	}
 	srv := mcp.New(g, p, version)
+	// §3.7（v0.1.14）：seren.touch_digest 只读闭包——MCP 保持只 import 纯库边界，
+	// touch store 访问经闭包隔离；digest 映射为 MCP 可见形态。
+	srv.SetTouchDigest(func() (any, error) {
+		touchPath := touchPathFor(vault)
+		d, err := store.LatestDigest(touchPath)
+		if err != nil || d == nil {
+			return d, err
+		}
+		// 附 available（未读开关），供 AI 判断是否有新 digest
+		return map[string]any{
+			"digest": d, "available": store.DigestAvailable(touchPath),
+		}, nil
+	})
 	if err := srv.Serve(os.Stdin, os.Stdout); err != nil {
 		fatal("MCP 服务失败: %v", err)
 	}

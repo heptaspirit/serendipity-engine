@@ -12,7 +12,7 @@
 >
 > White-box, local, pure-Go zero-dependency. One structural signal, two consumers: **humans** roam for inspiration, **agents** skip the crawl and consume clusters / evidence chains / weight distributions directly.
 
-[![Version](https://img.shields.io/badge/version-v0.1.13-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20ready-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md) [![简体中文](https://img.shields.io/badge/简体中文-README-7aa2f7)](README.md)
+[![Version](https://img.shields.io/badge/version-v0.1.14-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![Pure Go](https://img.shields.io/badge/Pure%20Go-Zero%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-✅-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20ready-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md) [![简体中文](https://img.shields.io/badge/简体中文-README-7aa2f7)](README.md)
 
 ## Features
 
@@ -120,7 +120,7 @@ AI agents: read [AGENTS.md](AGENTS.md) first (orientation / repo map / dev red l
 | [`docs/plugin-dev-plan.md`](docs/plugin-dev-plan.md) | **Plugin dev plan (M2)**: lifecycle state machine / multi-platform distribution / plugin×AI cooperation. ⚠️ Note: the actual plugin code is developed in separate repos (not in this one); this repo ships the engine core only (the sole shared artifact with plugins is `docs/api-contract.md`) |
 | [`docs/frontend.md`](docs/frontend.md) | Frontend plan (Web UI): plugin prep + UI/UX polish spec + test quick-reference |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | Backend backlog: perf optimizations, similar/export/touch stats, CLI & MCP polish |
-| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 12 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
+| [`docs/api-contract.md`](docs/api-contract.md) | API contract: 14 endpoints + auth (the only shared artifact between the plugin repo and the engine) |
 | [`docs/history/`](docs/history/) | Archived decisions/verifications (content absorbed into design/roadmap; full narrative retained) |
 
 ## Special Thanks

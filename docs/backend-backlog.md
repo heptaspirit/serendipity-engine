@@ -133,7 +133,7 @@ bbolt 不是"更轻的 SQLite"——它的三个硬特性（**零 schema / COW �
 - **选型（已定，2026-08-24）**：算法用 **Leiden**（Louvain 官方改进版，保证 well-connected 社区）；Go 实现用 `github.com/vsuryav/leiden-go`（MIT、string 节点直通、零新增依赖、自带 Modularity 质量分，go.sum 锁定）。孤立节点（度=0）检测前过滤（其诊断信号由 `Stats().Orphans` 承接）。落地草图见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) 附录 D.4。
 - **原则「算法等场景」**：社区发现/介数中心性的价值要落到具体功能（知识缺口诊断 API / 结构导航视图）才有意义——不提前做，等「诊断层」功能排期时顺带实现。先拿已有连通分量做粗糙版（哪些区域互不相连），不够再上 Leiden。
 - **选型（2026-08-24 用户拍板）**：Leiden 直接引 `github.com/vsuryav/leiden-go`（MIT，vendor 锁版本）——手写会超行数红线，引库后 `community.go` 仅适配层（~50 行）。**文件组织见 §一.5 开发纪律**：community.go（Leiden）/ centrality.go（Betweenness）/ structure.go（聚类系数 + K-Core）/ similar.go 扩展（Adamic-Adar）。落地时直接执行，无需重新调研。
-- **未来 MCP**：✅ v0.1.12 顺势加了 `graph.community` 工具，与 roam/random/relation/node/similar/stats 并列（七件套）。
+- **未来 MCP**：✅ v0.1.12 顺势加了 `graph.community` 工具，与 roam/random/relation/node/similar/stats 并列（七件套）；✅ v0.1.14 加 `seren.touch_digest`（§3.7，八件套）。
 - **可选真增量**：介数中心性（桥接节点检测，诊断层信号，Brandes O(nm) 千级~2 万节点跑得起）；最短路径/紧密度/SCC 不引入（hop 路径已覆盖，无场景）。
 - **合规**：MIT，硬性要求仅「保留版权声明」（vendor 时 Go 自动记录 LICENSE）；README 标注一行 attribution。
 
@@ -336,8 +336,9 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 ## 六、MCP 工具扩展评估（2026-08-23 用户提出）
 
 > 结构不变（stdio JSON-RPC 薄协议、只读、零第三方依赖），只评估工具集扩展。
-> 现状七件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation` /
-> `graph.node` / `graph.similar` / `graph.community`（v0.1.9 四件 → v0.1.11 六 → v0.1.12 七，
+> 现状八件套：`graph.stats` / `graph.roam` / `graph.random` / `graph.relation` /
+> `graph.node` / `graph.similar` / `graph.community` / `seren.touch_digest`
+> （v0.1.9 四件 → v0.1.11 六 → v0.1.12 七 → v0.1.14 八（+touch digest，§3.7），
 > 见 [`docs/architecture/07-mcp.md`](architecture/07-mcp.md)）。
 
 ### 建议新增（按价值排序）

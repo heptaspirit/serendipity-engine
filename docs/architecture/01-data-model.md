@@ -60,10 +60,31 @@ type Graph struct {
 |---|---|---|
 | `docs`（id → docRow JSON，去 Refs） | 图节点 | **Save 差值写**（v0.1.13 P1：对比旧值只 Put/Delete 变更，幂等；重复 Save 零写入） |
 | `links`（a\x00b → 1.0） | **有向引用行**（v0.1.5 修正：a 链接 b，保方向） | 同上（Save 差值写） |
-| `touch`（seq 8B BE → {ts,target,src} JSON） | 反馈埋点（点击记录） | **AppendTouch 增量**（NextSequence 自增），Save 不清除；容量上限 5000 条（超限删最旧） |
 | `renames`（old → new） | 改名迁移映射（v0.1.5，修订 #8） | **SaveRenames 全量重写**（随每次刷新） |
 
 > 无迁移（#16 红利）：旧 `.sqlite` 是派生快照（源数据 = vault），直接删，下次 refresh 重建。
+
+### touch 独立 store（§3.7，v0.1.14）
+
+touch（反馈埋点）自 v0.1.14 从图库拆为**独立文件** `<vault>/.serendipity/touch-<hash>.bbolt`
+（`TouchDBPath`，与图库同 hash 派生——同一 vault 的 touch 与图库成对）。原因：touch 是
+**不可从 vault 派生的原始行为信号**，不该被"源数据权威原则"允许删除的可重建派生快照
+（`db-*.bbolt`）连坐；图库重建/误删后 touch 安然无恙。
+
+| bucket | 内容 | 写入方式 |
+|---|---|---|
+| `touch`（seq 8B BE → {ts,target,src} JSON） | 原始点击事件流 | **AppendTouch 增量**（NextSequence 自增）；容量上限 5000 条（超限删最旧，健康遗忘） |
+| `meta`（last_seq / last_digest_ts / last_digest_id / last_digest / last_ack_id） | digest 状态 + 已读标记 | MaybeDigest / AckDigest 写 |
+| `backups`（digest id → TopN 聚合快照 JSON） | 算法长期记忆（蒸馏聚合，非原始事件） | MaybeDigest 每次生成滚一份，`backup_max`（默认 5）轮转删最旧 |
+
+- **备份/恢复**：`touch-<hash>.bbolt` 单文件即完整 store（事件 + meta + backups），
+  拷贝文件 = 完整备份，拷回 = 完整恢复——无需额外机制。
+- **digest 触发**（计数优先 + 间隔兜底 + serve 启动补查）：自上次 digest 起累计
+  ≥ `digest_count`（默认 500），或距上次 ≥ `digest_days`（默认 3 天，仅上次存在时）。
+  digest 在 touch 截断前生成——通知先于淘汰（§3.7.2 顺序铁律天然满足：阈值 500 ≪ 上限 5000）。
+- **引擎零写 vault**：digest 内容经只读接口（REST `/api/touch/digest` + MCP
+  `seren.touch_digest`）暴露，`serendipity-digest-*.md` 由前端插件导出（§3.7.3）。
+- 参数配置 `<vault>/.serendipity/touch.yaml`（与 profile.yaml 同 convention，钳制区间）。
 
 ### 关键语义
 
@@ -75,7 +96,8 @@ type Graph struct {
 - **Save 幂等**：任何一次 refresh 后存储即最新状态，重复刷新无副作用。
 - **Load 容错**：文件不存在 → `nil, nil`（首次对账全新增）；文件存在但从未写入
   （无 documents 表）→ 同样视为无旧状态（v0.1.3）。
-- **touch 独立**：Save 只 DELETE documents/links，不动 touch——埋点数据跨刷新保留。
+- **touch 独立**：Save 只 DELETE documents/links，不动 touch——埋点数据跨刷新保留
+  （v0.1.14 起 touch 更独立：独立文件 `touch-<hash>.bbolt`，连图库重建都不连坐）。
   `from` 列名避开了 SQL 保留字（曾用 `from` 导致语法错误，v0.1.4 改 `src`）。
 - **documents 存"文件真相"**：Save 写原始 Refs（不做改名重定向），对账 diff 才能
   收敛；身份迁移（改名）在**建图层**叠加（`redirectForGraph`），由 renames 表驱动。

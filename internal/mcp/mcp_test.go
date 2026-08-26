@@ -71,15 +71,16 @@ func TestMCPLifecycle(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"graph.node","arguments":{"id":"Alpha"}}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"graph.similar","arguments":{"id":"Alpha","k":5}}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"graph.community","arguments":{"seed":42}}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"nope","params":{}}`,
-		`{"jsonrpc":"2.0","id":12,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"seren.touch_digest","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"graph.nope","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"nope","params":{}}`,
+		`{"jsonrpc":"2.0","id":13,"method":"ping"}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`, // 无 id → 不响应
 		`not json`,
 	}, "\n")
 	resps := runServe(t, reqs)
-	if len(resps) != 13 {
-		t.Fatalf("应有 13 个响应（12 请求 + 1 解析错误；通知不响应），got %d", len(resps))
+	if len(resps) != 14 {
+		t.Fatalf("应有 14 个响应（13 请求 + 1 解析错误；通知不响应），got %d", len(resps))
 	}
 
 	// id=1 initialize
@@ -96,17 +97,17 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("initialize 兜底 protocolVersion 应为 2024-11-05, got %v", init["protocolVersion"])
 	}
 
-	// id=2 tools/list → 7 个 tools，含 graph.random/node/similar/community
+	// id=2 tools/list → 8 个 tools，含 graph.random/node/similar/community/touch_digest
 	var tl struct{ Tools []struct{ Name string } }
 	json.Unmarshal(resps[1].Result, &tl)
-	if len(tl.Tools) != 7 {
-		t.Fatalf("应有 7 个 tools, got %d", len(tl.Tools))
+	if len(tl.Tools) != 8 {
+		t.Fatalf("应有 8 个 tools, got %d", len(tl.Tools))
 	}
 	names := map[string]bool{}
 	for _, x := range tl.Tools {
 		names[x.Name] = true
 	}
-	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar", "graph.community"} {
+	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar", "graph.community", "seren.touch_digest"} {
 		if !names[want] {
 			t.Fatalf("tools 缺 %s", want)
 		}
@@ -222,21 +223,25 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("community 应返回有效社区: %+v", cmRes)
 	}
 
-	// id=10 未知工具 → error -32602
+	// id=10 seren.touch_digest → 未配置闭包 → error -32602（测试未注入 touch store）
 	if resps[9].Error == nil || resps[9].Error.Code != -32602 {
-		t.Fatalf("未知工具应 -32602, got %+v", resps[9].Error)
+		t.Fatalf("touch_digest 未配置应 -32602, got %+v", resps[9].Error)
 	}
-	// id=11 未知方法 → error -32601
-	if resps[10].Error == nil || resps[10].Error.Code != -32601 {
-		t.Fatalf("未知方法应 -32601, got %+v", resps[10].Error)
+	// id=11 未知工具 → error -32602
+	if resps[10].Error == nil || resps[10].Error.Code != -32602 {
+		t.Fatalf("未知工具应 -32602, got %+v", resps[10].Error)
 	}
-	// id=12 ping → result {}
-	if string(resps[11].Result) != "{}" {
-		t.Fatalf("ping 应返回 {}, got %s", resps[11].Result)
+	// id=12 未知方法 → error -32601
+	if resps[11].Error == nil || resps[11].Error.Code != -32601 {
+		t.Fatalf("未知方法应 -32601, got %+v", resps[11].Error)
+	}
+	// id=13 ping → result {}
+	if string(resps[12].Result) != "{}" {
+		t.Fatalf("ping 应返回 {}, got %s", resps[12].Result)
 	}
 	// 解析错误 → -32700
-	if resps[12].Error == nil || resps[12].Error.Code != -32700 {
-		t.Fatalf("解析错误应 -32700, got %+v", resps[12].Error)
+	if resps[13].Error == nil || resps[13].Error.Code != -32700 {
+		t.Fatalf("解析错误应 -32700, got %+v", resps[13].Error)
 	}
 }
 

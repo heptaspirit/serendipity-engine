@@ -28,14 +28,22 @@ import (
 
 // Server 持有图与画像，提供只读 MCP 服务。
 type Server struct {
-	g       *graph.Graph
-	p       *adapter.VaultProfile
-	version string
+	g          *graph.Graph
+	p          *adapter.VaultProfile
+	version    string
+	touchDigFn func() (any, error) // §3.7 只读 digest 查询（main 注入，读 touch store；nil = 不提供）
 }
 
 // New 创建 MCP 服务（图与画像由调用方从 --db / vault 加载，见 cmd/seren main）。
 func New(g *graph.Graph, p *adapter.VaultProfile, version string) *Server {
 	return &Server{g: g, p: p, version: version}
+}
+
+// SetTouchDigest 注入只读 digest 查询闭包（§3.7，v0.1.14；main 构造，读 touch
+// store 的 LatestDigest——MCP 保持"只 import 纯库"边界，store 访问经闭包隔离）。
+// 闭包返回任意可 JSON 化的 digest 摘要；返回 (nil, nil) 表示无 digest。
+func (s *Server) SetTouchDigest(fn func() (any, error)) {
+	s.touchDigFn = fn
 }
 
 // ---- 最小 JSON-RPC 2.0 结构（零第三方依赖） ----
@@ -190,6 +198,10 @@ func toolDefs() []toolDef {
 				"seed":       snum("随机种子（0=随机；固定值可复现同一划分）"),
 			}),
 		},
+		{
+			Name: "seren.touch_digest", Description: "touch 行为信号 digest（§3.7）：窗口内点击聚合 TopN（幽灵过滤 + 标题）+ 来源 TopN + 时间跨度 + 新增总数——AI 识别『哪些主题在升温、疑似该连一下』。只读、被动（无 digest 返回空摘要）。无参数。",
+			InputSchema: schema(nil, map[string]any{}),
+		},
 	}
 }
 
@@ -228,6 +240,19 @@ func (s *Server) callTool(req rpcRequest) rpcResponse {
 		payload = s.similar(p.Args)
 	case "graph.community":
 		payload = s.community(p.Args)
+	case "seren.touch_digest":
+		if s.touchDigFn == nil {
+			return errResp(req.ID, -32602, "touch digest unavailable（未配置 touch store）")
+		}
+		d, err := s.touchDigFn()
+		if err != nil {
+			return errResp(req.ID, -32602, "touch digest: "+err.Error())
+		}
+		if d == nil {
+			payload = map[string]any{"digest": nil, "available": false}
+		} else {
+			payload = d
+		}
 	default:
 		return errResp(req.ID, -32602, "unknown tool: "+p.Name)
 	}

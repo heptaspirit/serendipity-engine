@@ -42,11 +42,11 @@ go run ./cmd/seren mcp <vault>              # MCP（stdio JSON-RPC，AI 通道�
 | `internal/graph` | 内存图：Build / Resolve / PPR / 激活扩散 / TextSearch / Similar / 社区发现 |
 | `internal/score` | 归一化融合打分（PPR × 激活 × 跳数） |
 | `internal/roam` | 漫游管线：锚定 → 扩散 → 排除 → 降级 |
-| `internal/store` | 持久化（SQLite；bbolt 替换计划见 backend-backlog §二.1） |
+| `internal/store` | 持久化（bbolt；图库 `db-<hash>.bbolt` 三 bucket + touch 独立 `touch-<hash>.bbolt`，见 backend-backlog §3.7） |
 | `internal/sync` | 对账 diff（增 / 删 / 改 / 改名） |
 | `internal/watch` | 自动监听（轮询 + 节流合并） |
-| `internal/web` | REST `/api/*`（10 端点，见 api-contract.md）+ Web UI（static/index.html） |
-| `internal/mcp` | MCP 只读七工具：graph.stats / roam / random / relation / node / similar / community |
+| `internal/web` | REST `/api/*`（14 端点，见 api-contract.md）+ Web UI（static/index.html） |
+| `internal/mcp` | MCP 只读八工具：graph.stats / roam / random / relation / node / similar / community / seren.touch_digest |
 
 ## 文档地图（改什么，先读什么）
 

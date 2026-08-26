@@ -24,6 +24,16 @@ func contractServer(t *testing.T, storePath string) *Server {
 	s.SetTouchStats(func() (int, []TouchRow, []TouchRow, error) {
 		return 7, []TouchRow{{ID: "b", Count: 4}}, []TouchRow{{ID: "Alpha", Count: 2}}, nil
 	})
+	s.SetTouchDigest(func() (*Digest, error) {
+		return &Digest{
+			ID: "d1", GeneratedAt: 1700000000, WindowStart: 1699990000,
+			Since: "2026-08-25 10:00", Total: 7,
+			Targets: []DigestTarget{{ID: "b", Title: "Beta", Count: 4}},
+			Sources: []TouchRow{{ID: "Alpha", Count: 2}},
+		}, nil
+	})
+	s.SetTouchAck(func(id string) error { return nil })
+	s.SetDigestAvailable(func() bool { return true })
 	s.SetIsPending(func() bool { return true })
 	// refresh 闭包：返回一个合成 diff + 同一图（端点只验证 JSON 形状，不做真刷新）
 	s.Refresh = func() (*syncpkg.Result, *graph.Graph, error) {
@@ -63,7 +73,7 @@ func TestEndpointJSONContract(t *testing.T) {
 		method, path string
 		keys         []string
 	}{
-		{"GET", "/api/stats", []string{"nodes", "edges", "version", "revision", "is_pending", "dangling", "dangling_refs"}},
+		{"GET", "/api/stats", []string{"nodes", "edges", "version", "revision", "is_pending", "digest_available", "dangling", "dangling_refs"}},
 		{"GET", "/api/config", []string{"params", "source", "vault", "version", "nodes", "edges"}},
 		{"GET", "/api/roam?q=Alpha", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
 		{"GET", "/api/roam?random=1&seed=42", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
@@ -140,5 +150,51 @@ func TestStatsIsPendingReflected(t *testing.T) {
 	m := body.(map[string]any)
 	if m["is_pending"] != true {
 		t.Fatalf("is_pending 应为 true: %v", m)
+	}
+	if m["digest_available"] != true {
+		t.Fatalf("digest_available 应为 true: %v", m)
+	}
+}
+
+// GET /api/touch/digest 契约：digest 内容 + available（§3.7）。
+func TestTouchDigestEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+	resp := doAuthGet(t, ts, "/api/touch/digest")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("digest 应 200, got %d", resp.StatusCode)
+	}
+	body := decodeRaw(t, resp.Body)
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("digest 应为对象：%v", body)
+	}
+	mustKeys(t, m, "digest", "available")
+	dm, ok := m["digest"].(map[string]any)
+	if !ok {
+		t.Fatalf("digest.digest 应为对象：%v", m["digest"])
+	}
+	mustKeys(t, dm, "id", "generated_at", "window_start", "since", "total", "targets", "sources")
+}
+
+// POST /api/touch/digest/ack 契约：{id} → ok（§3.7）。
+func TestTouchDigestAckEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/touch/digest/ack", bytes.NewBufferString(`{"id":"d1"}`))
+	req.Header.Set(tokenHeader, testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("ack 应 200, got %d", resp.StatusCode)
+	}
+	body := decodeRaw(t, resp.Body)
+	if m, ok := body.(map[string]any); !ok || m["ok"] != "true" {
+		t.Fatalf("ack 应返回 ok: %v", body)
 	}
 }

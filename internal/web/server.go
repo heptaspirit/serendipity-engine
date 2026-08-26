@@ -118,6 +118,30 @@ type TouchRow struct {
 	Count int    `json:"count"`
 }
 
+// DigestTarget digest 聚合行（web 层展示形态：ID + 标题 + 次数）。
+type DigestTarget struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Count int    `json:"count"`
+}
+
+// Digest digest 内容（web 层展示形态；§3.7，v0.1.14——只读接口，引擎零写 vault）。
+type Digest struct {
+	ID          string         `json:"id"`           // 唯一 id（unix 纳秒）
+	GeneratedAt int64          `json:"generated_at"` // 生成时间（unix 秒）
+	WindowStart int64          `json:"window_start"` // 窗口起点（unix 秒）
+	Since       string         `json:"since"`        // 窗口起点人读串
+	Total       int            `json:"total"`        // 窗口新增 touch 数
+	Targets     []DigestTarget `json:"targets"`      // TopN（幽灵过滤 + 标题）
+	Sources     []TouchRow     `json:"sources"`      // TopN 来源词
+}
+
+// TouchDigestFunc 最新 digest 查询闭包（由 main 构造，读 touch store；nil → 无）。
+type TouchDigestFunc func() (*Digest, error)
+
+// TouchAckFunc digest 已读标记闭包（由 main 构造，写 touch store meta）。
+type TouchAckFunc func(id string) error
+
 // Server 持有图与画像，提供 REST 接口。
 type Server struct {
 	mu        sync.RWMutex // 保护 G 与 revision（刷新替换图，读接口并发安全）
@@ -130,6 +154,9 @@ type Server struct {
 	Refresh   RefreshFunc    // 非空时注册 POST /api/refresh
 	Touch     TouchFunc      // 非空时注册 POST /api/touch（反馈埋点）
 	TouchStat TouchStatsFunc // 非空时注册 GET /api/touch/stats（只读统计，v0.1.11）
+	TouchDg   TouchDigestFunc // 非空时注册 GET /api/touch/digest（§3.7，v0.1.14）
+	TouchAck  TouchAckFunc   // 非空时注册 POST /api/touch/digest/ack（§3.7）
+	DigAvail  func() bool    // 非空时 /api/stats 返回 digest_available（§3.7）
 	IsPending func() bool    // 非空时 /api/stats 返回 is_pending（v0.1.12，roadmap #14：库有变化待刷新）
 	Token     string         // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
 	revision  int            // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
@@ -152,6 +179,21 @@ func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version str
 // SetTouchStats 注入埋点只读统计闭包（v0.1.11；New 后调用，避免改签名波及调用方）。
 func (s *Server) SetTouchStats(fn TouchStatsFunc) {
 	s.TouchStat = fn
+}
+
+// SetTouchDigest 注入 digest 查询闭包（§3.7，v0.1.14；New 后调用）。
+func (s *Server) SetTouchDigest(fn TouchDigestFunc) {
+	s.TouchDg = fn
+}
+
+// SetTouchAck 注入 digest 已读闭包（§3.7，v0.1.14；New 后调用）。
+func (s *Server) SetTouchAck(fn TouchAckFunc) {
+	s.TouchAck = fn
+}
+
+// SetDigestAvailable 注入 digest_available 查询（§3.7，v0.1.14；New 后调用）。
+func (s *Server) SetDigestAvailable(fn func() bool) {
+	s.DigAvail = fn
 }
 
 // SetIsPending 注入"有待刷新变化"查询（v0.1.12，roadmap #14）。non-nil 时
@@ -197,6 +239,12 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.TouchStat != nil {
 		mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
+	}
+	if s.TouchDg != nil {
+		mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
+	}
+	if s.TouchAck != nil {
+		mux.HandleFunc("/api/touch/digest/ack", s.handleTouchDigestAck)
 	}
 	mux.HandleFunc("/", s.handleIndex)
 	return s.auth(mux)
@@ -493,14 +541,68 @@ func (s *Server) handleTouchStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleTouchDigest GET /api/touch/digest：最新 digest 只读查询（§3.7，v0.1.14）。
+// 被动告知（§3.7.2）：仅主动查询才返回；不主动推送、不弹窗。无 digest → 空摘要
+// （200 + 零值，不报错——前端轻量状态提醒的轮询友好形态）。
+func (s *Server) handleTouchDigest(w http.ResponseWriter, r *http.Request) {
+	if s.TouchDg == nil {
+		writeJSON(w, map[string]any{"digest": nil, "available": false})
+		return
+	}
+	dig, err := s.TouchDg()
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+	available := false
+	if dig != nil && s.DigAvail != nil {
+		available = s.DigAvail()
+	}
+	if dig == nil {
+		writeJSON(w, map[string]any{"digest": nil, "available": false})
+		return
+	}
+	writeJSON(w, map[string]any{"digest": dig, "available": available})
+}
+
+// handleTouchDigestAck POST /api/touch/digest/ack：标记 digest 已读（§3.7，v0.1.14）。
+// body {id}；只写 touch store meta（last_ack_id），不碰 touch 事件、不反馈排序（红线）。
+func (s *Server) handleTouchDigestAck(w http.ResponseWriter, r *http.Request) {
+	if s.TouchAck == nil {
+		writeJSON(w, map[string]string{"error": "touch digest ack unavailable"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.ID == "" {
+		writeJSON(w, map[string]string{"error": "id required"})
+		return
+	}
+	if err := s.TouchAck(body.ID); err != nil {
+		writeJSON(w, map[string]string{"ok": "false"})
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
+}
+
 type statsResp struct {
-	Nodes        int                 `json:"nodes"`
-	Edges        int                 `json:"edges"`
-	Version      string              `json:"version"`
-	Revision     int                 `json:"revision"`      // 图版本号：自动/手动刷新后 +1（前端轮询提示更新）
-	IsPending    bool                `json:"is_pending"`    // v0.1.12：库有变化待刷新（roadmap #14；手动刷新清 pending）
-	Dangling     int                 `json:"dangling"`      // 悬空目标种数
-	DanglingRefs []graph.DanglingRef `json:"dangling_refs"` // v0.1.12：悬空链接明细（backlog §四 缺口①，截断上限）
+	Nodes           int                 `json:"nodes"`
+	Edges           int                 `json:"edges"`
+	Version         string              `json:"version"`
+	Revision        int                 `json:"revision"`         // 图版本号：自动/手动刷新后 +1（前端轮询提示更新）
+	IsPending       bool                `json:"is_pending"`       // v0.1.12：库有变化待刷新（roadmap #14；手动刷新清 pending）
+	DigestAvailable bool                `json:"digest_available"` // §3.7：有未读 digest（轻量状态提醒开关；DigAvail nil = false）
+	Dangling        int                 `json:"dangling"`         // 悬空目标种数
+	DanglingRefs    []graph.DanglingRef `json:"dangling_refs"`    // v0.1.12：悬空链接明细（backlog §四 缺口①，截断上限）
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -511,6 +613,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if s.IsPending != nil {
 		isPending = s.IsPending()
 	}
+	digAvail := false
+	if s.DigAvail != nil {
+		digAvail = s.DigAvail()
+	}
 	// 悬空链接明细（v0.1.12，backlog §四 缺口①）：截断上限防 stats 轮询响应膨胀
 	danglingRefs := s.G.DanglingRefs()
 	if len(danglingRefs) > maxDanglingRefs {
@@ -519,7 +625,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 	writeJSON(w, statsResp{
 		Nodes: st.Nodes, Edges: st.Edges, Version: s.Version,
-		Revision: rev, IsPending: isPending,
+		Revision: rev, IsPending: isPending, DigestAvailable: digAvail,
 		Dangling: st.DanglingLinks, DanglingRefs: danglingRefs,
 	})
 }
