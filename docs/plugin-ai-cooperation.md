@@ -29,7 +29,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 0 · 宿主笔记软件（Obsidian / 虎鲸 Orca）               │
+│ Layer 0 · 宿主笔记软件（Obsidian；~~虎鲸 Orca 插件暂停~~）   │
 │   笔记内容 · 当前块/选择上下文 · （可选）本地 AI（Ollama）    │
 ├─────────────────────────────────────────────────────────────┤
 │ Layer 1 · 插件（薄壳 + AI 大脑）                             │
@@ -44,7 +44,7 @@
 ```
 
 - **Layer 1 与 Layer 2 之间只有一套 REST 契约**（即 [`api-contract.md`](api-contract.md)）——AI 不引入第二条通道，避免契约分裂。
-- **Layer 0 与 Layer 1 之间**：插件用宿主 API 读笔记正文、取当前块、呈现结果（Obsidian `app.vault` / 虎鲸 `orca.plugins.readFile` + `BlockEditorContext.rootBlockId`）。
+- **Layer 0 与 Layer 1 之间**：插件用宿主 API 读笔记正文、取当前块、呈现结果（Obsidian `app.vault` / ~~虎鲸 `orca.plugins.readFile` + `BlockEditorContext.rootBlockId`，暂停~~）。
 
 ---
 
@@ -87,7 +87,7 @@
 
 ### Flow 1 · AI 建议链接研判（头条协同，对应 §3.6）
 1. 引擎 refresh 产出潜在关联候选 → `GET /api/suggest-links` 返回 top-K（A,B,score,evidence）。
-2. 插件 AI 取候选 + 两边笔记正文（Layer 0 读：Obsidian `app.vault.read` / 虎鲸 `orca.plugins.readFile`）→ 批量问："A 与 B 是否语义相关？为什么？"
+2. 插件 AI 取候选 + 两边笔记正文（Layer 0 读：Obsidian `app.vault.read` / ~~虎鲸 `orca.plugins.readFile`，暂停~~）→ 批量问："A 与 B 是否语义相关？为什么？"
 3. AI 返回判定（`related?` `confidence?` `rationale?`）。
 4. 插件把接受的 pair 写 sidecar + `POST /api/edges`（`kind=ai`, provenance）。
 5. roam 现包含它们；node 详情显示「AI 建议关联 · 置信 0.8 · 因为…」——白盒、可撤销。
@@ -111,7 +111,7 @@
 **AIBackend 抽象**（插件内，两个实现，共享 80% 胶水）：
 - `interface AIBackend { complete(prompt) → text; completeStream(prompt) → stream }`
 - **impl A（Obsidian）**：`fetch` 到用户配置的 endpoint（本地 Ollama `http://localhost:11434` 或 OpenAI 兼容）。key 存插件 settings，**不进引擎、不进图**。
-- **impl B（虎鲸）**：`orca.ai.sendMessage` / `sendStreamMessage`（host 提供 AI，若用户已配）——薄壳直接桥接，少写一层。
+- ~~**impl B（虎鲸）**：`orca.ai.sendMessage` / `sendStreamMessage`（host 提供 AI，若用户已配）——薄壳直接桥接，少写一层。~~（〔2026-08-26 暂停〕）
 
 **语义通道 vs 引擎**：AI 只看「笔记内容 + 引擎给的事实」，不替引擎建图、不生成笔记内容。
 

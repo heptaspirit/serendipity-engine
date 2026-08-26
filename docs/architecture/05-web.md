@@ -63,7 +63,7 @@
 
 ### 嵌入契约（iframe 壳 / postMessage 桥，v0.1.12 前端 P0）
 
-> 前端被 Obsidian/虎鲸插件嵌进面板时（`?embed=1` 或 `window.top !== window.self`），
+> 前端被 Obsidian 插件（~~虎鲸插件暂停，2026-08-26~~）嵌进面板时（`?embed=1` 或 `window.top !== window.self`），
 > 进入 **紧凑嵌入模式**（`body.embed`）：隐藏 hero/brand/hint、收窄 padding、
 > 顶栏按钮文字仅窄屏（<560px）才隐藏（纯文字按钮不因藏 `.txt` 变空壳）。
 

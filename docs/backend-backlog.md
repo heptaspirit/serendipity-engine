@@ -311,7 +311,7 @@ bbolt 不是"更轻的 SQLite"——它的三个硬特性（**零 schema / COW �
 **体验增强：事前提示 + 手动刷新联动（用户方案）—— ✅ v0.1.12 全部落地**
 
 - 现状：手动刷新按钮 ✅（v0.1.2）+ 自动刷新**后**提示 ✅（v0.1.4 轮询 revision）；缺"刷新**前**有待刷新"提示
-- 方案：`/api/stats` 加 `is_pending` 字段（暴露 watch pending）→ 前端轮询（已有 setInterval）显示"库有变化，将自动刷新 · [立即刷新]"（复用 #refresh）→ M2 插件 Obsidian 状态栏 / 虎鲸 notify 同款
+- 方案：`/api/stats` 加 `is_pending` 字段（暴露 watch pending）→ 前端轮询（已有 setInterval）显示"库有变化，将自动刷新 · [立即刷新]"（复用 #refresh）→ M2 插件 Obsidian 状态栏（~~/ 虎鲸 notify 同款~~，虎鲸插件暂停，2026-08-26）
 - 粒度诚实：事前提示只能到"有变化"（watch 未解析，不知增删）；具体明细在刷新后的 diff 摘要
 - 细节：手动刷新需**清 pending**，否则 watch 下个 tick 可能重复自动刷一次（幂等无害但浪费）——✅ v0.1.12 `refreshFn` 手动刷新成功后 `pending.Store(false)` 实现
 
@@ -332,6 +332,26 @@ bbolt 不是"更轻的 SQLite"——它的三个硬特性（**零 schema / COW �
 gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进制不上库）。
 
  ✅（v0.1.11）已完成开发
+
+## 五.1、CLI → TUI（终端交互升级，2026-08-26 用户拍板立项）
+
+> 背景：CLI 三件套让"命令式"体验达标，但人机双消费者里**人**这条腿仍是"每次敲一条命令 + 读纯文本"。
+> 触发：虎鲸插件暂停（2026-08-26，见 roadmap）后，终端成为虎鲸用户唯一入口——TUI 正好补上
+> "在终端里持续漫游"的体验缺口（不必为漫游开浏览器）。
+> 立项决议（用户拍板）：**做**，排入 roadmap 阶段 1 #17；引入 TUI 库（候选 bubbletea，MIT）——
+> 首次为交互 UI 引入第三方依赖，按工程纪律 vendor 锁版本 + attribution（先例：leiden-go）。
+
+| 项 | 决定 |
+|---|---|
+| 形态 | `seren tui <vault|OrcaNote.db>` 常驻交互会话（非一次命令）：搜索 → 漫游 → 点选 → 详情/续漫游/导出 |
+| 复用 | graph / roam / score / store 包级函数（roam.Outcome 已含锚点/结果/路径/降级，直接喂 TUI 渲染）；**引擎核心零改动** |
+| 库选型 | bubbletea（charmbracelet，MIT，主流）为首选；备选 tview。**vendor 锁版本**，go.mod 新增依赖 |
+| 功能范围 | v1：搜索框 + 结果列表（方向键/数字选择）+ 节点详情（node）+ 继续漫游 + 随机漫步 + 导出 md；不含图谱可视化（Web UI 已有） |
+| 与 Web UI 关系 | 互补不重复：TUI 面向"终端里不离开"的漫游；Web UI 保留完整阅读体验。serve 仍是跳转/嵌入载体 |
+| 成本 | 一个新子命令（cmd/seren）+ 一个 TUI 包（internal/tui 或单文件）+ vendor 依赖；约 300–500 行 |
+| 验收 | `seren tui` 真库上：搜→选→详情→续漫游→导出全链路可用；`go test ./...` 全绿 |
+
+**与虎鲸暂停的衔接**：虎鲸插件放弃后，虎鲸用户经 `seren tui <库.db>` 获得与插件接近的交互体验（搜索/漫游/详情/导出），兑现"可以用内核完成相应功能"。
 
 ## 六、MCP 工具扩展评估（2026-08-23 用户提出）
 
@@ -354,7 +374,7 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 
 ### 明确不加（克制边界）
 
-- **graph.read（读正文全文）**：引擎是"发现层"不是"阅读层"（见 [`docs/history/product-form.md`](history/product-form.md)）——正文由 Obsidian/虎鲸宿主负责；node 只给 Text 摘要截断。
+- **graph.read（读正文全文）**：引擎是"发现层"不是"阅读层"（见 [`docs/history/product-form.md`](history/product-form.md)）——正文由 Obsidian/虎鲸宿主负责（虎鲸为内核直读，无插件；见 plugin-dev-plan 暂停声明）；node 只给 Text 摘要截断。
 - **写类工具（touch / refresh / 边权）**：违背只读红线，AI 会话不能改动本地状态。
 - **graph.hot**：graph.stats 已含 TopHubs，增量价值≈0。
 

@@ -2,24 +2,24 @@
 
 > 日期：2026-08-23（由外部审计前端路线图定稿并汇入仓库）
 > 来源：与用户讨论（2026-08-23）+ `internal/web/static/index.html` 与 [`docs/history/plugin-evaluation.md`](history/plugin-evaluation.md) 评审
-> 性质：**前端做什么**——让 Web UI 从「漫游工具」升级为「阅读 + 漫游工具」，并为 Obsidian/虎鲸插件薄壳（[`docs/roadmap.md`](roadmap.md) M2）铺路。
+> 性质：**前端做什么**——让 Web UI 从「漫游工具」升级为「阅读 + 漫游工具」，并为 Obsidian 插件薄壳（[`docs/roadmap.md`](roadmap.md) M2；~~虎鲸插件已暂停，2026-08-26~~）铺路。
 > 相关：战略定位 [`docs/positioning.md`](positioning.md) · 后端机会 [`docs/backend-backlog.md`](backend-backlog.md) · 前端源码 `internal/web/static/index.html`（单文件，零依赖原生 JS，go:embed 嵌入）。
 
-> 目标：让 Web UI 从「漫游工具」升级为「阅读 + 漫游工具」，并为 Obsidian/虎鲸插件薄壳铺路。
+> 目标：让 Web UI 从「漫游工具」升级为「阅读 + 漫游工具」，并为 Obsidian 插件薄壳铺路（~~虎鲸插件已暂停~~）。
 
 ## 一、现状核对（v0.1.12，internal/web/static/index.html）
 
 已有功能：搜索漫游 / 🎲 随机漫步（升级带文字主按钮）/ 关系查询 / **相似查询（Adamic-Adar）** / **节点详情预览** / **漫游导出** / **反馈统计（只读）** / 参数侧滑抽屉（白盒）/ 卡片续漫游 + 历史栈 / 打开跳转（obsidian:// 与 orca-note:// 与 **postMessage 桥**）/ touch 埋点 + 幽灵过滤 / 自动监听提示 + **is_pending 提示条** / 对账刷新 / **紧凑嵌入 `?embed=1`** / **i18n 中英双语全部文案**。
 技术形态：零依赖原生 JS，单 HTML，CSS 变量隔离（Tokyo Night 暗色 + light 变量主题跟随），token 服务端注入（iframe 天然兼容）。
 
-## 二、P0 · 插件化前置（进 Obsidian/虎鲸前必须）—— ✅ v0.1.12 全部落地
+## 二、P0 · 插件化前置（进 Obsidian 前必须；~~虎鲸插件暂停~~）—— ✅ v0.1.12 全部落地
 
 | # | 功能 | 说明 | 落点 |
 |---|---|---|---|
 | 1 | **紧凑嵌入模式** | 当前 920px 全宽 + hero 56vh，窄面板（300-500px）直接崩。`?embed=1` 或 iframe 检测：隐藏 hero、压缩卡片密度、搜索框常驻 | ✅ v0.1.12：`?embed=1` 或 `top!==self` → body.embed（hero/brand/页脚隐藏、搜索 sticky、卡片收紧、.open 常显） |
-| 2 | **postMessage 桥** | 插件场景「打开」不跳外链，postMessage 通知宿主就地打开（Obsidian openLinkText / 虎鲸 invokeBackend）。`top !== self` 时自动启用 | ✅ v0.1.12：嵌入时 `window.parent.postMessage({type:'open',id})`；宿主注入 `{type:'theme'}/{type:'locale'}/{type:'activeFile'}` |
+| 2 | **postMessage 桥** | 插件场景「打开」不跳外链，postMessage 通知宿主就地打开（Obsidian openLinkText / ~~虎鲸 invokeBackend，暂停~~）。`top !== self` 时自动启用 | ✅ v0.1.12：嵌入时 `window.parent.postMessage({type:'open',id})`；宿主注入 `{type:'theme'}/{type:'locale'}/{type:'activeFile'}` |
 | 3 | **节点详情预览** | 点卡片先看内容再决定深入。需 `/api/node?id=`（Text 摘要 + 邻居列表）+ 卡片「预览」按钮 | ✅ v0.1.11（`/api/node` + 卡片预览浮层） |
-| 4 | **多语言（中英双语，覆盖全部用户可见文案）** | Obsidian 社区是国际平台；前端文案目前全硬编码中文。抽 i18n（文案集中一份文件），早期做比后期便宜。**范围：所有用户可见文案一律中英双语**——按钮/标签/提示条/toast/刷新摘要/空状态/错误提示/加载态，禁止硬编码中文字符串。语言跟随宿主（Obsidian navigator.language / 虎鲸 `orca.state.locale`，默认中文，英文兜底） | ✅ v0.1.12：集中 `I18N` 字典（zh/en），`t(key)` 取值；`applyStaticI18n()` 填充 data-i18n；语言跟随 postMessage `{type:'locale'}` > navigator.language（zh→中文，其他→英文兜底） |
+| 4 | **多语言（中英双语，覆盖全部用户可见文案）** | Obsidian 社区是国际平台；前端文案目前全硬编码中文。抽 i18n（文案集中一份文件），早期做比后期便宜。**范围：所有用户可见文案一律中英双语**——按钮/标签/提示条/toast/刷新摘要/空状态/错误提示/加载态，禁止硬编码中文字符串。语言跟随宿主（Obsidian navigator.language / ~~虎鲸 `orca.state.locale`，暂停~~，默认中文，英文兜底） | ✅ v0.1.12：集中 `I18N` 字典（zh/en），`t(key)` 取值；`applyStaticI18n()` 填充 data-i18n；语言跟随 postMessage `{type:'locale'}` > navigator.language（zh→中文，其他→英文兜底） |
 
 ## 三、P0.5 · 近期改掉：hero 浮游气泡 —— ✅ v0.1.12 已落地
 
@@ -46,7 +46,7 @@
 
 1. **需要动引擎的**：#3 节点详情 API（`/api/node?id=`，登记契约）+ similar/export/touch-stats 三个端点（与 [`docs/backend-backlog.md`](backend-backlog.md) §三 同批登记）。其余纯前端。且天然契合"Web 层留口子"——语义候选将来可出现在节点详情的"相似节点"区（见 [`docs/positioning.md`](positioning.md) §五）。
 2. **iframe token 已兼容**：v0.1.8 token 服务端注入页面，iframe 直接 GET / 即得，插件零透传工作。
-3. 多语言尽早做（P0）：**全部用户可见文案中英双语**（含提示/错误/摘要/空状态），文案抽离后后续所有新功能直接带 key，避免二次返工。实现参考：虎鲸模板插件自带官方 l10n（`setupL10N(orca.state.locale, ...)`）——语言跟随宿主，默认中文、英文兜底；Obsidian 侧读 `navigator.language`。
+3. 多语言尽早做（P0）：**全部用户可见文案中英双语**（含提示/错误/摘要/空状态），文案抽离后后续所有新功能直接带 key，避免二次返工。实现参考：~~虎鲸模板插件自带官方 l10n（`setupL10N(orca.state.locale, ...)`）——语言跟随宿主，默认中文、英文兜底；~~Obsidian 侧读 `navigator.language`。
 4. **〔2026-08-23 借鉴〕节点详情分级 L0/L1**（OpenViking，见 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md) §4.2）：L0 = summary（Text 截断），L1 = overview（摘要 + 邻居导航）——#3 节点详情 API 天然分两级（默认截断摘要、展开给邻居清单）。同源还有「确定性排序」（稳定采样，印证锚点排序需稳定 = Resolve map 序）与「簇级导航」（按 hop 分组展示 roam 结果，远期可读性方向）。
 
 ## 七、后续动作
@@ -73,18 +73,18 @@
 
 **联动批次**：P0（节点详情 #3 + 导出按钮）→ P1（相似面板 + 统计面板 + 刷新改名摘要 + MCP 配置卡片）。相似/统计面板复用「关系」面板的 toggle 模式。
 
-### 多宿主兼容要求（Obsidian / 虎鲸插件技术栈差异的影响）
+### 多宿主兼容要求（~~Obsidian / 虎鲸插件技术栈差异的影响~~；虎鲸插件已暂停，保留宿主无关协议供未来扩展）
 
-> 结论：**插件壳的技术栈差异（Obsidian=TS/esbuild，虎鲸=React+Valtio）对 Web UI 零影响**——两者都是 iframe 嵌同一份引擎自服务的 UI（[`docs/history/plugin-evaluation.md`](history/plugin-evaluation.md) D1），壳不碰 UI。真正的要求只有三条：
+> 结论：**插件壳的技术栈差异（Obsidian=TS/esbuild；~~虎鲸=React+Valtio，暂停~~）对 Web UI 零影响**——都是 iframe 嵌同一份引擎自服务的 UI（[`docs/history/plugin-evaluation.md`](history/plugin-evaluation.md) D1），壳不碰 UI。真正的要求只有三条：
 
-1. **postMessage 协议必须宿主无关**：前端只发通用消息（如 `{type:'open', id}`），Obsidian 壳用 openLinkText、虎鲸壳用 invokeBackend 各自实现——协议契约定在引擎侧，两壳遵守同一份。
-2. **窄面板真正自适应**：虎鲸 ViewPanel 可能比 Obsidian 侧栏更窄，紧凑模式不能是固定宽度，需按 iframe 实际宽度响应（P0-1 强化）。
-3. **主题变量化**：两宿主各有主题系统，light/dark 两套 CSS 变量是硬要求（P1-7），且深色跟随宿主而非固定 Tokyo Night。
+1. **postMessage 协议必须宿主无关**：前端只发通用消息（如 `{type:'open', id}`），Obsidian 壳用 openLinkText（~~虎鲸壳用 invokeBackend，暂停~~）实现——协议契约定在引擎侧，壳遵守同一份。
+2. **窄面板真正自适应**：~~虎鲸 ViewPanel 可能比 Obsidian 侧栏更窄，~~紧凑模式不能是固定宽度，需按 iframe 实际宽度响应（P0-1 强化）。
+3. **主题变量化**：宿主各有主题系统，light/dark 两套 CSS 变量是硬要求（P1-7），且深色跟随宿主而非固定 Tokyo Night。
 
 ### Web UI 宿主无关性的完整边界（2026-08-24 定稿）
 
 > 移植性保证：**Web UI 与后端核心同等可移植**——换宿主只重写壳（~20 行），UI 零改动。
-> 技术事实：iframe 跨源（localhost:端口 vs 宿主 app:// / orca:// 协议）**浏览器强制隔离**——Web UI 无法访问父 window 的宿主 API（`app.vault` / `orca.state`），物理上不可能绑定宿主。
+> 技术事实：iframe 跨源（localhost:端口 vs 宿主 app:// / ~~orca://~~ 协议）**浏览器强制隔离**——Web UI 无法访问父 window 的宿主 API（`app.vault` / ~~`orca.state`~~），物理上不可能绑定宿主。
 
 **Web UI 只认识三样东西**：
 1. `/api/*`（引擎 REST 契约）
@@ -96,7 +96,7 @@
 ```
 壳 → Web UI（宿主上下文注入，UI 永远不需要知道宿主是谁）：
   {type:'theme',   mode:'light'|'dark', colors?:{bg,panel,surface,text,muted,accent,border}} # 主题跟随；colors 可选，覆盖引擎 CSS token
-  {type:'locale',  lang:'zh'|'en'}          # 语言跟随（Obsidian 壳读 navigator.language / 虎鲸壳读 orca.state.locale）
+  {type:'locale',  lang:'zh'|'en'}          # 语言跟随（Obsidian 壳读 navigator.language / ~~虎鲸壳读 orca.state.locale，暂停~~）
   {type:'activeFile', id:'xxx'}             # 命令锚点（用户当前在看哪篇）
 Web UI → 壳：
   {type:'open', id:'xxx', uri?:'obsidian://…|orca-note://…'} # 打开请求（唯一上行）；uri 供宿主解码 file 路径跳回（更可靠）
@@ -104,7 +104,7 @@ Web UI → 壳：
 
 **规则**：
 - Web UI **绝不直接调宿主 API**（跨源也不允许，双保险）；需要宿主信息一律由壳注入
-- 壳是**唯一**接触宿主 API 的层（Obsidian openLinkText / 虎鲸 invokeBackend），只做翻译不塞逻辑
+- 壳是**唯一**接触宿主 API 的层（Obsidian openLinkText / ~~虎鲸 invokeBackend，暂停~~），只做翻译不塞逻辑
 - **壳设置保持宿主绑定**（seren.exe 路径/端口/自动启动存宿主 settings）——本就该绑，不抽象成通用协议（3 个字段不值得）
 - 换宿主 = 壳重写 postMessage 注入部分，UI / 引擎零改动
 

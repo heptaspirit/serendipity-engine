@@ -17,8 +17,9 @@
 - **M1 阶段 1 基本收尾**：similar 结构相似（Adamic-Adar）、graph.node 节点详情、export 漫游导出、touch 统计 API、Stats 缓存、renames 中间环清理、WAL autocheckpoint、CLI 三件套、**刷新一致性（悬挂链接明细 + 幽灵 touch 过滤）**、**刷新体验（is_pending 事前提示 + 手动即时刷新）**、**LLM Wiki adapter 画像（llm-wiki + ExcludedFiles + watch 排除同源）**、**Leiden 社区发现诊断层（/api/communities + MCP graph.community）**、**前端 JSON 契约测试**全部落地。
 - **前端 P0（阶段 2 #1，插件化前置）本轮同步完成**：紧凑嵌入 `?embed=1` + postMessage 桥（`{type:'open',id}` / 宿主注入 theme/locale）+ i18n 中英双语全部文案；Web UI 完善（hero 改静态热门列表 / 侧滑抽屉统一面板 / 卡片 ID 收敛 + scores 折叠 + 🎲 升级主按钮）。
 - **similar 实测反馈（2026-08-24）→ 已修复**：v0.1.11 的 Jaccard 被用户实测"挂出来的节点不太对"；v0.1.12 升级 **Adamic-Adar**（共同邻居度加权 `Σ 1/log(deg)`），度偏置与共享邻居不加权问题一并解决。
-- **现状判断**：引擎侧（阶段 1）的能力面已覆盖作者自用闭环；前端 P0 就绪 → 下一步进 **M2 插件薄壳**（Obsidian / 虎鲸）。
+- **现状判断**：引擎侧（阶段 1）的能力面已覆盖作者自用闭环；前端 P0 就绪 → 下一步进 **M2 插件薄壳**（Obsidian；虎鲸插件已暂停，见下）。
 - 未完成（阶段 1 剩余，均"等场景/可选"）：性能优化（PPR 提前收敛等 pre-bbolt 项仍等数万节点规模信号）、潜在关联（#15 已落地 suggest-links 候选清单；**落图进 PPR 与 co-touch 行为信号留待 M2 插件场景**）。
+- **〔2026-08-26 暂停〕虎鲸版本插件不开发**：尝试后放弃——虎鲸生态小、插件壳收益低；**内核直读虎鲸库能力保留**（`seren index/roam/serve <库.db>` 照常可用，等于用内核完成插件功能）。相关插件化内容见下划线标注。
 - **2026-08-24 新增方向**（诊断层 / LLM Wiki 画像）本轮已落地（Leiden `graph.community` + `llm-wiki` 画像）。
 
 ## 里程碑总览
@@ -27,7 +28,7 @@
 |---|---|---|---|
 | **M0** | 插件前置（serve 安全）+ API 契约 + MCP v3 | — | ✅ 已落地 |
 | **M1** | 引擎核心 + Web UI 完善（作者自用） | 阶段 1 | ✅ 能力面完成（剩余项均"等场景/可选"） |
-| **M2** | 插件薄壳（对外可用） | 阶段 2 | 前端 P0 已就绪，可开工 |
+| **M2** | 插件薄壳（对外可用） | 阶段 2 | 前端 P0 已就绪，可开工（Obsidian；虎鲸插件暂停） |
 | **M3** | 远期增强（canvas 检索 + bbolt 有趣能力） | 阶段 3 | ⏸ 远期（canvas 用户少用；bbolt 有趣档待 #16 落地后评估） |
 
 ---
@@ -56,6 +57,7 @@
 | 14 | **刷新体验增强**（事前提示 + 手动即时刷新） | [backend-backlog](backend-backlog.md) §四 | ✅ v0.1.12；stats.is_pending + 前端"库有变化，将自动刷新 · 立即刷新"提示条 + 手动刷新清 pending |
 | 15 | **潜在关联（多算法 / 有界 / 标注；原「近似边估计」）** | [backend-backlog](backend-backlog.md) §3.6 | ✅ v0.1.13（2026-08-25）：**suggest-links 待审清单落地**（2-hop 候选 + AA/Jaccard/RA + Borda 聚合 + top-K 节流 → `graph.PotentialLinks` + `GET /api/suggest-links`）；**未落图**（kind=approx 候选形态，不进 PPR/Activate——落图需带权边改造 + 改变已验证 roam 行为，等 M2 插件真需要漫游进近似边时评估）；co-touch 行为信号需插件 L1 喂入（v0.1.13 纯拓扑）；**取代原 mentions API（AC 文本扫描，已否决）**；复用 #12 底座；虎鲸实测验证 adapter 只给真实链接即可 |
 | 16 | **存储层替换：SQLite → bbolt + 性能增强（顺手做）** | [backend-backlog](backend-backlog.md) §二.1 / §二.3 | ✅ v0.1.13（2026-08-25）：modernc → `go.etcd.io/bbolt` v1.5.0（原生 Go，MIT）；四表→四 bucket（docs/links/touch/renames）；**无迁移**（旧 `.sqlite` 直接删，refresh 重建）；侵入面 = store 包内，签名保持调用点零改动；端到端验证（真实 vault 150 文档 + 幂等刷新 + roam 回读）。**顺手项已落地**：P1 刷新增量写（差值 Put/Delete，重复 Save 零写入）、P2 mmap + NoSync（开库提速）、P5 幽灵 touch 过滤 O(1)（bucket.Has）；P8 serve-while-refresh 读不阻塞内存层已有（RWMutex 换图）。**剩余 ⏸ 等规模信号**：P3 PPR 缓存 / P4 similar 缓存 / P7 TextSearch 有序索引（graph 层改造，§二.3 注明"#16 落地后评估排期"） |
+| 17 | **CLI → TUI（终端漫游会话）** | [backend-backlog](backend-backlog.md) §五.1 | ⏳ **已立项（2026-08-26 用户拍板）**：`seren tui <vault>` 常驻交互（搜索/漫游/详情/续漫游/导出），复用 graph/roam 包级函数引擎零改动；引入 TUI 库（bubbletea 候选，MIT，vendor 锁版本）。触发：虎鲸插件暂停后终端成为虎鲸用户唯一入口。未开工 |
 
 ### 阶段 2 · 插件薄壳（M2；对外可用）
 
@@ -64,10 +66,10 @@
 | # | 任务 | 落点 | 说明 |
 |---|---|---|---|
 | 1 | 前端 P0（紧凑嵌入 + postMessage 桥 + 节点详情 + i18n 双语） | [frontend](frontend.md) §二 | ✅ v0.1.12；`?embed=1` + `{type:'open'}` 桥 + 中英双语全部文案——插件化前置已就绪 |
-| 2 | 插件薄壳 repos + 生命周期四态机（`serendipity-obsidian` / `serendipity-orca`，两个独立仓库，零构建时依赖；INSTALLED→CONFIGURED→RUNNING→DISABLED；managed/external 双模式） | [plugin-dev-plan](plugin-dev-plan.md) §五/§六 | 先 Obsidian（managed，spawn 核心）后 虎鲸（external，只连） |
+| 2 | 插件薄壳 repos + 生命周期四态机（`serendipity-obsidian` / ~~`serendipity-orca`（暂停）~~，两个独立仓库，零构建时依赖；INSTALLED→CONFIGURED→RUNNING→DISABLED；managed/external 双模式） | [plugin-dev-plan](plugin-dev-plan.md) §五/§六 | 先 Obsidian（managed，spawn 核心）后 ~~虎鲸（external，只连，已暂停）~~ |
 | 3 | 核心引擎多平台分发（goreleaser + GitHub Actions 四平台 asset；Q2 插件内下载按钮） | [plugin-dev-plan](plugin-dev-plan.md) §四 | win-amd64 / mac-amd64 / mac-arm64 / linux-amd64 全出包 |
 | 4 | 插件 × AI 协作（引擎端点 `suggest-links` / `edges` overlay + 插件 AIBackend） | [plugin-dev-plan](plugin-dev-plan.md) §九 · [plugin-ai-cooperation](plugin-ai-cooperation.md) | **引擎零 AI、只暴露接口与算法**；`suggest-links` 复用 #15 候选 pass，`edges` overlay 内存态（AI 建议边 `kind=ai` + 溯源，可撤销） |
-| 5 | 插件市场发布 | [plugin-dev-plan](plugin-dev-plan.md) §四/§七 | Obsidian 社区目录 / 虎鲸 zip（手动解压） |
+| 5 | 插件市场发布 | [plugin-dev-plan](plugin-dev-plan.md) §四/§七 | Obsidian 社区目录 / ~~虎鲸 zip（手动解压，暂停）~~ |
 | 6 | **touch 行为信号子系统**（独立 store + digest 告知 + 聚合备份 + 被动只读） | [backend-backlog](backend-backlog.md) §3.7 | **M2 排期（2026-08-26 定稿）**：touch 从图库拆独立 `touch-<hash>.bbolt`（touch/meta/backups）；digest 触发（计数≥500 主 / 间隔≥3天 兜底，计数优先 + 启动补查）+ `GET /api/touch/digest` + ack + `/api/stats.digest_available` + MCP 只读 `seren_touch_digest` + 聚合备份 `backup_max`；YAML `touch.yaml` 配置。**引擎零写 vault**——`serendipity-digest-*.md` 由插件导出。代码未动 |
 
 ### 阶段 3 · 远期增强（M3）
@@ -124,3 +126,5 @@ bbolt 落地 + 性能增强（#16，阶段 1，顺手做）→ 阶段 3 M3（can
 | 2026-08-25 | **#15 潜在关联落地（v0.1.13）**：suggest-links 待审清单（graph.PotentialLinks + GET /api/suggest-links，2-hop + AA/Jaccard/RA + Borda + top-K 节流，带算法与共享邻居证据）。未落图、co-touch 留 M2。端到端验证（真实 vault 输出有意义的人物↔人物/设定候选）。 |
 | 2026-08-26 | **M2 排期：touch 行为信号子系统定稿入档**：`backend-backlog.md` 新增 §3.7（独立 store 拆分修原 bug / digest 触发双逻辑计数优先 + 启动补查 / 被动非弹窗 + REST·MCP 只读 / **引擎零写 vault，digest md 由插件导出** / 聚合备份 / YAML touch.yaml）；roadmap 阶段 2 补 #6 排期指向 §3.7。**代码未动，M2 实现待启动**。设计立场已吸收内联（原 `serendipity-drive/serendipity-positioning.md` §十一）。 |
 | 2026-08-26 | **touch 行为信号子系统落地（v0.1.14）**：touch 拆独立 `touch-<hash>.bbolt`（touch/meta/backups，图库重建不再连坐，文件级复制即完整备份/恢复）；digest 触发（计数优先 + 间隔兜底 + serve 启动补查）+ `/api/touch/digest` + ack + `/api/stats.digest_available` + MCP `seren.touch_digest`（只读八工具）；`touch.yaml` 参数钳制；**引擎零写 vault**（digest md 由插件导出，§3.7.3）。端到端验证：store/mcp/web 三包测试全绿（含 digest 触发/幽灵过滤/备份轮转/契约）。 |
+| 2026-08-26 | **〔暂停〕虎鲸版本插件不开发**：尝试后放弃——虎鲸生态小、插件壳收益低，且内核已直读虎鲸库（`seren index/roam/serve <库.db>` 照常可用，等于用内核完成插件功能）。M2 插件薄壳收敛为 **Obsidian 单壳**；roadmap 阶段 2 与 plugin-dev-plan 中虎鲸插件条目均标注暂停（保留内核直读能力）。 |
+| 2026-08-26 | **TUI 立项（阶段 1 #17）**：`seren tui <vault>` 常驻终端漫游会话（搜索/漫游/详情/续漫游/导出），复用 graph/roam 包级函数引擎零改动；引入 TUI 库（bubbletea 候选，MIT，vendor 锁版本）——首次为交互 UI 引入第三方依赖。触发：虎鲸插件暂停后终端成为虎鲸用户唯一入口（backend-backlog §五.1）。 |
