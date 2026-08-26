@@ -57,7 +57,6 @@
 | 14 | **刷新体验增强**（事前提示 + 手动即时刷新） | [backend-backlog](backend-backlog.md) §四 | ✅ v0.1.12；stats.is_pending + 前端"库有变化，将自动刷新 · 立即刷新"提示条 + 手动刷新清 pending |
 | 15 | **潜在关联（多算法 / 有界 / 标注；原「近似边估计」）** | [backend-backlog](backend-backlog.md) §3.6 | ✅ v0.1.13（2026-08-25）：**suggest-links 待审清单落地**（2-hop 候选 + AA/Jaccard/RA + Borda 聚合 + top-K 节流 → `graph.PotentialLinks` + `GET /api/suggest-links`）；**未落图**（kind=approx 候选形态，不进 PPR/Activate——落图需带权边改造 + 改变已验证 roam 行为，等 M2 插件真需要漫游进近似边时评估）；co-touch 行为信号需插件 L1 喂入（v0.1.13 纯拓扑）；**取代原 mentions API（AC 文本扫描，已否决）**；复用 #12 底座；虎鲸实测验证 adapter 只给真实链接即可 |
 | 16 | **存储层替换：SQLite → bbolt + 性能增强（顺手做）** | [backend-backlog](backend-backlog.md) §二.1 / §二.3 | ✅ v0.1.13（2026-08-25）：modernc → `go.etcd.io/bbolt` v1.5.0（原生 Go，MIT）；四表→四 bucket（docs/links/touch/renames）；**无迁移**（旧 `.sqlite` 直接删，refresh 重建）；侵入面 = store 包内，签名保持调用点零改动；端到端验证（真实 vault 150 文档 + 幂等刷新 + roam 回读）。**顺手项已落地**：P1 刷新增量写（差值 Put/Delete，重复 Save 零写入）、P2 mmap + NoSync（开库提速）、P5 幽灵 touch 过滤 O(1)（bucket.Has）；P8 serve-while-refresh 读不阻塞内存层已有（RWMutex 换图）。**剩余 ⏸ 等规模信号**：P3 PPR 缓存 / P4 similar 缓存 / P7 TextSearch 有序索引（graph 层改造，§二.3 注明"#16 落地后评估排期"） |
-| 17 | **CLI → TUI（终端常驻会话，主程序即入口）** | [backend-backlog](backend-backlog.md) §五.1 | ⏳ **已立项（2026-08-26 用户拍板），排期 M3**（等 M2 Obsidian 插件做完再评估，不着急）。形态（用户定）：**`seren` 无参数直接启动进 TUI**，库加载一次驻内存，功能像开关一样开合（选库 / 漫游 / 详情 / 随机 / 导出 / 刷新；serve·MCP 作为可开关的服务管理）。复用 graph/roam 包级函数引擎零改动；引入 TUI 库（bubbletea 候选，MIT，vendor 锁版本）。触发：虎鲸插件暂停后终端成为虎鲸用户唯一入口。未开工 |
 
 ### 阶段 2 · 插件薄壳（M2；对外可用）
 
@@ -84,6 +83,7 @@
 | 4 | **bbolt 有趣能力：离线 AI 边 sidecar** | [backend-backlog](backend-backlog.md) §二.2 B | 插件携微型 bbolt 库存 AI 确认边，离线原子、引擎开机探活 |
 | 5 | **bbolt 有趣能力：跨库元索引**（多 vault 统一知识网） | [backend-backlog](backend-backlog.md) §二.2 B | 多数据源漫游成统一图（`node→vault` 中心索引） |
 | 6 | **bbolt 有趣能力：What-if 实验图**（fork 即建桶 A/B 对比） | [backend-backlog](backend-backlog.md) §二.2 B | 加 AI 边前 vs 后对比，把"AI 补图"变可实验 |
+| 7 | **Wails 桌面壳（`serendipity-desktop` 独立仓库）** | [backend-backlog](backend-backlog.md) §五.2 | ⏳ **已立项（2026-08-26 用户拍板），排期 M3**（等 M2 Obsidian 插件做完再评估，不着急）。形态（用户定）：打开后**手动指向笔记库** → 分析；界面可做 **MCP/serve 启停**等管理。壳 = 独立仓库（同 Obsidian 插件薄壳架构，引擎零改动、零 CGO 影响）；系统 WebView2 嵌现有 Web UI（复用 `?embed=1` + postMessage 桥 + i18n）。触发：虎鲸插件暂停后"终端=唯一入口"不成立——GUI 壳是更好的产品形态。未开工 |
 
 ---
 
@@ -128,3 +128,4 @@ bbolt 落地 + 性能增强（#16，阶段 1，顺手做）→ 阶段 3 M3（can
 | 2026-08-26 | **touch 行为信号子系统落地（v0.1.14）**：touch 拆独立 `touch-<hash>.bbolt`（touch/meta/backups，图库重建不再连坐，文件级复制即完整备份/恢复）；digest 触发（计数优先 + 间隔兜底 + serve 启动补查）+ `/api/touch/digest` + ack + `/api/stats.digest_available` + MCP `seren.touch_digest`（只读八工具）；`touch.yaml` 参数钳制；**引擎零写 vault**（digest md 由插件导出，§3.7.3）。端到端验证：store/mcp/web 三包测试全绿（含 digest 触发/幽灵过滤/备份轮转/契约）。 |
 | 2026-08-26 | **〔暂停〕虎鲸版本插件不开发**：尝试后放弃——虎鲸生态小、插件壳收益低，且内核已直读虎鲸库（`seren index/roam/serve <库.db>` 照常可用，等于用内核完成插件功能）。M2 插件薄壳收敛为 **Obsidian 单壳**；roadmap 阶段 2 与 plugin-dev-plan 中虎鲸插件条目均标注暂停（保留内核直读能力）。 |
 | 2026-08-26 | **TUI 立项（#17）→ 排期 M3**：`seren` 无参数直接启动进 TUI——库加载一次驻内存，功能像开关一样开合（选库/漫游/详情/随机/导出/刷新，serve·MCP 作可开关服务管理）；复用 graph/roam 包级函数引擎零改动；引入 TUI 库（bubbletea 候选，MIT，vendor 锁版本）。排期 M3（等 M2 Obsidian 插件做完再评估，用户拍板不着急）。触发：虎鲸插件暂停后终端成为虎鲸用户唯一入口（backend-backlog §五.1）。 |
+| 2026-08-26 | **方向修正：TUI 降级 → Wails 桌面壳为主（阶段 3 #7）**：评估后认为 TUI 仍是终端（门槛未真正降低），且"手动指向笔记库 + 界面管 MCP/serve 启停"只有 GUI 壳能自然满足。定：**Wails 壳为主**（`serendipity-desktop` 独立仓库，同 Obsidian 插件薄壳架构，引擎零改动、零 CGO 影响，WebView2 嵌现有 Web UI），排期 M3；**TUI 降级**为候选（不再占主线，成本极低可随时做，见 backend-backlog §五.1/§五.2）。 |

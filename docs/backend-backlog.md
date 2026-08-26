@@ -333,13 +333,16 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 
  ✅（v0.1.11）已完成开发
 
-## 五.1、CLI → TUI（终端常驻会话，2026-08-26 用户拍板立项，排期 M3）
+## 五.1、CLI → TUI（终端常驻会话）—— 〔2026-08-26 立项 → 同日降级为候选，Wails 壳为主，见 §五.2〕
 
 > 背景：CLI 三件套让"命令式"体验达标，但人机双消费者里**人**这条腿仍是"每次敲一条命令 + 读纯文本"。
 > 触发：虎鲸插件暂停（2026-08-26，见 roadmap）后，终端成为虎鲸用户唯一入口——TUI 正好补上
 > "在终端里持续漫游"的体验缺口（不必为漫游开浏览器）。
-> 立项决议（用户拍板）：**做**，**排期 M3**（等 M2 Obsidian 插件做完再评估，不着急）；引入 TUI 库
-> （候选 bubbletea，MIT）——首次为交互 UI 引入第三方依赖，按工程纪律 vendor 锁版本 + attribution（先例：leiden-go）。
+> ~~立项决议（用户拍板）：**做**，**排期 M3**；引入 TUI 库（候选 bubbletea，MIT）——首次为交互 UI
+> 引入第三方依赖，按工程纪律 vendor 锁版本 + attribution（先例：leiden-go）。~~
+> **〔2026-08-26 同日方向修正〕**：评估后认为 **TUI 仍是终端**（门槛未真正降低），且"手动指向笔记库 +
+> 界面管 MCP/serve 启停"只有 **GUI 壳**能自然满足 → **TUI 降级为候选**（不占主线，成本极低可随时做），
+> **Wails 桌面壳转正**（§五.2）。本节 TUI 形态设计保留作候选记录。
 
 **核心形态（用户拍板）**：TUI 的价值不是"把命令输出画好看"，而是**状态保持**——库加载一次驻内存，
 多个功能在同一份图上持续操作。因此 **`seren` 无参数直接启动进 TUI**（取代现在的 usage 打印），
@@ -349,15 +352,38 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 
 | 项 | 决定 |
 |---|---|
+| 状态 | ⏸ 候选（降级，2026-08-26）；Wails 壳为主（§五.2） |
 | 形态 | `seren`（无参数）→ TUI 主界面：库选择 → 功能开关面板（漫游/详情/随机/导出/刷新；serve·MCP 服务开关）；`seren help` 仍打印 usage，子命令保留 |
 | 复用 | graph / roam / score / store 包级函数（roam.Outcome 已含锚点/结果/路径/降级，直接喂 TUI 渲染）；**引擎核心零改动** |
 | 库选型 | bubbletea（charmbracelet，MIT，主流）为首选；备选 tview。**vendor 锁版本**，go.mod 新增依赖 |
 | 功能范围 | v1：库选择 + 搜索/漫游 + 结果列表（方向键/数字选择）+ 节点详情（node）+ 续漫游 + 随机漫步 + 导出 md + 刷新触发；不含图谱可视化（Web UI 已有）、不含 serve/MCP 本体 |
-| 与 Web UI 关系 | 互补不重复：TUI 面向"终端里不离开"的漫游；Web UI 保留完整阅读体验。serve 仍是跳转/嵌入载体 |
 | 成本 | 一个新包（internal/tui 或单文件）+ cmd 入口改造（无参数 → 进 TUI）+ vendor 依赖；约 400–600 行 |
 | 验收 | 无参数 `seren` 真库上：选库→搜→选→详情→续漫游→导出全链路可用；`seren roam …` 等子命令行为不变（回归）；`go test ./...` 全绿 |
 
-**与虎鲸暂停的衔接**：虎鲸插件放弃后，虎鲸用户经 `seren`（无参数）获得与插件接近的交互体验（搜索/漫游/详情/导出），兑现"可以用内核完成相应功能"。
+## 五.2、Wails 桌面壳（`serendipity-desktop` 独立仓库，2026-08-26 用户拍板转正，排期 M3）
+
+> 背景：TUI 评估后用户认为"终端里开合"仍不够——**真正想要的是打开一个应用，手动指向笔记库，然后
+> 分析；界面上还能管 MCP/serve 启停**。这是 GUI 壳的自然场景，TUI 给不了。
+> 决议（用户拍板）：**Wails 壳为主**，排期 M3（等 M2 Obsidian 插件做完再评估，不着急）；
+> 仓库形态 = **独立壳仓库** `serendipity-desktop`（与 Obsidian 插件薄壳同构，见 plugin-dev-plan §五：
+> 引擎零改动、零构建时依赖、唯一共享物 = API 契约）。TUI 降级（§五.1）。
+
+| 项 | 决定 |
+|---|---|
+| 形态 | 桌面应用：启动 → 原生对话框**手动指向笔记库**（vault 目录 / 虎鲸 .db）→ spawn 引擎 serve 子进程 → 系统 WebView2 嵌现有 Web UI（`?embed=1` + postMessage 桥 + i18n 全部复用）→ 界面面板做 **MCP / serve 启停管理**（进程状态、URL、token、重启） |
+| 仓库 | `serendipity-desktop` 独立仓库（同 serendipity-obsidian 架构：壳不 import 引擎包，只 spawn 二进制 + REST 契约） |
+| 体积 | 壳本体 ≈11–15MB（Wails runtime）+ 引擎 seren.exe 16MB ≈ **总量 27–30MB**；对比 Electron ~364MB 优势明显（[web-to-desktop-framework-comparison](https://github.com/Elanis/web-to-desktop-framework-comparison) 实测 Wails ~11MB） |
+| 构建链 | **壳层破零 CGO**（Wails 需 gcc/mingw + WebView2）；引擎核心保持零 CGO 红线不变（壳独立构建，不污染引擎产物） |
+| 运行时依赖 | WebView2 Runtime（Win10/11 系统自带；老 Win10 需引导安装） |
+| 引擎改动 | **零**：壳 = spawn `seren serve` + 嵌 UI + 进程管理；引擎只是被调用的 REST 服务 |
+| 与插件关系 | 与 Obsidian 插件**同构并行**（都是"壳"）：插件壳进 Obsidian，桌面壳独立成应用；Web UI / 契约 / postMessage 协议三者共享，壳层胶水（~20 行）各自实现 |
+| 功能范围 | v1：选库 + 启动/停止 serve + 嵌入 Web UI + MCP 启停面板 + 状态显示；不含图谱可视化（Web UI 已有） |
+| 成本 | 新仓库 + Wails 学习 + 壳层胶水；中—高（CGO 构建链 + 前端绑定） |
+| 验收 | 双击启动 → 选库 → 浏览器级 Web UI 在窗口内漫游；MCP 开关真实拉起/停止 `seren mcp`；数据不出本机 |
+
+**与虎鲸暂停的衔接**：虎鲸插件放弃后，"用内核完成功能"的最优载体 = 桌面壳——虎鲸用户双击 `serendipity-desktop`，指向 `.db` 即获得完整漫游 + 服务管理，比终端/浏览器更接近产品形态。
+
+**与 TUI 的关系**：TUI 降级为候选（§五.1）——若未来有"纯终端无 GUI 环境"需求，可低成本补做；主线走桌面壳。
 
 ## 六、MCP 工具扩展评估（2026-08-23 用户提出）
 
