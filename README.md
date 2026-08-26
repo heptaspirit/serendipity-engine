@@ -12,7 +12,7 @@
 >
 > 白盒、本地、纯 Go 零依赖。一份结构信号，两个消费者：**人**在笔记库里漫游寻灵感，**agent** 免于闷头遍历、直接消费相关簇 / 证据链 / 权重分布。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.14-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-%E5%8D%95%E4%BA%8C%E8%BF%9B%E5%88%B6-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-%E6%95%B0%E6%8D%AE%E4%B8%8D%E5%87%BA%E6%9C%AC%E6%9C%BA-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20%E5%8F%AF%E6%8E%A5%E5%85%A5-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![简体中文](https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-README-7aa2f7)](README.md) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.1.15-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/tags) [![License](https://img.shields.io/badge/License-MIT-9cf)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8)](go.mod) [![纯 Go](https://img.shields.io/badge/%E7%BA%AF%20Go-%E9%9B%B6%20CGO-4c566a)](go.mod) [![Single Binary](https://img.shields.io/badge/Single%20Binary-%E5%8D%95%E4%BA%8C%E8%BF%9B%E5%88%B6-7aa2f7)](https://github.com/heptaspirit/serendipity-engine/releases) [![Local-first](https://img.shields.io/badge/Local--first-%E6%95%B0%E6%8D%AE%E4%B8%8D%E5%87%BA%E6%9C%AC%E6%9C%BA-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![MCP Server](https://img.shields.io/badge/MCP%20Server-AI%20%E5%8F%AF%E6%8E%A5%E5%85%A5-7aa2f7)](https://github.com/heptaspirit/serendipity-engine) [![Top Language](https://img.shields.io/github/languages/top/heptaspirit/serendipity-engine)](https://github.com/heptaspirit/serendipity-engine) [![简体中文](https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-README-7aa2f7)](README.md) [![English](https://img.shields.io/badge/English-README.en-7aa2f7)](README.en.md)
 
 ## 特性
 
@@ -36,7 +36,7 @@
 ## 架构总览
 
 ```
-cmd/seren (CLI: index/roam/serve/refresh/profile-detect)
+cmd/seren (CLI: index/roam/serve/refresh/profile-detect; serve 无库启动 → POST /api/vault 配库)
    │ loadSource / parseSource（--db > 虎鲸 .db > Obsidian vault）
    ▼
 adapter（格式翻译：Document / Obsidian / Orca / VaultProfile / 快照）
@@ -65,11 +65,12 @@ go build -o seren.exe ./cmd/seren
 
 # Web UI（自动监听默认开；Obsidian 加 --vault-name、虎鲸自动 orca-note:// 跳转）
 .\seren.exe serve <vault> --port 8080
+.\seren.exe serve --port 8080                     # 无库启动：浏览器里选库（POST /api/vault 配库）
 
 # 对账刷新（增删改后同步，输出 增/删/改 明细）
 .\seren.exe refresh <vault> --store <file.bbolt>
 
-# MCP（AI 通道，只读七工具；给 dsh/agent 配 stdio MCP 指向此命令）
+# MCP（AI 通道，只读八工具；给 dsh/agent 配 stdio MCP 指向此命令）
 .\seren.exe mcp <vault> --db <file.bbolt>
 
 # 子命令级帮助 + 结构化输出（CLI 三件套）
@@ -94,7 +95,7 @@ LLM Wiki 库画像：`.\seren.exe roam <llm-wiki-vault> "词" --profile-name llm
 }
 ```
 
-七个只读工具：`graph.stats / roam / random / relation / node / similar / community`（不写 touch、不触发 refresh——AI 会话不能改动本地状态）。
+八个只读工具：`graph.stats / roam / random / relation / node / similar / community / seren.touch_digest`（不写 touch、不触发 refresh——AI 会话不能改动本地状态）。
 
 ## 开发
 
@@ -118,7 +119,7 @@ AI agent 请先读 [`AGENTS.md`](AGENTS.md)（定位 / 仓库地图 / 开发红�
 | [`docs/plugin-dev-plan.md`](docs/plugin-dev-plan.md) | **插件开发计划（M2）**：生命周期四态机 / 多平台分发 / 插件×AI 协作架构。⚠️ 注意：具体插件代码在独立仓库开发（不在本仓库），本仓库只承载引擎内核（与插件唯一的共享物是 `docs/api-contract.md`） |
 | [`docs/frontend.md`](docs/frontend.md) | 前端计划（Web UI）：插件化前置 + UI/UX 打磨规范 + 测试速查与交接 |
 | [`docs/backend-backlog.md`](docs/backend-backlog.md) | 后端积压清单：性能优化、similar/export/touch 统计、CLI/MCP 打磨 |
-| [`docs/api-contract.md`](docs/api-contract.md) | API 契约：14 端点 + 鉴权（插件仓库与引擎的唯一共享物，改 API 必同步） |
+| [`docs/api-contract.md`](docs/api-contract.md) | API 契约：15 端点 + 鉴权 + 无库启动配库（插件仓库与引擎的唯一共享物，改 API 必同步） |
 | [`docs/history/`](docs/history/) | 历史决策/验证归档（内容已吸收进 design/roadmap，保留完整叙事） |
 
 ## 特别鸣谢

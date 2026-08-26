@@ -289,10 +289,22 @@ func parseArgs(args []string) (pos []string, flags map[string]string) {
 // loadSource 统一加载：显式存储(--db) > 虎鲸库(.db 自动识别，先快照再读) > Obsidian vault。
 // 返回 图 + 原始文档 + 源描述。图构建叠加改名重定向（store renames 表，
 // v0.1.5 修订 #8：存储存文件真相，图层做身份迁移，见 redirectForGraph）。
+// 解析失败 fatal 退出（CLI 命令批处理语义）。
 func loadSource(vault string, p *adapter.VaultProfile, dbFile, storeFlag string) (*graph.Graph, []*adapter.Document, string) {
-	docs, src, err := parseSource(vault, p, dbFile)
+	g, docs, src, err := loadSourceErr(vault, p, dbFile, storeFlag)
 	if err != nil {
 		fatal("%v", err)
+	}
+	return g, docs, src
+}
+
+// loadSourceErr loadSource 的 error 返回版（v0.1.15 配库用）：配库（POST /api/vault）
+// 解析失败必须返回 error 给前端 JSON，绝不能 fatal 退出——否则路径写错直接杀掉
+// 整个 serve 进程（此前 buildServeState 用 loadSource 的 fatal，配库失败即崩溃）。
+func loadSourceErr(vault string, p *adapter.VaultProfile, dbFile, storeFlag string) (*graph.Graph, []*adapter.Document, string, error) {
+	docs, src, err := parseSource(vault, p, dbFile)
+	if err != nil {
+		return nil, nil, "", err // 前缀已在 parseSource 内（"解析失败"），不再重复
 	}
 	// 改名映射来源：--db 时 renames 在同一个存储文件里；vault 解析时在
 	// storePathFor 对应的默认存储里（无 → 空映射，全新构建无需迁移）。
@@ -302,7 +314,7 @@ func loadSource(vault string, p *adapter.VaultProfile, dbFile, storeFlag string)
 	} else {
 		renames, _ = store.LoadRenames(storePathFor(vault, storeFlag))
 	}
-	return graph.Build(redirectForGraph(docs, renames)), docs, src
+	return graph.Build(redirectForGraph(docs, renames)), docs, src, nil
 }
 
 // redirectForGraph 返回 Refs 重定向后的文档副本（用于建图）。不改动原始 docs：
@@ -705,7 +717,10 @@ func buildServeState(env *serveEnv) (*web.VaultState, error) {
 	vault := env.vault
 	p := env.p
 	flags := env.flags
-	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
+	g, docs, src, err := loadSourceErr(vault, p, flags["db"], flags["store"])
+	if err != nil {
+		return nil, err // 解析失败返回给调用方（配库走 JSON 报错，不 fatal）
+	}
 	isOrca := adapter.IsOrcaDB(vault)
 	if flags["db"] != "" {
 		// 存储回读：按路径形态推断源（orca 节点 path = block/<id>）

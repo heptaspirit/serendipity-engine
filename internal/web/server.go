@@ -71,6 +71,9 @@
 //	v0.1.12 GET /api/communities（Leiden 社区发现，诊断层）；/api/stats 加
 //	        is_pending（库变化待刷新）+ dangling_refs（悬空链接明细）；touch/stats
 //	        targets 过滤幽灵 touch；similar 升级 Adamic-Adar。
+//	v0.1.15 无库启动：/api/stats 加 configured；GET/POST /api/vault（配库/换库，
+//	        VaultFunc 闭包 + ApplyVaultState + OnVaultApplied 钩子）；路由全量注册
+//	        + handler 内闭包 nil 判定（rlockGraph 守卫 G/P）；未配库数据端点 503。
 //
 // ============================================================================
 package web
