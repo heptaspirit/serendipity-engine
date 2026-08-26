@@ -324,3 +324,48 @@ func TestVaultStateUnconfigured(t *testing.T) {
 		t.Fatalf("空库 refresh 应返回 error: %v", m3)
 	}
 }
+
+// 空库时所有数据端点统一返回 configured:false 而不 panic（v0.1.15 回归：
+// handleHot 曾在守卫前访问 s.P 导致 nil panic——本测试覆盖全部图依赖端点）。
+func TestVaultStateAllEndpointsNoPanic(t *testing.T) {
+	s := New(nil, nil, "", "", "v0.1.15", nil, nil) // 空库：G 与 P 均为 nil
+	s.Token = testToken
+	ts := newAuthServer(t, s)
+
+	paths := []string{
+		"/api/stats",
+		"/api/hot?n=5",
+		"/api/roam?q=x",
+		"/api/roam?random=1",
+		"/api/relation?from=a&to=b",
+		"/api/similar?id=a",
+		"/api/suggest-links?k=3",
+		"/api/node?id=a",
+		"/api/communities",
+		"/api/config",
+		"/api/touch/stats",
+		"/api/touch/digest",
+		"/api/vault",
+	}
+	for _, p := range paths {
+		resp := doAuthGet(t, ts, p)
+		raw := decodeRaw(t, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s 空库应 200, got %d", p, resp.StatusCode)
+		}
+		// 空库响应必须是 JSON 对象且带 error（不 panic）；stats/config 无 error 但应含 configured
+		m, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("%s 空库响应应为对象: %v", p, raw)
+		}
+		if _, hasErr := m["error"]; !hasErr {
+			if _, hasCfg := m["configured"]; !hasCfg {
+				// digest 空库合法形态：{digest:null, available:false}（TouchDg nil）
+				if _, hasDig := m["digest"]; !hasDig {
+					t.Fatalf("%s 空库响应应含 error/configured/digest: %v", p, m)
+				}
+			}
+		}
+	}
+}

@@ -298,11 +298,13 @@ func vaultStateError(w http.ResponseWriter) {
 }
 
 // rlockGraph 获取图读锁并校验已配库（v0.1.15 无库启动守卫）：
-// 已配库 → 持 RLock 返回 true（调用方 defer s.mu.RUnlock()）；
-// 未配库（G==nil）→ 已写 503 并解锁，返回 false。
+// 已配库（G 与 P 均非 nil，配库时一起设置）→ 持 RLock 返回 true（调用方 defer
+// s.mu.RUnlock()）；未配库 → 已写 503 并解锁，返回 false。P 一并检查：handler
+// 在锁内访问 s.P（StructuralTypes 等），G 非空但 P 空会在那里 nil panic
+// （v0.1.15 实测 handleHot 顺序 bug 的根因——守卫必须在任何 s.P 访问之前）。
 func (s *Server) rlockGraph(w http.ResponseWriter) bool {
 	s.mu.RLock()
-	if s.G == nil {
+	if s.G == nil || s.P == nil {
 		s.mu.RUnlock()
 		vaultStateError(w)
 		return false
@@ -553,12 +555,10 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	k := atoiDefault(r.URL.Query().Get("k"), 10)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.G == nil {
-		vaultStateError(w)
+	if !s.rlockGraph(w) {
 		return
 	}
+	defer s.mu.RUnlock()
 	id := s.resolveID(q)
 	if id == "" {
 		writeJSON(w, map[string]string{"error": "node not found"})
@@ -596,12 +596,10 @@ func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
 	if k > 200 {
 		k = 200
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.G == nil {
-		vaultStateError(w)
+	if !s.rlockGraph(w) {
 		return
 	}
+	defer s.mu.RUnlock()
 	structural := map[string]bool{}
 	for _, t := range s.P.StructuralTypes {
 		structural[t] = true
@@ -652,12 +650,10 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "id required"})
 		return
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.G == nil {
-		vaultStateError(w)
+	if !s.rlockGraph(w) {
 		return
 	}
+	defer s.mu.RUnlock()
 	id := s.resolveID(q)
 	if id == "" {
 		writeJSON(w, map[string]string{"error": "node not found"})
@@ -806,16 +802,16 @@ type hotNode struct {
 // handleHot 返回热门节点（按图度降序，跳过结构类型与目录枢纽）。
 // 初始页用它生成漂浮气泡池，前端随机采样展示。
 func (s *Server) handleHot(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	if s.G == nil || s.P == nil {
+		s.mu.RUnlock()
+		vaultStateError(w)
+		return
+	}
 	n := atoiDefault(r.URL.Query().Get("n"), 20)
 	structural := map[string]bool{}
 	for _, t := range s.P.StructuralTypes {
 		structural[t] = true
-	}
-	s.mu.RLock()
-	if s.G == nil {
-		s.mu.RUnlock()
-		vaultStateError(w)
-		return
 	}
 	hubThresh := s.G.Stats().Nodes / 2
 
@@ -961,10 +957,7 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	vals := r.URL.Query()
 	export := vals.Get("export") == "1"
-	s.mu.RLock()
-	if s.G == nil {
-		s.mu.RUnlock()
-		vaultStateError(w)
+	if !s.rlockGraph(w) {
 		return
 	}
 	opt := roam.Options{
