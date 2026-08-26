@@ -142,6 +142,35 @@ type TouchDigestFunc func() (*Digest, error)
 // TouchAckFunc digest 已读标记闭包（由 main 构造，写 touch store meta）。
 type TouchAckFunc func(id string) error
 
+// VaultOpts 配库请求的可选参数（覆盖 serve 启动默认；字段与 CLI flags 对应）。
+type VaultOpts struct {
+	ProfileName string `json:"profile_name"` // 内置画像名
+	Profile     string `json:"profile"`      // 显式画像文件
+	Store       string `json:"store"`        // 持久化路径覆盖
+	DB          string `json:"db"`           // 从持久化存储读图（跳过解析）
+}
+
+// VaultState 配库成功的完整状态（由 main 构造）：新图 + 画像 + 全套闭包。
+// web 只应用状态（ReplaceGraph + 字段替换），不感知解析细节（闭包注入边界）。
+type VaultState struct {
+	G         *graph.Graph
+	P         *adapter.VaultProfile
+	Source    string
+	VaultName string // Obsidian vault 名（跳转）；空 = 不提供
+	OrcaRepo  string // 虎鲸 repo 名（跳转）；空 = 不提供
+	Refresh   RefreshFunc
+	Touch     TouchFunc
+	TouchStat TouchStatsFunc
+	TouchDg   TouchDigestFunc
+	TouchAck  TouchAckFunc
+	DigAvail  func() bool
+	IsPending func() bool
+}
+
+// VaultFunc 配库闭包（由 main 构造）：path + opts → 解析建图 → 完整状态。
+// 无库启动（seren serve 不带 vault）时注入；POST /api/vault 调用后应用。
+type VaultFunc func(path string, opts VaultOpts) (*VaultState, error)
+
 // Server 持有图与画像，提供 REST 接口。
 type Server struct {
 	mu        sync.RWMutex // 保护 G 与 revision（刷新替换图，读接口并发安全）
@@ -158,8 +187,13 @@ type Server struct {
 	TouchAck  TouchAckFunc   // 非空时注册 POST /api/touch/digest/ack（§3.7）
 	DigAvail  func() bool    // 非空时 /api/stats 返回 digest_available（§3.7）
 	IsPending func() bool    // 非空时 /api/stats 返回 is_pending（v0.1.12，roadmap #14：库有变化待刷新）
+	Vault     VaultFunc      // 非空时注册 POST /api/vault（无库启动配库指令，v0.1.15）
 	Token     string         // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
 	revision  int            // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
+
+	// OnVaultApplied 配库成功应用后的回调（v0.1.15，由 main 注入）：配库闭包
+	// 返回状态 → handleVault 替换图/闭包字段后调用——main 在此启动/重建 watch。
+	OnVaultApplied func()
 
 	// 随机漫步状态（v0.1.7）：randMu 保护 rng 与 recent（rand.Rand 非并发安全）。
 	randMu sync.Mutex
@@ -202,6 +236,20 @@ func (s *Server) SetIsPending(fn func() bool) {
 	s.IsPending = fn
 }
 
+// SetVault 注入配库闭包（无库启动 v0.1.15）：path + opts → 解析建图 → 完整状态。
+// 注入后 POST /api/vault 可用；配库成功 ReplaceGraph 并替换全套闭包字段。
+func (s *Server) SetVault(fn VaultFunc) {
+	s.Vault = fn
+}
+
+// Configured 当前是否已配库（G 非空 = 已配）。无库启动时 false，
+// /api/stats 返回 configured:false，前端据此显示选库引导。
+func (s *Server) Configured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.G != nil
+}
+
 // ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
 // 自动监听触发共用）。调用方须持有新图所有权。
 func (s *Server) ReplaceGraph(g *graph.Graph) {
@@ -220,6 +268,9 @@ func (s *Server) Revision() int {
 
 // Handler 返回路由（v0.1.8 安全前置：整体包 auth 中间件——Host 校验 + API
 // token 鉴权，见 auth.go；页面响应注入 token 供前端 fetch 携带）。
+// v0.1.15 无库启动：路由一律无条件注册，闭包/图是否为 nil 由各 handler 自行
+// 判定（返回 503 未配置）——配库（POST /api/vault）成功后闭包从 nil 变非 nil，
+// 同一份 Handler 立即生效，无需重建路由。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -231,23 +282,103 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/node", s.handleNode)
 	mux.HandleFunc("/api/communities", s.handleCommunities)
 	mux.HandleFunc("/api/config", s.handleConfig)
-	if s.Refresh != nil {
-		mux.HandleFunc("/api/refresh", s.handleRefresh)
-	}
-	if s.Touch != nil {
-		mux.HandleFunc("/api/touch", s.handleTouch)
-	}
-	if s.TouchStat != nil {
-		mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
-	}
-	if s.TouchDg != nil {
-		mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
-	}
-	if s.TouchAck != nil {
-		mux.HandleFunc("/api/touch/digest/ack", s.handleTouchDigestAck)
-	}
+	mux.HandleFunc("/api/vault", s.handleVault) // v0.1.15 无库启动配库指令
+	mux.HandleFunc("/api/refresh", s.handleRefresh)
+	mux.HandleFunc("/api/touch", s.handleTouch)
+	mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
+	mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
+	mux.HandleFunc("/api/touch/digest/ack", s.handleTouchDigestAck)
 	mux.HandleFunc("/", s.handleIndex)
 	return s.auth(mux)
+}
+
+// vaultStateError 未配库的统一错误响应（无库启动时各数据端点的 503 形态）。
+func vaultStateError(w http.ResponseWriter) {
+	writeJSON(w, map[string]any{"error": "no vault configured", "configured": false})
+}
+
+// rlockGraph 获取图读锁并校验已配库（v0.1.15 无库启动守卫）：
+// 已配库 → 持 RLock 返回 true（调用方 defer s.mu.RUnlock()）；
+// 未配库（G==nil）→ 已写 503 并解锁，返回 false。
+func (s *Server) rlockGraph(w http.ResponseWriter) bool {
+	s.mu.RLock()
+	if s.G == nil {
+		s.mu.RUnlock()
+		vaultStateError(w)
+		return false
+	}
+	return true
+}
+
+// ApplyVaultState 应用配库状态：替换图/画像/源/全套闭包并递增 revision
+// （v0.1.15，handleVault 与 cmd/seren 启动即配库共用）。
+func (s *Server) ApplyVaultState(st *VaultState) {
+	s.mu.Lock()
+	s.G = st.G
+	s.P = st.P
+	s.Source = st.Source
+	s.VaultName = st.VaultName
+	s.OrcaRepo = st.OrcaRepo
+	s.Refresh = st.Refresh
+	s.Touch = st.Touch
+	s.TouchStat = st.TouchStat
+	s.TouchDg = st.TouchDg
+	s.TouchAck = st.TouchAck
+	s.DigAvail = st.DigAvail
+	s.IsPending = st.IsPending
+	s.revision++
+	s.mu.Unlock()
+}
+
+// handleVault POST /api/vault：无库启动的配库指令（v0.1.15）。
+// body {path, profile_name?, profile?, store?, db?} → 调 Vault 闭包（解析建图 +
+// 构造全套闭包）→ 成功后 ApplyVaultState + 通知 OnVaultApplied（main 重建 watch）。
+// 已配库时再配 = 换库（同幂等语义：重新解析新 path，旧图/闭包整体替换）。
+// GET /api/vault：查询当前配置（configured/source/vault/nodes）。
+func (s *Server) handleVault(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		resp := map[string]any{"configured": s.G != nil, "source": s.Source, "vault": s.VaultName}
+		if s.G != nil {
+			st := s.G.Stats()
+			resp["nodes"] = st.Nodes
+			resp["edges"] = st.Edges
+		}
+		writeJSON(w, resp)
+	case http.MethodPost:
+		if s.Vault == nil {
+			writeJSON(w, map[string]string{"error": "vault config unavailable"})
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+			VaultOpts
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path == "" {
+			writeJSON(w, map[string]string{"error": "path required"})
+			return
+		}
+		st, err := s.Vault(body.Path, body.VaultOpts)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		s.ApplyVaultState(st)
+		// 配库成功应用后通知 main（启动/重建 watch 等生命周期动作）
+		if s.OnVaultApplied != nil {
+			s.OnVaultApplied()
+		}
+		st2 := st.G.Stats()
+		writeJSON(w, map[string]any{
+			"ok": "true", "configured": true,
+			"source": st.Source, "vault": st.VaultName,
+			"nodes": st2.Nodes, "edges": st2.Edges,
+		})
+	default:
+		writeJSON(w, map[string]string{"error": "method not allowed"})
+	}
 }
 
 // handleIndex 返回嵌入页面；把 API token 注入 __SEREN_TOKEN__ 占位符
@@ -270,6 +401,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.Touch == nil {
+		writeJSON(w, map[string]string{"error": "touch unavailable"})
 		return
 	}
 	var body struct {
@@ -305,6 +440,10 @@ type refreshResp struct {
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.Refresh == nil {
+		writeJSON(w, map[string]string{"error": "refresh unavailable"})
 		return
 	}
 	limit := atoiDefault(r.URL.Query().Get("limit"), 50)
@@ -356,6 +495,10 @@ func (s *Server) handleRelation(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.G == nil {
+		vaultStateError(w)
+		return
+	}
 	from := s.resolveID(fromQ)
 	to := s.resolveID(toQ)
 	if from == "" || to == "" {
@@ -412,6 +555,10 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	k := atoiDefault(r.URL.Query().Get("k"), 10)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.G == nil {
+		vaultStateError(w)
+		return
+	}
 	id := s.resolveID(q)
 	if id == "" {
 		writeJSON(w, map[string]string{"error": "node not found"})
@@ -451,6 +598,10 @@ func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.G == nil {
+		vaultStateError(w)
+		return
+	}
 	structural := map[string]bool{}
 	for _, t := range s.P.StructuralTypes {
 		structural[t] = true
@@ -503,6 +654,10 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.G == nil {
+		vaultStateError(w)
+		return
+	}
 	id := s.resolveID(q)
 	if id == "" {
 		writeJSON(w, map[string]string{"error": "node not found"})
@@ -595,6 +750,7 @@ func (s *Server) handleTouchDigestAck(w http.ResponseWriter, r *http.Request) {
 }
 
 type statsResp struct {
+	Configured      bool                `json:"configured"`       // v0.1.15：是否已配库（无库启动时为 false，前端显示选库引导）
 	Nodes           int                 `json:"nodes"`
 	Edges           int                 `json:"edges"`
 	Version         string              `json:"version"`
@@ -607,6 +763,11 @@ type statsResp struct {
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
+	if s.G == nil {
+		s.mu.RUnlock()
+		writeJSON(w, statsResp{Configured: false, Version: s.Version})
+		return
+	}
 	st := s.G.Stats()
 	rev := s.revision
 	isPending := false
@@ -624,7 +785,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RUnlock()
 	writeJSON(w, statsResp{
-		Nodes: st.Nodes, Edges: st.Edges, Version: s.Version,
+		Configured: true, Nodes: st.Nodes, Edges: st.Edges, Version: s.Version,
 		Revision: rev, IsPending: isPending, DigestAvailable: digAvail,
 		Dangling: st.DanglingLinks, DanglingRefs: danglingRefs,
 	})
@@ -651,6 +812,11 @@ func (s *Server) handleHot(w http.ResponseWriter, r *http.Request) {
 		structural[t] = true
 	}
 	s.mu.RLock()
+	if s.G == nil {
+		s.mu.RUnlock()
+		vaultStateError(w)
+		return
+	}
 	hubThresh := s.G.Stats().Nodes / 2
 
 	type hub struct {
@@ -766,6 +932,10 @@ func (s *Server) handleCommunities(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.G == nil {
+		vaultStateError(w)
+		return
+	}
 	res, err := s.G.Communities(resolution, seed)
 	if err != nil {
 		writeJSON(w, map[string]string{"error": err.Error()})
@@ -792,6 +962,11 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	vals := r.URL.Query()
 	export := vals.Get("export") == "1"
 	s.mu.RLock()
+	if s.G == nil {
+		s.mu.RUnlock()
+		vaultStateError(w)
+		return
+	}
 	opt := roam.Options{
 		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
 		// （高阶内部项——跳数配额/PPR 阻尼/迭代次数——不对外暴露，保持默认）。
@@ -990,6 +1165,16 @@ func tuneParams() []TuneParam {
 // 保证前后端对"可调什么、边界在哪"保持一致。
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
+	if s.G == nil {
+		s.mu.RUnlock()
+		// 未配库：仍返回参数白名单 + configured:false（前端渲染选库引导时
+		// 也需要可调参数；nodes/edges 置 0）。
+		writeJSON(w, map[string]any{
+			"params": tuneParams(), "source": "", "vault": "",
+			"version": s.Version, "nodes": 0, "edges": 0, "configured": false,
+		})
+		return
+	}
 	st := s.G.Stats()
 	s.mu.RUnlock()
 	writeJSON(w, map[string]any{
@@ -999,5 +1184,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"version": s.Version,
 		"nodes":   st.Nodes,
 		"edges":   st.Edges,
+		"configured": true,
 	})
 }

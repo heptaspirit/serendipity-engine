@@ -83,7 +83,7 @@
 | 4 | **bbolt 有趣能力：离线 AI 边 sidecar** | [backend-backlog](backend-backlog.md) §二.2 B | 插件携微型 bbolt 库存 AI 确认边，离线原子、引擎开机探活 |
 | 5 | **bbolt 有趣能力：跨库元索引**（多 vault 统一知识网） | [backend-backlog](backend-backlog.md) §二.2 B | 多数据源漫游成统一图（`node→vault` 中心索引） |
 | 6 | **bbolt 有趣能力：What-if 实验图**（fork 即建桶 A/B 对比） | [backend-backlog](backend-backlog.md) §二.2 B | 加 AI 边前 vs 后对比，把"AI 补图"变可实验 |
-| 7 | **Wails 桌面壳（`serendipity-desktop` 独立仓库）** | [backend-backlog](backend-backlog.md) §五.2 | ⏳ **已立项（2026-08-26 用户拍板），排期 M3**（等 M2 Obsidian 插件做完再评估，不着急）。形态（用户定）：打开后**手动指向笔记库** → 分析；界面可做 **MCP/serve 启停**等管理。壳 = 独立仓库（同 Obsidian 插件薄壳架构，引擎零改动、零 CGO 影响）；系统 WebView2 嵌现有 Web UI（复用 `?embed=1` + postMessage 桥 + i18n）。触发：虎鲸插件暂停后"终端=唯一入口"不成立——GUI 壳是更好的产品形态。未开工 |
+| 7 | **Wails 桌面壳（`serendipity-desktop` 独立仓库）** | [backend-backlog](backend-backlog.md) §五.2 | ⏳ **已立项（2026-08-26 用户拍板），排期 M3**（等 M2 Obsidian 插件做完再评估，不着急）。形态（用户定）：打开后**手动指向笔记库** → 分析；界面可做 **MCP/serve 启停**等管理。**引擎侧地基已落地（v0.1.15 无库启动 + `POST /api/vault` 配库，backend-backlog §五.2.1）**——壳只需 spawn 无库 serve + 发一条配库指令，引擎改动真正为零。壳 = 独立仓库（同 Obsidian 插件薄壳架构）；系统 WebView2 嵌现有 Web UI（复用 `?embed=1` + postMessage 桥 + i18n）。未开工 |
 
 ---
 
@@ -129,3 +129,4 @@ bbolt 落地 + 性能增强（#16，阶段 1，顺手做）→ 阶段 3 M3（can
 | 2026-08-26 | **〔暂停〕虎鲸版本插件不开发**：尝试后放弃——虎鲸生态小、插件壳收益低，且内核已直读虎鲸库（`seren index/roam/serve <库.db>` 照常可用，等于用内核完成插件功能）。M2 插件薄壳收敛为 **Obsidian 单壳**；roadmap 阶段 2 与 plugin-dev-plan 中虎鲸插件条目均标注暂停（保留内核直读能力）。 |
 | 2026-08-26 | **TUI 立项（#17）→ 排期 M3**：`seren` 无参数直接启动进 TUI——库加载一次驻内存，功能像开关一样开合（选库/漫游/详情/随机/导出/刷新，serve·MCP 作可开关服务管理）；复用 graph/roam 包级函数引擎零改动；引入 TUI 库（bubbletea 候选，MIT，vendor 锁版本）。排期 M3（等 M2 Obsidian 插件做完再评估，用户拍板不着急）。触发：虎鲸插件暂停后终端成为虎鲸用户唯一入口（backend-backlog §五.1）。 |
 | 2026-08-26 | **方向修正：TUI 降级 → Wails 桌面壳为主（阶段 3 #7）**：评估后认为 TUI 仍是终端（门槛未真正降低），且"手动指向笔记库 + 界面管 MCP/serve 启停"只有 GUI 壳能自然满足。定：**Wails 壳为主**（`serendipity-desktop` 独立仓库，同 Obsidian 插件薄壳架构，引擎零改动、零 CGO 影响，WebView2 嵌现有 Web UI），排期 M3；**TUI 降级**为候选（不再占主线，成本极低可随时做，见 backend-backlog §五.1/§五.2）。 |
+| 2026-08-26 | **无库启动落地（v0.1.15，阶段 3 #7 的引擎侧地基）**：`seren serve` 无 vault 空库启动 + `POST /api/vault` 配库/换库（换图 + 闭包重建 + watch 重启，幂等）；`GET /api/vault` 查配置；stats 加 `configured`；web 路由无条件注册（handler 内 nil 判定）；前端未配库显示选库引导。附带：**优雅退出**（SIGINT/SIGTERM → 停 watch → Shutdown，Web 端不做关闭入口——消费端无杀服务权限）；终端 URL 用 **OSC 8 可点击链接**；前端导出改 fetch+blob（修复 a 标签不带 token 被 auth 拒）。端到端验证：无库→配 Obsidian 库→漫游→换虎鲸库全链路 + 契约测试。 |

@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.14 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.1.15 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -23,6 +23,7 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
+| `configured` | bool | 是否已配库（v0.1.15 无库启动）：`seren serve` 不带 vault 启动时 → false（空库，前端显示选库引导）；配库（POST /api/vault）后 → true |
 | `nodes` | int | 图节点数 |
 | `edges` | int | 去重无向边数 |
 | `version` | string | 引擎版本（如 `v0.1.12`） |
@@ -33,8 +34,10 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `dangling_refs[]` | array | 悬空链接明细 `{source,target}`（v0.1.12，截断上限 50；`source`=引用方节点 ID，`target`=悬空目标） |
 
 ```json
-{"nodes":235,"edges":318,"version":"v0.1.14","revision":3,"is_pending":false,"digest_available":true,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
+{"configured":true,"nodes":235,"edges":318,"version":"v0.1.15","revision":3,"is_pending":false,"digest_available":true,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
 ```
+
+**未配库形态**（v0.1.15 无库启动）：`{"configured":false,"nodes":0,"edges":0,"version":"v0.1.15","revision":0,"is_pending":false,"digest_available":false,"dangling":0,"dangling_refs":null}`
 
 ## 2. `GET /api/hot?n=20` · 热门节点（初始页气泡）
 
@@ -271,6 +274,36 @@ kind=ai 边）。只读、无副作用。
 
 ---
 
+## 14. 无库启动与配库（v0.1.15，壳/TUI/浏览器选库的地基）
+
+> `seren serve` 不带 vault 时以**空库启动**：不解析、不建图，全部数据端点返回
+> `{"error":"no vault configured","configured":false}`；`/api/stats` 返回
+> `configured:false`。经本端点配库/换库后立即恢复全功能（换图 + 全套闭包
+> 重建 + watch 重启，同一次 serve 进程内完成，无需重启）。
+
+### 14.1 `GET /api/vault` · 查询当前配置
+
+响应：`{"configured":bool, "source":"obsidian:…|orca:…|store:…", "vault":"<名>"[, "nodes":N, "edges":M]}`
+
+- 未配库：`{"configured":false,"source":"","vault":""}`
+- 已配库：追加 `nodes`/`edges`
+
+### 14.2 `POST /api/vault` · 配库 / 换库
+
+请求体：
+
+```json
+{"path":"<vault 目录 | OrcaNote.db 路径>", "profile_name":"<可选：内置画像>", "profile":"<可选：画像文件>", "store":"<可选：持久化路径覆盖>", "db":"<可选：从持久化存储读图>"}
+```
+
+- `path` 必填；其余可选（对应 CLI `--profile-name` / `--profile` / `--store` / `--db`，覆盖 serve 启动默认）。
+- 语义：解析建图（Obsidian 目录 / 虎鲸 .db 自动识别，同 `seren index`）→ 替换内存图 + 重建全套闭包（refresh/touch/stats/digest/ack/available/is_pending）→ 重启 watch（如开启）→ revision +1。
+- 已配库时再调用 = **换库**（旧图/闭包/watch 整体替换，幂等）。
+- 成功：`{"ok":true,"configured":true,"source":"…","vault":"…","nodes":N,"edges":M}`
+- 失败（路径不存在 / 解析失败）：`{"error":"<原因>"}`
+
+---
+
 ## 变更登记
 
 | 版本 | 变更 |
@@ -286,6 +319,7 @@ kind=ai 边）。只读、无副作用。
 | v0.1.12 | similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；stats 加 `is_pending`（库变化待刷新）+ `dangling_refs`（悬空明细）；touch/stats targets 过滤幽灵 touch；**新增 /api/communities**（Leiden 社区发现，诊断层）；MCP tools 扩至 7（+graph.community） |
 | v0.1.13 | **新增 /api/suggest-links**（潜在关联待审清单：2-hop + AA/Jaccard/RA + Borda 聚合 + top-K 节流，未落图）；存储层 SQLite → bbolt（扩展名 .bbolt，无迁移） |
 | v0.1.14 | **新增 touch digest 子系统（§3.7）**：/api/touch/digest（只读查询）+ /api/touch/digest/ack（已读）+ stats 加 `digest_available`；**MCP tools 扩至 8（+seren.touch_digest）**；touch 拆独立 store（`touch-<hash>.bbolt`，touch/meta/backups） |
+| v0.1.15 | **无库启动 + 配库**：`seren serve` 无 vault 空库启动；**新增 /api/vault**（GET 查配置 / POST 配库换库，换图 + 闭包重建 + watch 重启）；stats 加 `configured`；数据端点未配库时返回 `configured:false`；前端导出改 fetch+blob（a 标签不带 token 被 auth 拒的修复） |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

@@ -73,7 +73,7 @@ func TestEndpointJSONContract(t *testing.T) {
 		method, path string
 		keys         []string
 	}{
-		{"GET", "/api/stats", []string{"nodes", "edges", "version", "revision", "is_pending", "digest_available", "dangling", "dangling_refs"}},
+		{"GET", "/api/stats", []string{"configured", "nodes", "edges", "version", "revision", "is_pending", "digest_available", "dangling", "dangling_refs"}},
 		{"GET", "/api/config", []string{"params", "source", "vault", "version", "nodes", "edges"}},
 		{"GET", "/api/roam?q=Alpha", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
 		{"GET", "/api/roam?random=1&seed=42", []string{"query", "source", "vault", "anchors", "results", "fallback", "fallback_hits"}},
@@ -196,5 +196,131 @@ func TestTouchDigestAckEndpointJSONContract(t *testing.T) {
 	body := decodeRaw(t, resp.Body)
 	if m, ok := body.(map[string]any); !ok || m["ok"] != "true" {
 		t.Fatalf("ack 应返回 ok: %v", body)
+	}
+}
+
+// GET /api/vault 契约（v0.1.15 无库启动）：configured/source/vault。
+func TestVaultGetEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+	resp := doAuthGet(t, ts, "/api/vault")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("vault GET 应 200, got %d", resp.StatusCode)
+	}
+	m, ok := decodeRaw(t, resp.Body).(map[string]any)
+	if !ok {
+		t.Fatalf("vault GET 应为对象：%v", m)
+	}
+	mustKeys(t, m, "configured", "source", "vault")
+	if m["configured"] != true {
+		t.Fatalf("已配库的 contractServer configured 应为 true: %v", m)
+	}
+}
+
+// POST /api/vault 契约（v0.1.15）：未注入 Vault 闭包 → 不可用；
+// 注入后 {path} → ok + configured（换图 + 全套闭包替换生效）。
+func TestVaultPostEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	ts := newAuthServer(t, s)
+
+	// 未注入 Vault 闭包：vault config unavailable
+	req, _ := http.NewRequest("POST", ts.URL+"/api/vault", bytes.NewBufferString(`{"path":"/x"}`))
+	req.Header.Set(tokenHeader, testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("vault POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("vault POST 不可用时也应 200+error, got %d", resp.StatusCode)
+	}
+
+	// 注入 Vault 闭包：返回新图 + 全套闭包 → 应用后 configured=true
+	newGraph := endpointGraph() // 复用同一合成图，验证状态应用路径
+	applied := 0
+	s.SetVault(func(path string, opts VaultOpts) (*VaultState, error) {
+		return &VaultState{
+			G: newGraph, P: &adapter.VaultProfile{},
+			Source: "obsidian:" + path, VaultName: "NewVault",
+			Refresh: s.Refresh, Touch: func(t, f string) error { return nil },
+			IsPending: func() bool { return false },
+		}, nil
+	})
+	// 配库成功后应用回调（模拟 main 的 watch 重启钩子）
+	s.OnVaultApplied = func() { applied++ }
+
+	req, _ = http.NewRequest("POST", ts.URL+"/api/vault", bytes.NewBufferString(`{"path":"/new/vault"}`))
+	req.Header.Set(tokenHeader, testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("vault POST: %v", err)
+	}
+	defer resp.Body.Close()
+	m, ok := decodeRaw(t, resp.Body).(map[string]any)
+	if !ok {
+		t.Fatalf("vault POST 应为对象：%v", m)
+	}
+	mustKeys(t, m, "ok", "configured", "source", "vault", "nodes", "edges")
+	if m["configured"] != true || m["source"] != "obsidian:/new/vault" || m["vault"] != "NewVault" {
+		t.Fatalf("vault 应用后状态不符: %v", m)
+	}
+	if applied != 1 {
+		t.Fatalf("OnVaultApplied 应触发 1 次, got %d", applied)
+	}
+
+	// 应用后 /api/stats configured=true 且 Source 已换
+	resp2 := doAuthGet(t, ts, "/api/stats")
+	defer resp2.Body.Close()
+	m2, ok := decodeRaw(t, resp2.Body).(map[string]any)
+	if !ok {
+		t.Fatalf("stats 应为对象：%v", m2)
+	}
+	if m2["configured"] != true {
+		t.Fatalf("配库后 stats.configured 应为 true: %v", m2)
+	}
+}
+
+// 未配库（G==nil）时数据端点返回 configured:false（v0.1.15 无库启动守卫）。
+func TestVaultStateUnconfigured(t *testing.T) {
+	s := New(nil, nil, "", "", "v0.1.15", nil, nil) // 空库启动：G==nil
+	s.Token = testToken
+	ts := newAuthServer(t, s)
+
+	resp := doAuthGet(t, ts, "/api/stats")
+	defer resp.Body.Close()
+	m, ok := decodeRaw(t, resp.Body).(map[string]any)
+	if !ok {
+		t.Fatalf("stats 应为对象：%v", m)
+	}
+	if m["configured"] != false {
+		t.Fatalf("空库 stats.configured 应为 false: %v", m)
+	}
+	mustKeys(t, m, "version")
+
+	// 数据端点统一 503 形态：{error, configured:false}
+	resp2 := doAuthGet(t, ts, "/api/roam?q=x")
+	defer resp2.Body.Close()
+	m2, ok := decodeRaw(t, resp2.Body).(map[string]any)
+	if !ok {
+		t.Fatalf("roam 应为对象：%v", m2)
+	}
+	if m2["configured"] != false {
+		t.Fatalf("空库 roam 应返回 configured:false: %v", m2)
+	}
+
+	// 未配置服务端点（touch/refresh）→ unavailable 错误而非 panic
+	req, _ := http.NewRequest("POST", ts.URL+"/api/refresh", nil)
+	req.Header.Set(tokenHeader, testToken)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	m3, _ := decodeRaw(t, resp3.Body).(map[string]any)
+	resp3.Body.Close()
+	if m3 == nil || m3["error"] == "" {
+		t.Fatalf("空库 refresh 应返回 error: %v", m3)
 	}
 }

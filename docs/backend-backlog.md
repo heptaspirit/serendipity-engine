@@ -360,6 +360,25 @@ gitignore 不入库；正式发布用 GitHub Actions 平台构建（本地二进
 | 成本 | 一个新包（internal/tui 或单文件）+ cmd 入口改造（无参数 → 进 TUI）+ vendor 依赖；约 400–600 行 |
 | 验收 | 无参数 `seren` 真库上：选库→搜→选→详情→续漫游→导出全链路可用；`seren roam …` 等子命令行为不变（回归）；`go test ./...` 全绿 |
 
+## 五.2.1、无库启动 + 配库（v0.1.15 已落地，壳/TUI 的引擎侧地基）
+
+> 用户 2026-08-26 提出："让引擎可以在无库状态下启动，通过指令给它配置上库"——这比壳更本质，
+> 是 TUI / Wails 壳共同的**前置依赖**（壳先起引擎，再把库喂进去，而非先定库再起引擎）。
+> 已落地（v0.1.15），Wails 壳的"引擎改动=零"进一步成立（壳只需 POST /api/vault）。
+
+- **引擎改动**（全部落地，内核零改动）：
+  - `seren serve` 不带 vault → **空库启动**（不解析不建图；打印"等待配库"提示）
+  - `POST /api/vault {path, profile_name?, profile?, store?, db?}` → 解析建图（Obsidian/虎鲸 .db 自动识别）→ **替换内存图 + 重建全套闭包**（refresh/touch/stats/digest/ack/available/is_pending）→ **重启 watch** → revision +1。已配库时再调 = 换库（幂等）
+  - `GET /api/vault` → 查当前配置（configured/source/vault/nodes）
+  - `/api/stats` 加 `configured` 字段；数据端点未配库时返回 `{"error":"no vault configured","configured":false}`
+  - web 路由改**无条件注册 + handler 内闭包 nil 判定**（配库后闭包从 nil 变非 nil，同一 Handler 立即生效）
+  - 前端（index.html）未配库时显示**选库引导**（输入路径 → POST /api/vault → 重载）
+- **设计要点**：`buildServeState(env)` 提取自 cmdServe 的闭包组装，启动即配库与 POST /api/vault 共用同一路径（无重复逻辑）；`serveEnv` 持有 vault/p/flags/pending/watch-cancel，换库时 cancel 旧 watch 再起新的（不泄漏）。
+- **端到端验证**（2026-08-26）：无库启动 → stats configured:false / roam 返回 503 形态 → POST 配 Obsidian 库（332 节点）→ 漫游正常 → 再 POST 换虎鲸 TestOrca.db（236 节点，orca 源识别 + 跳转配置正确）。契约测试新增 TestVaultGet/PostEndpointJSONContract + TestVaultStateUnconfigured。
+- **附带修复**：前端导出改 fetch+blob（`<a href>` 导航下载不带 X-Seren-Token 头，被 auth 中间件拒绝——v0.1.8 token 鉴权引入后一直存在，本次实测发现）。
+- **退出机制（2026-08-26 用户提出）**：serve 增加**优雅退出**——SIGINT/SIGTERM → 停 watch → `http.Server.Shutdown`（等当前请求完成，5s 超时）。此前 Ctrl+C 是硬杀；无库启动 + watch 挂后台后需要干净退出。**Web 端不做关闭入口**（用户询问后拍板：Web 是消费端不是宿主，生命周期归"拉起它的人"——终端 Ctrl+C / 服务管理器 / 未来 Wails 壳进程面板；且 Web 可杀服务违背 MCP 只读红线精神）。终端启动时 URL 用 **OSC 8 超链接**（TTY 可点击直接开浏览器，非 TTY 退化纯文本）。
+- 契约：`docs/api-contract.md` §14。
+
 ## 五.2、Wails 桌面壳（`serendipity-desktop` 独立仓库，2026-08-26 用户拍板转正，排期 M3）
 
 > 背景：TUI 评估后用户认为"终端里开合"仍不够——**真正想要的是打开一个应用，手动指向笔记库，然后

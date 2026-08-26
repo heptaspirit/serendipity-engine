@@ -26,7 +26,7 @@
 //
 // ▍对账刷新（refresh / serve 的 /api/refresh，v0.1.2）
 //
-//	全量重解析 + sync.Diff 与上次持久化状态比对（按 ID 对齐，规范化比较字段），
+//	全量重解析 + syncpkg.Diff 与上次持久化状态比对（按 ID 对齐，规范化比较字段），
 //	报告 新增/更新/删除 明细并写回存储（幂等全量重写）。边际情况与语义
 //	见 internal/sync/sync.go 文件头。刷新后 Web 内存图替换，hot/stats/roam 即新图。
 //
@@ -77,6 +77,11 @@
 //	         主 / 间隔≥digest_days 兜底 + 启动补查）+ /api/touch/digest + ack +
 //	         /api/stats.digest_available + MCP seren.touch_digest（只读）；touch.yaml
 //	         配置（YAML 钳制）；引擎零写 vault（digest md 由插件导出）。
+//	v0.1.15 serve 无库启动（壳/TUI/Wails 的地基）：seren serve 不带 vault → 空库
+//	         启动，POST /api/vault {path,...} 配库/换库（GET /api/vault 查配置）；
+//	         web 路由全量注册 + handler 内闭包 nil 判定；/api/stats 加 configured。
+//	         前端导出改 fetch+blob（a 标签不带 token 被 auth 拒的 bug 修复）。
+//	         优雅退出（SIGINT/SIGTERM → 停 watch → Shutdown）；终端 URL OSC 8 可点击。
 //
 // ============================================================================
 package main
@@ -91,10 +96,13 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"serendipity-engine/internal/adapter"
@@ -102,13 +110,13 @@ import (
 	"serendipity-engine/internal/mcp"
 	"serendipity-engine/internal/roam"
 	"serendipity-engine/internal/store"
-	"serendipity-engine/internal/sync"
+	syncpkg "serendipity-engine/internal/sync"
 	"serendipity-engine/internal/watch"
 	"serendipity-engine/internal/web"
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.14"
+const version = "v0.1.15"
 
 func main() {
 	code := run(os.Args[1:])
@@ -180,7 +188,8 @@ func usageFor(cmd string) {
 			"  --json         结构化 JSON 输出（roam.Outcome）"
 	case "serve":
 		text = "serve: Web UI（REST + 节点簇可视化 + 自动监听 + 刷新）\n" +
-			"  seren serve <vault|OrcaNote.db> [--port 8080] [flags]\n" +
+			"  seren serve [<vault|OrcaNote.db>] [--port 8080] [flags]\n" +
+			"  不带 vault = 无库启动，启动后 POST /api/vault {\"path\":\"<库>\"} 配库（v0.1.15）\n" +
 			"  --port N       端口 (默认 8080)\n" +
 			"  --vault-name N Obsidian vault 名（obsidian:// 跳转）\n" +
 			"  --repo <名>    虎鲸 repo 名（orca-note:// 跳转）\n" +
@@ -192,7 +201,7 @@ func usageFor(cmd string) {
 		text = "refresh: 对账刷新（重解析 + 与上次持久化状态 diff 增删改）\n" +
 			"  seren refresh <vault|OrcaNote.db> [--profile-name <名>] [--store <file>] [--json]\n" +
 			"  --store         存储路径 (覆盖默认)\n" +
-			"  --json          结构化 JSON 输出（sync.Result）"
+			"  --json          结构化 JSON 输出（syncpkg.Result）"
 	case "profile-detect":
 		text = "profile-detect: 扫描 vault，产出解析画像 YAML（新库 onboarding）\n" +
 			"  seren profile-detect <vault>"
@@ -212,7 +221,7 @@ func usage() {
 用法:
   seren index <vault|OrcaNote.db> [flags]  解析、建图、统计（.db 自动识别为虎鲸库）
   seren roam <vault|OrcaNote.db> [query] [flags]   查询漫游 → top-N 节点簇（--random 随机漫步）
-  seren serve <vault|OrcaNote.db> [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新）
+  seren serve [<vault|OrcaNote.db>] [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新；不带 vault = 无库启动，POST /api/vault 配库）
   seren refresh <vault|OrcaNote.db> [flags] 对账刷新：重解析 + 与上次持久化状态 diff
   seren profile-detect <vault>          扫描 vault，提出解析画像 YAML（新库 onboarding）
   seren mcp <vault> [--db <store>]       MCP stdio server（只读七件套，AI 入口）
@@ -306,7 +315,7 @@ func redirectForGraph(docs []*adapter.Document, renames map[string]string) []*ad
 		cp.Refs = append([]string(nil), d.Refs...)
 		out[i] = &cp
 	}
-	sync.ApplyRenames(out, renames)
+	syncpkg.ApplyRenames(out, renames)
 	return out
 }
 
@@ -408,11 +417,11 @@ func cmdRefresh(args []string) int {
 	if err != nil {
 		fatal("%v", err)
 	}
-	res := sync.Diff(old, docs)
+	res := syncpkg.Diff(old, docs)
 	// 改名迁移（v0.1.5，修订 #8）：持久化映射合并（含本次新检测）→ 存 renames
 	// 表 + touch 迁移。documents 存原始 Refs（文件真相，diff 收敛）；
 	// 重定向只在建图时叠加（见 refreshFunc/loadSource 的 redirectForGraph）。
-	merged := sync.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
+	merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
 	if err := store.SaveRenames(storePath, merged); err != nil {
 		fatal("改名映射持久化失败: %v", err)
 	}
@@ -424,7 +433,7 @@ func cmdRefresh(args []string) int {
 	}
 
 	if flags["json"] != "" {
-		// --json：复用 sync.Result 结构体（含 Changes/Renames 明细）。为可读，
+		// --json：复用 syncpkg.Result 结构体（含 Changes/Renames 明细）。为可读，
 		// 补 src/画像/解析计数作为顶层字段（新匿名结构体，不污染 Result）。
 		jsonOut(map[string]any{
 			"source": src, "profile": p.Name, "store": storePath,
@@ -465,11 +474,11 @@ func cmdRefresh(args []string) int {
 			break
 		}
 		switch c.Kind {
-		case sync.KindAdded:
+		case syncpkg.KindAdded:
 			fmt.Printf("  + 新增   %-10s %s [%s]\n", c.ID, c.Title, c.Type)
-		case sync.KindDeleted:
+		case syncpkg.KindDeleted:
 			fmt.Printf("  - 删除   %-10s %s [%s]\n", c.ID, c.Title, c.Type)
-		case sync.KindUpdated:
+		case syncpkg.KindUpdated:
 			fmt.Printf("  ~ 更新   %-10s %s [%s] 字段=%s", c.ID, c.Title, c.Type, strings.Join(c.Fields, ","))
 			if len(c.AddedRefs) > 0 || len(c.RemovedRefs) > 0 {
 				fmt.Printf(" 引用+%d/-%d", len(c.AddedRefs), len(c.RemovedRefs))
@@ -674,21 +683,28 @@ func cmdRoam(args []string) int {
 	return 0
 }
 
-func cmdServe(args []string) int {
-	pos, flags := parseArgs(args)
-	if flags["help"] != "" {
-		usageFor("serve")
-		return 0
-	}
-	if len(pos) < 1 {
-		usageErr("用法: seren serve <vault> [--port 8080] [--vault-name 库名] [--repo 虎鲸库名]")
-	}
-	vault := pos[0]
-	port := fint(flags, "port", 8080)
-	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
-	if err != nil {
-		fatal("画像加载失败: %v", err)
-	}
+// serveEnv 一次 serve 进程的可变运行时状态（v0.1.15 无库启动）：
+// 无 vault 启动后经 POST /api/vault 配库/换库；pending 与 watch 随库重建。
+type serveEnv struct {
+	mu      sync.Mutex
+	vault   string                 // 当前已配库路径（空 = 未配库）
+	p       *adapter.VaultProfile  // 当前画像
+	flags   map[string]string      // 当前生效 flags（启动 flags + 配库 opts 覆盖）
+	pending atomic.Bool            // 待刷新标志（配库后重建）
+	cancel  context.CancelFunc     // 当前 watch 取消（换库时停旧）
+	watchOn bool                   // 是否启用自动监听（--watch-off 关闭）
+	poll    time.Duration          // 监听轮询间隔
+	throttle time.Duration         // 刷新节流
+}
+
+// buildServeState 解析 vault 并构造 Web 全套闭包状态（配库核心，启动即配库与
+// POST /api/vault 共用）：loadSource → isOrca/vaultName/orcaRepo → store/touch
+// 路径 → refresh/touch/touchStat/digest/ack/available/isPending 闭包。
+// env 只读使用（vault/p/flags）；pending 由调用方在 env 上持有。
+func buildServeState(env *serveEnv) (*web.VaultState, error) {
+	vault := env.vault
+	p := env.p
+	flags := env.flags
 	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
 	isOrca := adapter.IsOrcaDB(vault)
 	if flags["db"] != "" {
@@ -701,13 +717,10 @@ func cmdServe(args []string) int {
 			}
 		}
 	}
-
-	// vault 名（obsidian:// URI 跳转用）：显式 > 路径 basename
 	vaultName := flags["vault-name"]
 	if vaultName == "" && !isOrca {
 		vaultName = filepath.Base(filepath.Clean(vault))
 	}
-	// 虎鲸 repo 名（orca-note:// URI 跳转用）：显式 --repo > 库文件名（去 .db）
 	orcaRepo := ""
 	if isOrca {
 		orcaRepo = flags["repo"]
@@ -715,37 +728,33 @@ func cmdServe(args []string) int {
 			orcaRepo = strings.TrimSuffix(filepath.Base(vault), ".db")
 		}
 	}
-
 	storePath := storePathFor(vault, flags["store"])
-	// v0.1.12 刷新待办（roadmap #14）：原子标志"库有变化待刷新"——watch 检测到变化置位、
-	// 刷新成功清除；/api/stats 暴露 is_pending，前端据此显示"库有变化，将自动刷新 · 立即刷新"提示条。
-	// 手动 /api/refresh 也走下面的 refreshFn（成功即清 pending，防 watch 下个 tick 重复自动刷）。
-	var pending atomic.Bool
+	// 刷新闭包：重解析 → diff → 改名迁移 → 写回 → 换图（成功清 pending）
 	baseRefresh := refreshFunc(vault, p, flags)
-	refreshFn := func() (*sync.Result, *graph.Graph, error) {
+	refreshFn := func() (*syncpkg.Result, *graph.Graph, error) {
 		res, ng, err := baseRefresh()
 		if err == nil {
-			pending.Store(false)
+			env.pending.Store(false)
 		}
 		return res, ng, err
 	}
-	// 反馈埋点闭包（克制：仅记录，写 touch 独立 store；失败静默）
-	// §3.7（v0.1.14）：touch 独立库 touch-<hash>.bbolt；每次上报后检查 digest 阈值
-	// （计数优先 + 间隔兜底，maybeDigest 内部判定；失败静默不影响埋点主流程）。
+	// touch 独立库 + digest 触发（§3.7，v0.1.14）：失败静默不影响埋点
 	touchPath := touchPathFor(vault)
 	touchCfg := store.LoadTouchConfig(baseOf(vault))
 	touchFn := func(target, from string) error {
 		if err := store.AppendTouch(touchPath, target, from); err != nil {
 			return err
 		}
-		_, _ = store.MaybeDigest(touchPath, storePath, touchCfg) // 通知先于淘汰；失败静默
+		_, _ = store.MaybeDigest(touchPath, storePath, touchCfg)
 		return nil
 	}
-	srv := web.New(g, p, src, vaultName, version, refreshFn, touchFn)
-	srv.OrcaRepo = orcaRepo
-	// 埋点只读统计闭包（v0.1.11，backlog §3.3）：只读聚合，绝不反馈排序/hot
-	// §3.7（v0.1.14）：touch 独立库 + 幽灵过滤跨图库（双路径）。
-	srv.SetTouchStats(func() (int, []web.TouchRow, []web.TouchRow, error) {
+	st := &web.VaultState{
+		G: g, P: p, Source: src, VaultName: vaultName, OrcaRepo: orcaRepo,
+		Refresh: refreshFn, Touch: touchFn,
+		IsPending: func() bool { return env.pending.Load() },
+	}
+	// 埋点只读统计（幽灵过滤跨图库，双路径）
+	st.TouchStat = func() (int, []web.TouchRow, []web.TouchRow, error) {
 		total, targets, sources, err := store.TouchStats(touchPath, storePath, 10)
 		if err != nil {
 			return 0, nil, nil, err
@@ -758,9 +767,9 @@ func cmdServe(args []string) int {
 			return out
 		}
 		return total, toRows(targets), toRows(sources), nil
-	})
-	// §3.7（v0.1.14）：digest 只读接口闭包（查询 / ack / available）
-	srv.SetTouchDigest(func() (*web.Digest, error) {
+	}
+	// digest 只读接口（查询 / ack / available）
+	st.TouchDg = func() (*web.Digest, error) {
 		d, err := store.LatestDigest(touchPath)
 		if err != nil || d == nil {
 			return nil, err
@@ -770,15 +779,61 @@ func cmdServe(args []string) int {
 			Since: d.Since, Total: d.Total,
 			Targets: toWebDigestTargets(d.Targets), Sources: toWebRows(d.Sources),
 		}, nil
+	}
+	st.TouchAck = func(id string) error { return store.AckDigest(touchPath, id) }
+	st.DigAvail = func() bool { return store.DigestAvailable(touchPath) }
+	return st, nil
+}
+
+// startWatch 启动/重启自动监听（配库后或启动即配库调用；换库时先停旧）。
+// 回调复用 web 已注入的 Refresh 闭包（配库后已指向新库）+ ReplaceGraph 换图。
+func (env *serveEnv) startWatch(srv *web.Server) {
+	env.mu.Lock()
+	if env.cancel != nil {
+		env.cancel() // 停旧 watch（换库）
+		env.cancel = nil
+	}
+	watchOn := env.watchOn
+	if !watchOn {
+		env.mu.Unlock()
+		return
+	}
+	vault := env.vault
+	p := env.p
+	var check func() (bool, error)
+	if adapter.IsOrcaDB(vault) {
+		check = watch.NewOrcaChecker(vault)
+	} else {
+		check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	env.cancel = cancel
+	env.mu.Unlock()
+	go watch.Run(ctx, env.poll, env.throttle, &env.pending, check, func() error {
+		res, ng, err := srv.Refresh()
+		if err != nil {
+			return err
+		}
+		srv.ReplaceGraph(ng)
+		log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d / 改名 %d（revision=%d）",
+			res.Added, res.Updated, res.Deleted, res.Renamed, srv.Revision())
+		return nil
 	})
-	srv.SetTouchAck(func(id string) error { return store.AckDigest(touchPath, id) })
-	srv.SetDigestAvailable(func() bool { return store.DigestAvailable(touchPath) })
-	// v0.1.12：/api/stats 暴露 is_pending（roadmap #14）
-	srv.SetIsPending(func() bool { return pending.Load() })
+	fmt.Printf("自动监听: 开（轮询 %v，刷新节流 %v；--watch-off 关闭）\n", env.poll, env.throttle)
+}
+
+// cmdServe 启动 Web UI（REST + 节点簇可视化 + 自动监听 + 刷新）。
+// v0.1.15 无库启动：不带 vault 时以空库启动，POST /api/vault 配库/换库
+// （壳/TUI/浏览器选库的地基）；带 vault 时行为与旧版一致（启动即配库）。
+func cmdServe(args []string) int {
+	pos, flags := parseArgs(args)
+	if flags["help"] != "" {
+		usageFor("serve")
+		return 0
+	}
+	port := fint(flags, "port", 8080)
 
 	// API 鉴权（v0.1.8 安全前置）：--token 指定；否则自动生成 32 位 hex 并打印。
-	// 前端页面由服务端注入 token（外部页面拿不到）；curl 用 X-Seren-Token 头或
-	// ?token= 查询参数。重启后 token 变化 → 浏览器重新 GET / 即拿到新 token。
 	token := flags["token"]
 	if token == "" {
 		buf := make([]byte, 16)
@@ -787,61 +842,120 @@ func cmdServe(args []string) int {
 		}
 		token = hex.EncodeToString(buf)
 	}
+
+	env := &serveEnv{
+		flags:    flags,
+		watchOn:  flags["watch-off"] == "",
+		poll:     time.Duration(fint(flags, "watch-interval", 10)) * time.Second,
+		throttle: time.Duration(fint(flags, "watch-throttle", 60)) * time.Second,
+	}
+	srv := web.New(nil, nil, "", "", version, nil, nil)
 	srv.Token = token
 
-	// 自动监听（v0.1.4，克制设计见 internal/watch）：默认开启，--watch-off 关闭。
-	// 轮询间隔 --watch-interval 秒（默认 10s）；刷新节流 --watch-throttle 秒
-	// （默认 60s，合并窗口——连续编辑吸收为窗口内一次刷新）。
-	if flags["watch-off"] == "" {
-		interval := time.Duration(fint(flags, "watch-interval", 10)) * time.Second
-		throttle := time.Duration(fint(flags, "watch-throttle", 60)) * time.Second
-		var check func() (bool, error)
-		if isOrca {
-			check = watch.NewOrcaChecker(vault)
-		} else {
-			check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles)
+	// 配库闭包（POST /api/vault）：opts 覆盖启动 flags 的 profile/store/db
+	srv.SetVault(func(path string, opts web.VaultOpts) (*web.VaultState, error) {
+		merged := map[string]string{}
+		for k, v := range flags {
+			merged[k] = v
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go watch.Run(ctx, interval, throttle, &pending, check, func() error {
-			res, ng, err := refreshFn()
-			if err != nil {
-				return err
-			}
-			srv.ReplaceGraph(ng)
-			log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d / 改名 %d（revision=%d）",
-				res.Added, res.Updated, res.Deleted, res.Renamed, srv.Revision())
-			return nil
-		})
-		fmt.Printf("自动监听: 开（轮询 %v，刷新节流 %v；--watch-off 关闭）\n", interval, throttle)
-	}
+		if opts.ProfileName != "" {
+			merged["profile-name"] = opts.ProfileName
+		}
+		if opts.Profile != "" {
+			merged["profile"] = opts.Profile
+		}
+		if opts.Store != "" {
+			merged["store"] = opts.Store
+		}
+		if opts.DB != "" {
+			merged["db"] = opts.DB
+		}
+		p, err := adapter.ResolveProfile(merged["profile"], merged["profile-name"], path)
+		if err != nil {
+			return nil, fmt.Errorf("画像加载失败: %w", err)
+		}
+		env.mu.Lock()
+		env.vault, env.p, env.flags = path, p, merged
+		env.pending.Store(false)
+		env.mu.Unlock()
+		st, err := buildServeState(env)
+		if err != nil {
+			return nil, err
+		}
+		// 配库后启动/重建 watch（web 应用状态后经 OnVaultApplied 触发，
+		// 见下——先返回状态，watch 由应用成功后的回调启动）
+		return st, nil
+	})
+	srv.OnVaultApplied = func() { env.startWatch(srv) }
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	fmt.Printf("Serendipity Engine %s Web UI: http://%s  (source: %s, 节点 %d)\n",
-		version, addr, src, g.Stats().Nodes)
+
+	// 有 vault → 启动即配库（行为与旧版一致）
+	if len(pos) >= 1 {
+		vault := pos[0]
+		p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
+		if err != nil {
+			fatal("画像加载失败: %v", err)
+		}
+		env.vault, env.p = vault, p
+		st, err := buildServeState(env)
+		if err != nil {
+			fatal("%v", err)
+		}
+		srv.ApplyVaultState(st)
+		env.startWatch(srv)
+
+		fmt.Printf("Serendipity Engine %s Web UI: %s  (source: %s, 节点 %d)\n",
+			version, clickableLink("http://"+addr), st.Source, st.G.Stats().Nodes)
+		switch {
+		case st.OrcaRepo != "":
+			fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", st.OrcaRepo)
+		case st.VaultName != "":
+			fmt.Printf("跳转: Obsidian vault 名=%s（卡片上点「打开」会跳到笔记软件）\n", st.VaultName)
+		}
+		if !adapter.IsOrcaDB(vault) && flags["profile-name"] == "" && flags["profile"] == "" && adapter.DetectLLMWiki(vault) {
+			fmt.Printf("提示: 检测到 LLM Wiki 结构（raw/ + wiki/index.md）——如需只扫 wiki/ 实体页并排除 index.md/log.md，加 --profile-name llm-wiki\n")
+		}
+		if n, err := store.TouchCount(touchPathFor(vault)); err == nil && n > 0 {
+			fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
+		}
+		if gen, _ := store.MaybeDigest(touchPathFor(vault), storePathFor(vault, flags["store"]), store.LoadTouchConfig(baseOf(vault))); gen {
+			fmt.Printf("touch digest: 启动补查生成新 digest（间隔兜底）\n")
+		}
+	} else {
+		// 无库启动：空图起服务，等待 POST /api/vault 配库
+		fmt.Printf("Serendipity Engine %s Web UI（无库启动）: %s\n", version, clickableLink("http://"+addr))
+		fmt.Printf("  等待配库: POST /api/vault {\"path\":\"<vault 目录或 .db>\"}（页面顶部也有选库入口）\n")
+	}
+
 	fmt.Printf("API 鉴权: 开（token=%s；页面已自动注入，curl 用 X-Seren-Token 头或 ?token=；--token 可指定固定值）\n", token)
-	switch {
-	case orcaRepo != "":
-		fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", orcaRepo)
-	case vaultName != "":
-		fmt.Printf("跳转: Obsidian vault 名=%s（卡片上点「打开」会跳到笔记软件）\n", vaultName)
-	}
-	// v0.1.12 LLM Wiki 结构探测（backlog §3.5）：只提示不自动启用——用户显式
-	// --profile-name llm-wiki 才排除 index.md/log.md / raw 等（保护普通 Obsidian 库）。
-	if !isOrca && flags["profile-name"] == "" && flags["profile"] == "" && adapter.DetectLLMWiki(vault) {
-		fmt.Printf("提示: 检测到 LLM Wiki 结构（raw/ + wiki/index.md）——如需只扫 wiki/ 实体页并排除 index.md/log.md，加 --profile-name llm-wiki\n")
-	}
-	if n, err := store.TouchCount(touchPath); err == nil && n > 0 {
-		fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
-	}
-	// §3.7（v0.1.14）启动补查：serve 启动时检查一次间隔兜底——引擎未跑期间
-	// 错过的 digest_days 不丢（成本 = touch 库 meta 一次读）。
-	if gen, _ := store.MaybeDigest(touchPath, storePath, touchCfg); gen {
-		fmt.Printf("touch digest: 启动补查生成新 digest（间隔兜底）\n")
-	}
-	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
+
+	// 优雅退出（v0.1.15）：SIGINT/SIGTERM → 停 watch → HTTP Shutdown（等当前请求完成）。
+	// 此前 serve 无信号处理，Ctrl+C 直接硬杀；无库启动 + 自动监听挂后台后需要干净退出。
+	// store 每次操作开闭 bbolt（非长驻连接），硬杀不损坏数据，但优雅退出收尾更稳妥
+	// （停监听循环、打印退出日志）。Web 端不做关闭入口——生命周期归"拉起它的人"
+	// （终端 Ctrl+C / 服务管理器 / 未来壳的进程面板），Web 是消费端无杀服务权限。
+	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		log.Printf("收到退出信号，正在关闭…")
+		env.mu.Lock()
+		if env.cancel != nil {
+			env.cancel() // 停 watch（若有）
+		}
+		env.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			log.Printf("关闭服务超时: %v", err)
+		}
+	}()
+	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fatal("服务失败: %v", err)
 	}
+	log.Printf("引擎已退出")
 	return 0
 }
 
@@ -868,7 +982,7 @@ func toWebDigestTargets(ts []store.DigestTarget) []web.DigestTarget {
 // 刷新后的新图（建图叠加重定向）。Store 路径与 CLI refresh 一致。
 func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string) web.RefreshFunc {
 	storePath := storePathFor(vault, flags["store"])
-	return func() (*sync.Result, *graph.Graph, error) {
+	return func() (*syncpkg.Result, *graph.Graph, error) {
 		old, err := store.Load(storePath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("读旧状态失败: %w", err)
@@ -881,9 +995,9 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err != nil {
 			return nil, nil, err
 		}
-		res := sync.Diff(old, docs)
+		res := syncpkg.Diff(old, docs)
 		// 改名迁移（v0.1.5，修订 #8）：见 cmdRefresh 同段注释
-		merged := sync.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
+		merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
 		if err := store.SaveRenames(storePath, merged); err != nil {
 			return nil, nil, fmt.Errorf("改名映射持久化失败: %w", err)
 		}
@@ -899,7 +1013,7 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 
 // renamesMap 从对账结果的改名明细构建 旧ID→新ID 映射（ApplyRenames /
 // RenameTouch 的入参形态）。
-func renamesMap(rs []sync.Rename) map[string]string {
+func renamesMap(rs []syncpkg.Rename) map[string]string {
 	m := make(map[string]string, len(rs))
 	for _, r := range rs {
 		m[r.OldID] = r.NewID
@@ -1004,6 +1118,17 @@ func isTerminal(f *os.File) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// clickableLink 把 URL 渲染为终端可点击链接（v0.1.15）：TTY 下用 OSC 8 超链接
+// 转义（\x1b]8;;<url>\x1b\\<text>\x1b]8;;\x1b\\，Windows Terminal / iTerm2 /
+// VSCode 终端等支持，Ctrl+点击/单击即开）；非 TTY（管道/重定向/嵌入 spawn）
+// 退化为纯文本，避免输出污染。提示"如何开启前端界面"的统一入口。
+func clickableLink(url string) string {
+	if !isTerminal(os.Stdout) {
+		return url
+	}
+	return "\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\"
+}
+
 func sortStrings(ss []string) {
 	for i := 1; i < len(ss); i++ {
 		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
@@ -1053,7 +1178,7 @@ func usageErr(format string, a ...any) {
 
 // jsonOut 结构化输出（CLI 三件套 #2）：整块 JSON 序列化到 stdout。
 // err 非 nil 时按运行时错误处理（exit 1）。复用现有结构体（roam.Outcome /
-// sync.Result / graph.Stats / adapter.Document），不新增镜像类型。
+// syncpkg.Result / graph.Stats / adapter.Document），不新增镜像类型。
 func jsonOut(v any) {
 	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
 		fatal("JSON 输出失败: %v", err)
