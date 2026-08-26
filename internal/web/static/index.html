@@ -129,6 +129,10 @@
   .pending.hidden { display: none; }
   .pending .btn { flex-shrink: 0; }
 
+  /* 全局工具类：.hidden 覆盖任何 display（v0.1.15 修正——此前只有 .pending.hidden /
+     .drawer-overlay.hidden 等特定组合，.search.hidden 无匹配规则导致隐藏失效） */
+  .hidden { display: none !important; visibility: hidden; }
+
   /* ---- 侧滑抽屉（v0.1.12，统一面板） ---- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 30;
     animation: fade .12s ease; }
@@ -316,6 +320,26 @@
   .vault-setup .search { justify-content: center; }
   .vault-setup #vault-path { flex: 1; max-width: 360px; }
 
+  /* 当前节点操作栏（v0.1.15）：与顶栏按钮同款（btn ghost sm）+ 锚点胶囊语言。
+     按钮在此加大（相对全局 btn.sm 的 padding 4px/12px）——用户反馈太小。 */
+  .current-node { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 4px 0 12px; padding: 8px 12px; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+  .current-node.hidden { display: none; }
+  .current-node .cur-label { color: var(--muted); font-size: 13px; }
+  .current-node .cur-title { font-weight: 600; font-size: 14px; margin-right: 6px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+  .current-node .btn { padding: 7px 16px; font-size: 13.5px; font-weight: 600; }
+
+  /* 已配库状态条（v0.1.15）：配置完成后的顶端确认 */
+  .vault-status { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    padding: 6px 12px; background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+  .vault-status.hidden { display: none; }
+  .vault-status .vs-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .vault-status .vs-dot.off { background: var(--warn); }
+  .vault-status b { color: var(--text); }
+
   @media (max-width: 560px) {
     .brand .tag { display: none; }
     .header-right .btn .txt { display: none; }
@@ -355,6 +379,8 @@
     <input id="q" placeholder="输入笔记名 / 标签 / 任意词…" autocomplete="off" autofocus>
     <button id="go" class="btn primary">漫游</button>
   </div>
+  <!-- 已配库状态条（v0.1.15）：配库成功后显示当前库名 + 节点数引导（仅 configured 时渲染） -->
+  <div id="vault-status" class="vault-status hidden"></div>
   <div id="source" class="source-line"></div>
 
   <!-- 待刷新提示条（v0.1.12，roadmap #14） -->
@@ -364,6 +390,7 @@
   </div>
 
   <div id="meta" class="meta"></div>
+  <div id="current-node" class="current-node hidden"></div>
   <div id="anchors" class="anchors"></div>
   <div id="fallback"></div>
   <div id="list"></div>
@@ -424,6 +451,7 @@ const I18N = {
     exportName: 'serendipity-roam.md', exportTitle2: '导出 Markdown',
     vaultTitle: '选择笔记库', vaultSub: '引擎以无库模式启动——指定笔记库（Obsidian 目录或虎鲸 .db 路径）后开始分析',
     vaultPh: '笔记库路径（vault 目录 / OrcaNote.db）', vaultGo: '配置库', vaultFail: '配置失败',
+    curNodePh: '当前节点', relFromCur: '与当前节点查关系',
   },
   en: {
     tag: 'tag', node: 'nodes', edge: 'edges', source: 'source',
@@ -459,6 +487,7 @@ const I18N = {
     exportName: 'serendipity-roam.md', exportTitle2: 'Export Markdown',
     vaultTitle: 'Choose a library', vaultSub: 'Engine started without a library — point it at your notes (Obsidian vault or Orca .db) to begin',
     vaultPh: 'Library path (vault dir / OrcaNote.db)', vaultGo: 'Configure', vaultFail: 'Configure failed',
+    curNodePh: 'Current node', relFromCur: 'Relation: current node',
   }
 };
 let lang = (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en';
@@ -590,15 +619,27 @@ fetch('/api/config').then(r => r.json()).then(cfg => {
     line.dataset.source = cfg.source; line.dataset.nodes = cfg.nodes; line.dataset.edges = cfg.edges;
     updateSourceLine();
   }
+  // 已配库状态条（v0.1.15）：configured=true → 显示库名 + 规模
+  if (cfg.configured === true) renderVaultStatus(cfg.vault, cfg.nodes, cfg.edges);
   // 无库启动（v0.1.15）：configured=false → 显示选库引导，隐藏主搜索
   if (cfg.configured === false) showVaultSetup();
 }).catch(() => {
   fetch('/api/stats').then(r => r.json()).then(s => {
     if (s.version && $('#ver')) $('#ver').textContent = s.version;
+    if (s.configured === true) renderVaultStatus(s.vault, s.nodes, s.edges);
     if (s.configured === false) showVaultSetup();
   }).catch(() => {});
 });
 applyStaticI18n();
+
+// ---- 已配库状态条（v0.1.15）：顶端确认"当前库 + 规模"，提示已配置好可开始漫游 ----
+function renderVaultStatus(vault, nodes, edges) {
+  const el = $('#vault-status');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.innerHTML = `<span class="vs-dot"></span>已配置引擎 · <b>${esc(vault || '')}</b>
+    · ${nodes || 0} 节点 / ${edges || 0} 边`;
+}
 
 // ---- 无库启动选库引导（v0.1.15）：POST /api/vault {path} 配库，成功后重载 ----
 function showVaultSetup() {
@@ -606,7 +647,14 @@ function showVaultSetup() {
   if (!s) return;
   s.classList.remove('hidden');
   const hero = $('#hero'); if (hero) hero.classList.add('hidden');
-  const search = document.querySelector('main .search'); if (search) search.classList.add('hidden');
+  // 只隐藏主搜索框（#q 所在容器），不动选库表单自己的 .search——否则输入框被误隐藏
+  const q = $('#q');
+  const search = q ? q.closest('.search') : null;
+  if (search) search.classList.add('hidden');
+  // 空库时也隐藏结果区（hero"图谱漫游"）+ 待刷新提示条——它们无库无意义
+  const list = $('#list'); if (list) list.classList.add('hidden');
+  const anchors = $('#anchors'); if (anchors) anchors.classList.add('hidden');
+  const pending = $('#pending-banner'); if (pending) pending.classList.add('hidden');
   s.querySelector('.vault-title').textContent = t('vaultTitle');
   s.querySelector('.vault-sub').textContent = t('vaultSub');
   const input = $('#vault-path');
@@ -619,6 +667,7 @@ function showVaultSetup() {
     fetch('/api/vault', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) })
       .then(r => r.json()).then(resp => {
         if (resp.configured) { location.reload(); return; }
+        // 配库失败：显示错误（选库表单保留在页面上，用户可改路径重试）
         $('#vault-meta').textContent = t('vaultFail') + ': ' + (resp.error || '');
       }).catch(e => { $('#vault-meta').textContent = t('vaultFail') + ': ' + e.message; });
   };
@@ -683,6 +732,29 @@ function renderOutcome(d, query, listMode) {
   if (d.fallback === 1) $('#fallback').innerHTML = '<div class="fallback">' + t('fallbackSearch') + '</div>';
   else if (d.fallback === 2) $('#fallback').innerHTML = '<div class="fallback">' + t('fallbackSparse') + '</div>';
 
+  // 当前节点操作栏（v0.1.15）：漫游锚定后，对主锚点提供 详情/相似/关系 一键操作。
+  // 用户需求：对"当前打开的节点"能直接看详情、找相似、与其他节点对比关系。
+  // v0.1.15 别名：主锚点标题若非人读的（如"人物_002"），尽量显示别名（/api/node aliases）。
+  const cur = document.getElementById('current-node');
+  if (cur) {
+    if (shownA.length) {
+      const master = shownA[0];
+      cur.classList.remove('hidden');
+      const curTitle = cur.querySelector('.cur-title');
+      cur.innerHTML = `<span class="cur-label">${t('curNodePh')}</span>
+        <span class="cur-title" data-id="${esc(master.id)}" title="${esc(master.id)}">${esc(master.title)}</span>
+        <button class="btn ghost sm" data-cur="${esc(master.id)}" data-cur-act="preview">${t('preview')}</button>
+        <button class="btn ghost sm" data-cur="${esc(master.id)}" data-cur-act="similar">${t('similar')}</button>
+        <button class="btn ghost sm" data-cur="${esc(master.id)}" data-cur-act="relation">${t('relTo')}</button>`;
+      loadNodeAlias(master.id).then(a => {
+        const tEl = cur.querySelector('.cur-title');
+        if (a && tEl) { tEl.textContent = a; tEl.style.fontStyle = 'italic'; tEl.style.color = 'var(--accent)'; }
+      });
+    } else {
+      cur.classList.add('hidden');
+    }
+  }
+
   const list = $('#list');
   if (!query && !listMode) { renderHome(); return; }
   const cards = (d.results || []).concat((d.fallback_hits || []).map(h => ({
@@ -744,6 +816,7 @@ function cardHTML(c, i) {
     <div class="actions">
       <button class="act" data-preview="${esc(c.id)}" onclick="event.stopPropagation(); showPreview(this.dataset.preview)">${t('preview')}</button>
       <button class="act" data-similar="${esc(c.id)}" onclick="event.stopPropagation(); showSimilar(this.dataset.similar)">${t('similar')}</button>
+      <button class="act" data-relfrom="${esc(c.id)}" onclick="event.stopPropagation(); relWith(this.dataset.relfrom)">${t('relTo')}</button>
     </div>
   </div>`;
 }
@@ -751,6 +824,29 @@ function cardHTML(c, i) {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// 取节点别名（v0.1.15）：/api/node 返回 aliases，若有非空别名返回第一个，
+// 否则返回空（调用方回退标题）。用于当前节点栏把"人物_002"这种人读性差的
+// 标题换成别名展示。失败静默返回空。
+async function loadNodeAlias(id) {
+  try {
+    const r = await fetch('/api/node?id=' + encodeURIComponent(id));
+    const d = await r.json();
+    if (Array.isArray(d.aliases) && d.aliases.length) return d.aliases[0];
+  } catch (e) { /* 静默 */ }
+  return '';
+}
+
+// ---- 关系查询：以一个节点为起点，打开关系抽屉并预填 from（v0.1.15）----
+// 供卡片"关系"按钮 / 当前节点操作栏"关系"调用。from 用标题，用户可改 to。
+function relWith(from) {
+  openDrawer(t('relTitle'), `
+    <div class="rel-inputs"><input id="rel-from" placeholder="${t('relFromPh')}" value="${esc(from)}"><span class="rel-x">↔</span>
+      <input id="rel-to" placeholder="${t('relToPh')}"><button id="rel-go" class="btn primary">${t('relGo')}</button></div>
+    <div id="rel-result" class="rel-result"></div>`);
+  const to = $('#rel-to');
+  if (to) to.focus();
 }
 
 // ---- 初始页：静态热门节点标签云（v0.1.12，P0.5：移除漂浮气泡动画）----
@@ -762,6 +858,8 @@ async function renderHome() {
     </div>`;
   $('#anchors').innerHTML = '';
   $('#meta').textContent = '';
+  const cur = document.getElementById('current-node');
+  if (cur) cur.classList.add('hidden');
   let hot = [];
   try { const r = await fetch('/api/hot?n=24'); hot = await r.json(); } catch (e) { hot = []; }
   const box = $('#bubbles');
@@ -815,18 +913,14 @@ async function showPreview(id) {
   } catch (e) { return alert(t('detailFail') + ': ' + e.message); }
   const overlay = document.createElement('div');
   overlay.className = 'detail-overlay';
-  const nb = (d.neighbors || []).map(n => `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
-  const bl = (d.backlinks || []).map(n => `<span class="dnod" data-id="${esc(n.id)}" data-title="${esc(n.title)}">${esc(n.title || n.id)}</span>`).join('');
   overlay.innerHTML = `<div class="detail-card" onclick="event.stopPropagation()">
     <div class="dhead"><span class="dtitle">${esc(d.title || d.id)}</span>
       <span class="dtype">${esc(d.type || '')}</span>
       <button class="dclose" title="close">✕</button></div>
     <div class="dmeta">id: ${esc(d.id)}${d.deg !== undefined ? ' · ' + t('deg') + ' ' + d.deg : ''}</div>
     <div class="dtext">${esc(d.text || t('previewTextNone'))}</div>
-    <div class="dsec">${t('neighbors')}（${(d.neighbors || []).length}）</div>
-    ${nb || `<div class="dempty">${t('noNeighbors')}</div>`}
-    <div class="dsec">${t('backlinks')}（${(d.backlinks || []).length}）</div>
-    ${bl || `<div class="dempty">${t('noBacklinks')}</div>`}
+    ${detailGroup(t('neighbors'), d.neighbors)}
+    ${detailGroup(t('backlinks'), d.backlinks)}
   </div>`;
   overlay.addEventListener('click', () => overlay.remove());
   overlay.querySelector('.dclose').onclick = () => overlay.remove();
@@ -834,6 +928,38 @@ async function showPreview(id) {
     n.onclick = () => { overlay.remove(); roam(n.dataset.id, 'push', n.dataset.title || n.dataset.id); };
   });
   document.body.appendChild(overlay);
+}
+
+// 邻居/被引用统一渲染（v0.1.15）：按类型分组 + type- 着色、去重、限流 + 折叠、
+// 超长标题截断——此前 89 个胶囊无差别平铺 + "人物_XXX"占位标题，视觉噪声大。
+function detailGroup(label, refs) {
+  const list = (refs || []);
+  const sec = document.createElement('div');
+  // 去重（同 id）
+  const seen = new Set(), uniq = [];
+  for (const r of list) {
+    if (!seen.has(r.id)) { seen.add(r.id); uniq.push(r); }
+  }
+  // 按类型分组，组内按标题稳定排序
+  const groups = {};
+  for (const r of uniq) (groups[r.type || 'note'] = groups[r.type || 'note'] || []).push(r);
+  const order = Object.keys(groups).sort();
+  const MAX = 18; // 每组最多显示（超出折叠）
+  let html = `<div class="dsec">${label}（${uniq.length}）</div>`;
+  for (const tp of order) {
+    const items = groups[tp];
+    const typeCls = 'type-' + esc(tp);
+    const shown = items.slice(0, MAX);
+    const extra = items.length - shown.length;
+    const chips = shown.map(r => {
+      const tt = (r.title || r.id).length > 24 ? (r.title || r.id).slice(0, 24) + '…' : (r.title || r.id);
+      return `<span class="dnod ${typeCls}" data-id="${esc(r.id)}" data-title="${esc(r.title || r.id)}">${esc(tt)}</span>`;
+    }).join('');
+    html += `<div class="dgroup"><span class="dg-tag ${typeCls}">${esc(tp)}</span>${chips}` +
+      (extra > 0 ? `<span class="dmore" title="${esc(label)}">+${extra} 更多</span>` : '') + `</div>`;
+  }
+  sec.innerHTML = html || `<div class="dempty">${t('noNeighbors')}</div>`;
+  return sec.outerHTML;
 }
 
 // ---- 结构相似（/api/similar）→ 抽屉 ----
@@ -1043,6 +1169,16 @@ document.addEventListener('click', e => {
     const ef = $('#rel-from'), et = $('#rel-to');
     const f = ef.value.trim(), to = et.value.trim();
     if (f && to) queryRelation(); else $('#rel-result').innerHTML = '<div class="rel-empty">' + t('relEmpty') + '</div>';
+    return;
+  }
+  // 当前节点操作栏（v0.1.15）：详情/相似/关系一键（按钮为 .btn ghost sm，不限 class）
+  const cur = e.target.closest('[data-cur][data-cur-act]');
+  if (cur) {
+    const id = cur.dataset.cur, act = cur.dataset.curAct;
+    if (act === 'preview') showPreview(id);
+    else if (act === 'similar') showSimilar(id);
+    else if (act === 'relation') relWith(id);
+    return;
   }
 });
 document.addEventListener('keydown', e => {
