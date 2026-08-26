@@ -68,6 +68,7 @@
 | 3 | 核心引擎多平台分发（goreleaser + GitHub Actions 四平台 asset；Q2 插件内下载按钮） | [plugin-dev-plan](plugin-dev-plan.md) §四 | win-amd64 / mac-amd64 / mac-arm64 / linux-amd64 全出包 |
 | 4 | 插件 × AI 协作（引擎端点 `suggest-links` / `edges` overlay + 插件 AIBackend） | [plugin-dev-plan](plugin-dev-plan.md) §九 · [plugin-ai-cooperation](plugin-ai-cooperation.md) | **引擎零 AI、只暴露接口与算法**；`suggest-links` 复用 #15 候选 pass，`edges` overlay 内存态（AI 建议边 `kind=ai` + 溯源，可撤销） |
 | 5 | 插件市场发布 | [plugin-dev-plan](plugin-dev-plan.md) §四/§七 | Obsidian 社区目录 / 虎鲸 zip（手动解压） |
+| 6 | **touch 行为信号子系统**（独立 store + digest 告知 + 聚合备份 + 被动只读） | [backend-backlog](backend-backlog.md) §3.7 | **M2 排期（2026-08-26 定稿）**：touch 从图库拆独立 `touch-<hash>.bbolt`（touch/meta/backups）；digest 触发（计数≥500 主 / 间隔≥3天 兜底，计数优先 + 启动补查）+ `GET /api/touch/digest` + ack + `/api/stats.digest_available` + MCP 只读 `seren_touch_digest` + 聚合备份 `backup_max`；YAML `touch.yaml` 配置。**引擎零写 vault**——`serendipity-digest-*.md` 由插件导出。代码未动 |
 
 ### 阶段 3 · 远期增强（M3）
 
@@ -121,3 +122,4 @@ bbolt 落地 + 性能增强（#16，阶段 1，顺手做）→ 阶段 3 M3（can
 | 2026-08-25 | **roadmap 收编远期项**：性能增强（P1–P8，§二.3）并入 #16「bbolt 落地 + 性能增强（顺手做）」，取消独立 #17–#20；新增 **M3 阶段 3 远期增强**，收编 `.canvas` 白板检索（#1）与 bbolt 有趣能力（图谱时间旅行 / 探索日志·偶遇时刻 / 离线 AI 边 sidecar / 跨库元索引 / What-if 实验图，#2–#6）。里程碑总览、依赖链、未完成段、#5 性能行同步。 |
 | 2026-08-25 | **#16 bbolt 存储层替换落地（v0.1.13）**：SQLite → bbolt v1.5.0，四表→四 bucket，无迁移，签名保持调用点零改动；顺手项 P1 增量写 / P2 mmap+NoSync / P5 幽灵过滤 O(1) 完成；P8 读不阻塞内存层已有。端到端验证通过（真实 vault 150 文档 + 幂等刷新 + roam 回读）。P3/P4/P7 留待规模信号（§二.3 可选）。 |
 | 2026-08-25 | **#15 潜在关联落地（v0.1.13）**：suggest-links 待审清单（graph.PotentialLinks + GET /api/suggest-links，2-hop + AA/Jaccard/RA + Borda + top-K 节流，带算法与共享邻居证据）。未落图、co-touch 留 M2。端到端验证（真实 vault 输出有意义的人物↔人物/设定候选）。 |
+| 2026-08-26 | **M2 排期：touch 行为信号子系统定稿入档**：`backend-backlog.md` 新增 §3.7（独立 store 拆分修原 bug / digest 触发双逻辑计数优先 + 启动补查 / 被动非弹窗 + REST·MCP 只读 / **引擎零写 vault，digest md 由插件导出** / 聚合备份 / YAML touch.yaml）；roadmap 阶段 2 补 #6 排期指向 §3.7。**代码未动，M2 实现待启动**。设计立场已吸收内联（原 `serendipity-drive/serendipity-positioning.md` §十一）。 |

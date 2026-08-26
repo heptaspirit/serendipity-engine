@@ -195,6 +195,64 @@ bbolt 不是"更轻的 SQLite"——它的三个硬特性（**零 schema / COW �
 - **已确认无问题的部分**：`![[...]]` 嵌入被 `linkRe`（`\[\[([^\]]+)\]\]`）正常捕获为链接（合理，嵌入是强关系信号）；虎鲸 `CopyDBForRead` + `to_pinyin` 确定性 stub 双路径快照经 TestOrca 实测稳健；`BlockRef` 只取结构化真实边，与克制设计完美契合。
 - **可选增强（非必须，不立即做）**：虎鲸 `BlockRef.type`（1/2/3）暂被扁平成无类型 `Refs`（alias 列留作边标签备用，orca.go:177）。若未来做 typed overlay 边可保留 `refType`，但当前克制设计下不必。
 
+### 3.7 touch 行为信号子系统（M2 排期，2026-08-26 定稿）
+
+> 背景：Obsidian 插件已能记录 touch（节点点击）。当前 touch 与图库同存于 `db-<hash>.bbolt` 的 touch bucket——本该是**不可从 vault 派生的原始行为信号**，却被当成可丢弃派生快照的一部分（"源数据权威原则"允许删 `db-*.bbolt` 重建，touch 会连坐丢失）。M2 阶段把 touch 升级为**独立、有生命周期、有告知机制**的行为信号子系统。
+> 设计立场源为工作区草稿 `serendipity-drive/serendipity-positioning.md` §十一，已吸收内联于本节（2026-08-26 定稿，引擎仓库内不再依赖外部文件）。
+
+**设计立场（已定）**：
+- touch 是长期资产但带噪声：点击流混大量无意识操作（误点 / 划过），不是每条都该永生。
+- 长期未被注意的 touch 淘汰 = 健康遗忘：半年没被 surfaced 的 touch 信息量极低，留着只是噪声。
+- 记忆巩固模型：原始 touch（感觉记忆，易失、有上限、会淘汰）→ 通知 / surfacing（复述，无意识变有意识的瞬间）→ 备份 / 固化（长期记忆，蒸馏过的聚合，非原始事件）。
+- 红线不变：touch 只读、不演化边权（杜绝「点击→边权变→结果变→再点击」正反馈跑飞）。
+
+**3.7.1 存储解耦（修复原 bug）**：
+- touch 从图库 `db-<hash>.bbolt` 拆为独立 store：`<vault>/.serendipity/touch-<hash>.bbolt`（独立 bucket 集：`touch` / `meta` / `backups`）。
+- 图库重建 / 误删（"源数据权威原则"允许删派生快照）**不再连坐** touch。touch 是 **first-class 但 secondary** 的 store：独立于图拓扑、自带保留 / 备份策略、不受图库重建影响。
+- 图库 `docs/links/renames` 仍为可重建派生数据；touch 为不可重建原始信号。
+- **实现注意（跨 store 访问）**：digest 生成与 TouchStats 的幽灵过滤需要**同时打开 touch store 与图库**（touch 库取事件、图库 `docs` bucket 做存在性过滤 + ID→标题解析）。函数签名带双 dbPath（touchDBPath + graphDBPath）；serve 持有两者。touch 库打开复用 `open()`（已建父目录），图库只读打开即可。
+
+**3.7.2 digest 触发与内容（阈值双逻辑，计数优先）**：
+- 计数触发（主）：自上次 digest 起累计 touch ≥ `digest_count`（默认 500）。
+- 间隔触发（兜底）：距上次 digest ≥ `digest_days`（默认 3 天）。
+- 计数优先 = 评估时先判计数，计数达标即触发，间隔仅兜底。
+- **启动补查**：serve 启动时检查一次——距上次 digest ≥ `digest_days` 则立即补生成（引擎未跑期间错过的间隔兜底不丢）。成本 = bbolt meta 一次读。
+- **顺序铁律：通知先于淘汰**。流水线：累积 → 达阈值先生成 digest → 宽限期 → 仍未被用户 act 的 touch 才淘汰。淘汰不得与通知竞速（否则用户永远没机会看一眼）。
+- **通知形态（被动，不主动弹窗）**：CLI / MCP 不主动弹出；至多「有新的 digest 可供查看」轻量状态提醒（非模态、不阻断工作流）。用户 / 插件需经只读接口**主动查询**才取回内容。
+- digest 内容：窗口内 touch 聚合 TopN targets + TopN sources + 时间跨度 + 新增总数；指向**具体节点 / 聚类**（「X/Y/Z 聚成簇，疑似 A 主题升温——要不要连一下」），不是「你点了 N 次」。targets 必须做幽灵过滤（关联图库 `docs` 存在性），标题经图库解析。
+
+**3.7.3 digest 出口（被动告知 + 可查询；引擎不写 vault）**：
+- **(a) 引擎零写用户目录**：引擎**不生成、不写入任何 vault 文件**——`serendipity-digest-*.md` 由**前端插件**在用户主动触发导出时生成（引擎保持"源数据权威原则"下零写 vault 的既有边界）。
+- **(b) 只读接口暴露**（被动、可查询，全部只读）：
+  - REST `GET /api/touch/digest`：返回最新 digest（含唯一 `id`、窗口聚合 TopN、时间跨度、新增总数）。无 digest 时返回空摘要。
+  - MCP `seren_touch_digest`：同语义的只读工具，AI / 插件主动查询时返回最新 digest 或摘要。
+  - `/api/stats` 增加 `digest_available: bool`：自上次被读取/ack 后有新 digest 时为 true（轻量状态提醒的开关）。
+- **已读判定（ack）**：`POST /api/touch/digest/ack` 把 digest id 记入 touch store `meta` bucket（`last_ack_id`），`digest_available` 随之转 false。ack 只写 meta、不碰 touch 事件、不反馈排序，符合红线。
+- **导出（插件侧，非引擎）**：插件读 `GET /api/touch/digest` 内容，用户确认后经 `app.vault` 写入 `serendipity-digest-<YYYYMMDD-HHMMSS>.md`（**带时间戳防同日冲突**；中英双语由插件 i18n 生成）。文件保留策略归插件侧（vault 内用户自管），引擎不管、不轮转。
+- 告知层级保持 ambient、低频——刻意不让无意识行为被强行拽成有意识提醒。
+
+**3.7.4 摘要备份（聚合快照，有上限，独立于 digest 出口）**：
+- 每次 digest 同步滚一份**聚合排序后的快照**（只留算法认为高价值的部分，TopN，非原始事件），存入 touch store 的 `backups` bucket。
+- 上限 `backup_max`（默认 5）份，超则自动删最旧 → 存储不爆炸，等于「用算法把排序后认为有价值的信息留着了」。
+- **与 3.7.3(b) 区分**：备份是 store 内聚合快照（算法长期记忆，TopN，不可读，无 ack 概念）；digest 接口是可读报告。两者独立、互不复用。
+
+**3.7.5 参数配置（YAML，与 profile.yaml 同 convention）**：
+- 落 `<vault>/.serendipity/touch.yaml`（与 `profile.yaml` 同目录、同 YAML + 注释风格），随库走、可手改、便携。
+- 引擎启动读取并钳制到区间，缺省用默认：
+
+| 参数 | 默认 | 区间 | 说明 |
+|---|---|---|---|
+| `digest_count` | 500 | [200, 600] | 计数触发阈值（主） |
+| `digest_days` | 3 | [1, 5] | 间隔触发阈值，单位天（兜底） |
+| `backup_max` | 5 | [1, 20] | 聚合快照保留上限，超则删最旧 |
+
+> 无 `digest_max`：digest 不落文件、不轮转（3.7.3(a) 改由插件导出）；文件保留策略在插件侧。早期讨论曾误记为 `config.json`；经核对既有参数配置一律 YAML（`profile.yaml`），故 touch 配置统一 YAML。
+
+**3.7.6 落地边界（M2 开发，代码未动）**：
+- 引擎代码改动：store 拆分（touch 独立文件 + meta/backups bucket）→ digest 触发（AppendTouch 后检查 + 启动补查）→ digest 生成（双 store 聚合）→ 备份轮转 → `GET /api/touch/digest` + ack + `/api/stats.digest_available` → MCP `seren_touch_digest` → `touch.yaml` 加载。
+- 与 M2 插件壳（iframe 嵌 Web UI）契合：插件负责被动状态提醒（`digest_available`）/ 查询展示 / **导出到 vault**（用户触发，非弹窗）；引擎负责生成 + 只读接口 + 备份。引擎零写 vault。
+- 同步义务：新端点与 MCP 工具登记 [`docs/api-contract.md`](api-contract.md)；插件 `seren-api.d.ts` 同步（D5）。
+
 ## 四、风险分析与红线（防污染已验证行为）
 
 **必须隔离的三条红线：**
