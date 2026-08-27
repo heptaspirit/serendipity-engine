@@ -98,4 +98,3 @@ http.ListenAndServe
 - 接口：`Invoke-RestMethod` 逐端点验证。
 - 页面版本：curl 检查关键标记（如 `data-title`、`deadend`、`漫游中`）确认 go:embed
   已更新（重建 + 重启服务后）。
-- 用户机器可装 Playwright 后做真实点击回归（计划中）。

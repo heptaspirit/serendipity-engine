@@ -1,10 +1,16 @@
-# MCP 暴露架构研究（v3，已落地 v0.1.9 / 扩至八工具 v0.1.14）
+# MCP 暴露架构研究（v3，已落地 v0.1.9 / 扩至八工具 v0.1.14 / 迁移 mcp-go v0.2.0）
 
 > 状态：**已落地**（v0.1.9，2026-08-23）。此前为研究稿（用户指示"先不开工，研究靠谱
 > 架构 + 不影响本体的接入方式"）。方向已在 design.md §6.10 拍板：**"AI 通道用 MCP
 > 而非自定义 REST……REST 给 Web / CLI 自用，MCP 给 AI 用，同一个核心。"** 本文把
 > 形态、边界、tools、风险落成可执行方案；落地实现见 `internal/mcp` + `cmd/seren`
-> `seren mcp` 子命令（自实现薄协议，零第三方依赖，单二进制不变）。
+> `seren mcp` 子命令。
+>
+> **v0.2.0 迁移 mcp-go**：传输层从自实现薄 JSON-RPC 换成 `github.com/mark3labs/mcp-go`
+> （事实标准 SDK）；`seren serve` 内嵌 `/mcp` 端点（Streamable HTTP，Web+REST+MCP
+> 三合一，一份 live 图服务所有客户端——修"子进程快照吃不到中途刷新改动"）；stdio
+> 一并迁移上 SDK（`seren mcp` 兜底 Claude Desktop）。工具扩至九件套（+`seren.state`，
+> 未配库引导）。手写 JSON-RPC 已删除，不并存两套协议栈。
 
 ## 0. 目标与硬约束
 
@@ -31,21 +37,19 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 
 ## 2. 传输与协议
 
-- **MCP 规范**：JSON-RPC 2.0；本地 agent 用 **stdio transport**（agent 启动子进程，
-  走 stdin/stdout）——与引擎"本地工具、单二进制、无网络出口"的定位一致。
-  **initialize 回显客户端请求的 protocolVersion**（v0.1.10）——我们只用稳定消息
-  （initialize/tools/list/tools/call/ping），声称客户端任一版本兼容；避免 SDK 客户端
-  版本不匹配→断连→重连→反复 spawn。（启动横幅仅 TTY 打印，DSH spawn 时静默。）
-- **Go 实现两条路**：
-  - 官方 SDK（`modelcontextprotocol/go-sdk`）：成熟、省事，但引入第三方依赖
-    （本仓库目前仅 yaml.v3 + modernc sqlite，依赖极简是卖点）；
-  - **自实现薄协议层**：MCP 起步只需三个消息（`initialize` / `tools/list` /
-    `tools/call`），JSON-RPC 编解码标准库足够。**倾向自实现**（几十行，保持
-    零第三方依赖），若 SDK 生态成熟度明显更高再权衡。
-- **接入 dsh**：dsh 支持配置 MCP server（stdio），指向 `seren mcp --db <store>`；
-  dsh-mneme 类 agent 即可调用。这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
+- **MCP 规范**：JSON-RPC 2.0；本地 agent/remote 走 **Streamable HTTP**（serve 内嵌 `/mcp`，
+  传输为 process 内同一份 live 图）；独立 `seren mcp` 子进程走 **stdio transport**
+  （Claude Desktop 类启动子进程，走 stdin/stdout）。**initialize 回显客户端请求的
+  protocolVersion**（v0.1.10；mcp-go 标准协商处理版本兼容）。
+- **Go 实现（v0.2.0 定稿）**：用事实标准 SDK `github.com/mark3labs/mcp-go`
+  （`NewMCPServer` + `AddTool` + `NewStreamableHTTPServer` / `ServeStdio`）。工具注册
+  transport-agnostic（一套工具两个入口）；**手写 JSON-RPC 已删除，不并存两套协议栈**。
+  用户已确认"正经功能不再零依赖"（mcp-go 纯 Go 无 CGO，单二进制不变）。
+- **接入 dsh**：dsh 支持配置 MCP server（stdio / streamable-http），指向
+  `seren mcp --db <store>` 或 `seren serve` 的 `/mcp`；dsh-mneme 类 agent 即可调用。
+  这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
 
-## 3. Tools 设计（只读八工具；v0.1.9 四件套 + v0.1.11 扩 node/similar + v0.1.12 加 community + v0.1.14 加 touch_digest）
+## 3. Tools 设计（只读九工具；v0.1.9 四件套 + v0.1.11 扩 node/similar + v0.1.12 加 community + v0.1.14 加 touch_digest + v0.2.0 加 state）
 
 | tool | 入参 | 复用内核 | 说明 |
 |---|---|---|---|
@@ -57,23 +61,32 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
 | `graph.similar` | `id, k` | `Graph.Similar` | 结构相似节点（v0.1.11 Jaccard → v0.1.12 **Adamic-Adar** 度加权）：共同邻居多但互不链接，带共享邻居证据——AI 判断"哪些笔记说同一件事" |
 | `graph.community` | `resolution, seed` | `Graph.Communities` | 社区发现（v0.1.12，Leiden）：把图拆成主题簇——AI 不用遍历全库就能定位"有哪些主题簇、哪块互不相连"（诊断层：知识缺口） |
 | `seren.touch_digest` | 无 | store 只读闭包（§3.7） | 行为信号 digest（v0.1.14）：窗口点击聚合 TopN（幽灵过滤 + 标题）+ 来源 TopN——AI 识别"哪些主题在升温、疑似该连一下"。只读、被动（无 digest 返回空摘要）；经 main 注入闭包读 touch store，MCP 本体保持"只 import 纯库"边界 |
+| `seren.state` | 无 | server 状态（provider） | 会话状态（v0.2.0）：是否已配库 / 传输方式 / 工具数——未配库时给出引导提示（engine 已启动但无 vault 时的入口）；永远可用、不依赖图 |
 
 > 2026-08-23 用户指示：把随机漫游也加进 MCP（灵感：恐龙工具箱 SRS 的 roam /
 > 随机漫步交互）。`graph.random` 与 `graph.roam` 共用同一簇管线（clusterFromSeeds），
 > 只是起点从查询锚定换成 roll——实现成本几乎为零。
 
 原则：
-- **全部只读**；不暴露 refresh / touch / 配置写接口。
+- **全部只读**；不暴露 refresh / touch / 配置写接口。v0.2.0 起工具级 `readOnlyHint`/
+  `destructiveHint`/`idempotentHint` 注解（§3.8 Layer A）在协议层结构化声明只读语义。
+- **prompts**（§3.8 Layer B）：`seren_orientation` 经 `AddPrompt` 注册——Claude Code 等
+  客户端以斜杠命令 `/seren_orientation` 触发，把"定位/能力边界/工具速查/反模式"注入下文
+  （按需说明书，与常驻 SKILL.md 行为准则互补，内容同源、全英文）。
 - 输出用引擎现有 JSON 结构（roam.Outcome / graph.Relation 直接序列化），
-  白盒（带路径和证据），AI 可直接消费。
+  白盒（带路径和证据），AI 可直接消费。工具描述为英文（跨 AI 客户端兼容）。
 - 未来可加：`vault.list`（多库切换）、`graph.neighbors`（局部邻域）——按需，不急。
 
 ## 4. 数据加载（图生命周期）
 
 - `seren mcp --db <store.bbolt>`：从持久化存储加载图（复用 `store.Load` +
   `graph.Build`，含改名重定向），**启动时加载一次**，会话期间持有内存图。
-- 与 serve 同构但**无自动监听**：AI 会话短、不需要实时；库更新了重开会话即可。
-  （若未来需要，加 `graph.refresh` tool 显式触发——默认不做，克制。）
+  **自 v0.2.0 起**：serve 内嵌 `/mcp` 由 `web.Server` 经 `GraphProvider` 每次调用
+  取**当前**（RLock）`G/P`——库 refresh/换库后自动用新图，不再需要重开会话。
+  stdio 场景（`seren mcp` 子进程）同样经 `GraphProvider` 返回构建时的图（无 watch，
+  库更新重开会话即可）。
+- 与 serve 同构但 **stdio 无自动监听**：AI 会话短、不需要实时；库更新了重开会话即可。
+  serve `/mcp` 已 live（吃得到中途刷新）。
 - 多库：v1 单库（启动参数定），多库用多个 MCP 实例或 tool 参数选库（v2 再定）。
 
 ## 5. 与本体边界总结
@@ -121,9 +134,13 @@ cmd/seren 子命令:
 
 ## 8. 决策已定 / 留待
 
-- **[定] Go SDK vs 自实现薄协议**：采纳自实现（§2 倾向）——仅 initialize / tools/list /
-  tools/call，零第三方依赖，单二进制不变；若 SDK 生态成熟度明显更高再权衡。
+- **[定] Go SDK vs 自实现薄协议**：**改用 `github.com/mark3labs/mcp-go`**（v0.2.0，
+  用户拍板"正经功能不再零依赖"）——Streamable HTTP + stdio 同一 SDK，删手写
+  JSON-RPC；mcp-go 纯 Go 零 CGO，单二进制不变。
 - **[定] MCP 留在主二进制**（用户确认 2026-08-23）：子命令=独立进程已隔离 + import
   边界守护，"不影响本体"已达成；不拆独立二进制（破坏单二进制 + 同一内核原则）。
+- **[定] MCP 双入口**（v0.2.0）：serve 内嵌 `/mcp`（Streamable HTTP，live 图）为主；
+  `seren mcp`（stdio）兜底 Claude Desktop 类。前端/插件经 `/api/mcp/status` 查状态、
+  `/api/mcp/enable|disable` 启停。
 - [待定] 是否允许 `graph.roam` 带 `from`（锚点种子）以外的写类参数（默认不允许）；
 - [待定] 多库形态（v2）。

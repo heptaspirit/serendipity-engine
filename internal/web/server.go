@@ -93,6 +93,7 @@ import (
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
+	"serendipity-engine/internal/mcp"
 	"serendipity-engine/internal/roam"
 	"serendipity-engine/internal/score"
 	syncpkg "serendipity-engine/internal/sync"
@@ -194,6 +195,11 @@ type Server struct {
 	Token     string         // API 鉴权 token（v0.1.8 安全前置）；空 = 未配置鉴权
 	revision  int            // 图版本号：每次刷新 +1，前端轮询 stats 对比以提示"库已更新"
 
+	// MCP（v0.2.0，mcp-go / Streamable HTTP）：serve 内嵌 /mcp 端点，前端/插件
+	// 可查状态并启停。MCP 非空时注册 /mcp + /api/mcp/*；MCPOn 控制 /mcp 是否可访问。
+	MCP  *mcp.Server
+	MCPOn bool
+
 	// OnVaultApplied 配库成功应用后的回调（v0.1.15，由 main 注入）：配库闭包
 	// 返回状态 → handleVault 替换图/闭包字段后调用——main 在此启动/重建 watch。
 	OnVaultApplied func()
@@ -291,6 +297,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
 	mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
 	mux.HandleFunc("/api/touch/digest/ack", s.handleTouchDigestAck)
+	if s.MCP != nil {
+		mux.HandleFunc("/mcp", s.handleMCP)
+		mux.HandleFunc("/api/mcp/status", s.handleMCPStatus)
+		mux.HandleFunc("/api/mcp/enable", s.handleMCPEnable)
+		mux.HandleFunc("/api/mcp/disable", s.handleMCPDisable)
+	}
 	mux.HandleFunc("/", s.handleIndex)
 	return s.auth(mux)
 }
@@ -384,6 +396,75 @@ func (s *Server) handleVault(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// SetMCP 注入 serve 内嵌的 MCP 服务（v0.2.0）：非空时注册 /mcp + /api/mcp/*，
+// MCPOn 控制 /mcp 是否可访问（默认开）。GraphProvider 由 main 构造（读当前 VaultState）。
+func (s *Server) SetMCP(srv *mcp.Server, on bool) {
+	s.MCP = srv
+	s.MCPOn = on
+}
+
+// MCPGraphProvider 返回供 mcp.Server 用的 live 图快照函数：每次调用持 RLock 读当前
+// G/P（refresh/换库后自动用新图，修「子进程快照吃不到中途改动」）。nil,nil = 未配库。
+func (s *Server) MCPGraphProvider() func() (*graph.Graph, *adapter.VaultProfile) {
+	return func() (*graph.Graph, *adapter.VaultProfile) {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return s.G, s.P
+	}
+}
+
+// handleMCP 把请求转发给内嵌 MCP 服务（Streamable HTTP，端点 /mcp）。
+// 仅在 MCPOn 时可用；关闭时返回 404（不响应协议，客户端重连会看到拒绝）。
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPOn || s.MCP == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.mcpHandler().ServeHTTP(w, r)
+}
+
+// mcpHandler 惰性构造内嵌 MCP 的 Streamable HTTP handler（每次构建保持与
+// 当前 MCPOn 读取一致；Handler() 注册时一次构造也可，但惰性保证 enable/disable
+// 后再次调用取到同一实例）。
+func (s *Server) mcpHandler() http.Handler {
+	return s.MCP.Handler()
+}
+
+// mcpStatus GET /api/mcp/status：MCP 状态（transport/enabled/config/tools）。
+// 供前端/插件展示"MCP 已就绪 / 未配库 / 已停用"。
+func (s *Server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
+	if s.MCP == nil {
+		writeJSON(w, map[string]any{"enabled": false, "configured": false, "tools": 0})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"enabled":    s.MCPOn,
+		"configured": s.MCP.Configured(),
+		"tools":      s.MCP.ToolCount(),
+		"transport":  "streamable-http",
+		"endpoint":   "/mcp",
+	})
+}
+
+// handleMCPEnable / disable：切换 /mcp 是否可访问（v0.2.0 启停开关，供前端/插件）。
+func (s *Server) handleMCPEnable(w http.ResponseWriter, r *http.Request) {
+	if s.MCP == nil {
+		writeJSON(w, map[string]any{"error": "mcp unavailable"})
+		return
+	}
+	s.MCPOn = true
+	writeJSON(w, map[string]any{"ok": true, "enabled": true})
+}
+
+func (s *Server) handleMCPDisable(w http.ResponseWriter, r *http.Request) {
+	if s.MCP == nil {
+		writeJSON(w, map[string]any{"error": "mcp unavailable"})
+		return
+	}
+	s.MCPOn = false
+	writeJSON(w, map[string]any{"ok": true, "enabled": false})
 }
 
 // handleIndex 返回嵌入页面；把 API token 注入 __SEREN_TOKEN__ 占位符
@@ -590,9 +671,9 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSuggestLinks GET /api/suggest-links?k=：潜在关联待审清单（v0.1.13，
-// roadmap #15，backlog §3.6）。引擎从拓扑多算法（AA/Jaccard/RA + Borda 聚合）
+// roadmap #15，backlog §3.6）。引擎从拓扑多算法（AA/Jaccard/RA 原始分加权求和）
 // 估算"近似相关"的候选对——有界、标注算法与共享邻居证据、**未落图**。
-// 消费方 = 插件 AI 研判（plugin-ai-cooperation Flow 1：取候选 + 笔记正文判定，
+// 消费方 = 外部 AI / agent 研判（取候选 + 笔记正文判定，
 // 接受者写回 kind=ai 边）。只读、无副作用。
 func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
 	k := atoiDefault(r.URL.Query().Get("k"), 50)
@@ -628,7 +709,7 @@ func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
 type suggestItem struct {
 	A          string   `json:"a"`
 	B          string   `json:"b"`
-	Score      float64  `json:"score"`      // Borda 聚合分（≥3：三算法命中 + 名次）
+	Score      float64  `json:"score"`      // 聚合分（AA/RA/Jaccard 原始分加权求和）
 	Algorithms []string `json:"algorithms"` // 命中算法（aa/jaccard/ra）
 	Shared     []string `json:"shared"`     // 共享邻居 ID（证据："都链接了 X/Y"）
 	ATitle     string   `json:"a_title"`

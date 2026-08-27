@@ -1,7 +1,7 @@
 # API 契约（REST /api/* + 鉴权）
 
 > 维护者/插件仓库与引擎之间的**唯一共享物**——改 API 必须同步本文（维护指南 §5）。
-> 版本随引擎走：本文描述 v0.1.15 的行为；字段改动要在此登记。
+> 版本随引擎走：本文描述 v0.2.0 的行为；字段改动要在此登记。
 > base：`http://127.0.0.1:<port>`（serve 默认 8910，始终绑定 127.0.0.1）。
 
 ## 0. 鉴权（v0.1.8 起）
@@ -34,10 +34,10 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 | `dangling_refs[]` | array | 悬空链接明细 `{source,target}`（v0.1.12，截断上限 50；`source`=引用方节点 ID，`target`=悬空目标） |
 
 ```json
-{"configured":true,"nodes":235,"edges":318,"version":"v0.1.15","revision":3,"is_pending":false,"digest_available":true,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
+{"configured":true,"nodes":235,"edges":318,"version":"v0.2.0","revision":3,"is_pending":false,"digest_available":true,"dangling":4,"dangling_refs":[{"source":"a","target":"ghost1"}]}
 ```
 
-**未配库形态**（v0.1.15 无库启动）：`{"configured":false,"nodes":0,"edges":0,"version":"v0.1.15","revision":0,"is_pending":false,"digest_available":false,"dangling":0,"dangling_refs":null}`
+**未配库形态**（v0.1.15 无库启动）：`{"configured":false,"nodes":0,"edges":0,"version":"v0.2.0","revision":0,"is_pending":false,"digest_available":false,"dangling":0,"dangling_refs":null}`
 
 ## 2. `GET /api/hot?n=20` · 热门节点（初始页气泡）
 
@@ -220,8 +220,7 @@ Leiden 社区检测（`github.com/vsuryav/leiden-go`，MIT，vendor）——把�
 
 引擎从拓扑多算法估算"近似相关"的候选对（roadmap #15，backlog §3.6）——**有界、
 标注算法与共享邻居证据、未落图**（kind=approx 的候选形态，不是真实边）。消费方 =
-插件 AI 研判（plugin-ai-cooperation Flow 1：取候选 + 笔记正文判定，接受者写回
-kind=ai 边）。只读、无副作用。
+外部 AI / agent 研判（取候选 + 笔记正文判定，接受者写回 kind=ai 边）。只读、无副作用。
 
 `k` 最大条数（默认 50，上限 200）。
 
@@ -230,10 +229,10 @@ kind=ai 边）。只读、无副作用。
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `count` | int | 实际返回条数 |
-| `results[]` | array | 候选对（Borda 聚合分降序） |
+| `results[]` | array | 候选对（聚合分降序——AA/RA/Jaccard 原始分加权求和） |
 | `results[].a/b` | string | 端点 ID（a < b，无向对规范化） |
 | `results[].a_title/b_title` | string | 端点标题 |
-| `results[].score` | float | **Borda 聚合分** = 3（三算法命中基础分）+ 三算法各自名次分（AA/Jaccard/RA 分别排序） |
+| `results[].score` | float | **聚合分** = AA·1.0 + Jaccard·0.5 + RA·1.0（原始分直接求和；弃用 Borda 名次分——跨锚点不可比/非确定） |
 | `results[].algorithms` | string[] | 命中算法（`aa` / `jaccard` / `ra`） |
 | `results[].shared` | string[] | 共享邻居 ID（证据："都链接了 X/Y"） |
 | `results[].a_uri/b_uri` | string | 端点跳转（obsidian:// / orca-note://） |
@@ -304,11 +303,42 @@ kind=ai 边）。只读、无副作用。
 
 ---
 
+## 15. MCP（v0.2.0 · serve 内嵌 /mcp 端点 + 状态/启停）
+
+> serve 内嵌 MCP 服务（Streamable HTTP，端点 `/mcp`），Web+REST+MCP 三合一。前端/插件
+> 经下面 REST 端点查询状态、启停 MCP。`/mcp` 本身走 Streamable HTTP 协议（POST 会话，
+> 本地消费，除 Host 校验外不强制 token）；`/api/mcp/*` 走 token 鉴权（同 `/api/*`）。
+
+### 15.1 `GET /api/mcp/status` · 查询 MCP 状态
+
+响应：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `enabled` | bool | `/mcp` 是否可访问（启停开关） |
+| `configured` | bool | 是否已配库（未配库时 MCP 工具给引导） |
+| `tools` | int | 工具数（九件套） |
+| `transport` | string | `streamable-http` |
+| `endpoint` | string | `/mcp` |
+
+未注册 MCP（旧服务）→ 端点不存在（404）。
+
+### 15.2 `POST /api/mcp/enable` · 启用 `/mcp` 端点
+
+响应：`{"ok":true,"enabled":true}`
+
+### 15.3 `POST /api/mcp/disable` · 停用 `/mcp` 端点
+
+响应：`{"ok":true,"enabled":false}`（停用后 `/mcp` 返回 404）
+
+---
+
 ## 变更登记
 
 | 版本 | 变更 |
 |---|---|
 | v0.1.0 | 初版 stats/hot/roam/页面 |
+| v0.1.1 | 新增 hot/config；roam 加 match 级别 |
 | v0.1.2 | 新增 /api/refresh |
 | v0.1.4 | 新增 /api/touch；stats 加 revision |
 | v0.1.5 | 新增 /api/relation；refresh 加 renamed/renames |
@@ -317,9 +347,10 @@ kind=ai 边）。只读、无副作用。
 | v0.1.8 | **全 API 加鉴权**（X-Seren-Token 头 / ?token=）+ Host 校验 |
 | v0.1.11 | 新增 /api/similar（Jaccard）、/api/node（详情）、/api/touch/stats（只读统计）；roam 加 `?export=1`（text/markdown 卡片清单） |
 | v0.1.12 | similar 评分升级 **Jaccard → Adamic-Adar**（度加权，抗枢纽偏置）；stats 加 `is_pending`（库变化待刷新）+ `dangling_refs`（悬空明细）；touch/stats targets 过滤幽灵 touch；**新增 /api/communities**（Leiden 社区发现，诊断层）；MCP tools 扩至 7（+graph.community） |
-| v0.1.13 | **新增 /api/suggest-links**（潜在关联待审清单：2-hop + AA/Jaccard/RA + Borda 聚合 + top-K 节流，未落图）；存储层 SQLite → bbolt（扩展名 .bbolt，无迁移） |
+| v0.1.13 | **新增 /api/suggest-links**（潜在关联待审清单：2-hop + AA/Jaccard/RA 聚合 + top-K 节流，未落图）；存储层 SQLite → bbolt（扩展名 .bbolt，无迁移） |
 | v0.1.14 | **新增 touch digest 子系统（§3.7）**：/api/touch/digest（只读查询）+ /api/touch/digest/ack（已读）+ stats 加 `digest_available`；**MCP tools 扩至 8（+seren.touch_digest）**；touch 拆独立 store（`touch-<hash>.bbolt`，touch/meta/backups） |
 | v0.1.15 | **无库启动 + 配库**：`seren serve` 无 vault 空库启动；**新增 /api/vault**（GET 查配置 / POST 配库换库，换图 + 闭包重建 + watch 重启）；stats 加 `configured`；数据端点未配库时返回 `configured:false`；前端导出改 fetch+blob（a 标签不带 token 被 auth 拒的修复） |
+| v0.2.0 | **MCP 迁移 mcp-go + Streamable HTTP**：serve 内嵌 `/mcp` 端点（Web+REST+MCP 三合一，live 图）；**新增 /api/mcp/status + /api/mcp/enable + /api/mcp/disable**（前端/插件查状态与启停）；MCP tools 扩至 9（+seren.state）；`seren_orientation` prompt；suggest-links 聚合改原始分（修 Borda 跨锚点不可比/非确定）；CLI 用户可见输出英文化 |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

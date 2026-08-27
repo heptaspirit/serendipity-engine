@@ -24,7 +24,7 @@ import (
 )
 
 // textSummaryMax 详情里正文摘要的最大字符数（发现层不读全文，克制边界；
-// 正文由 Obsidian/虎鲸宿主负责，见 docs/history/product-form.md）。
+// 正文由 Obsidian/虎鲸宿主负责，见 product-form（已归档））。
 const textSummaryMax = 200
 
 // NodeRef 邻居/被引用节点的展示信息。

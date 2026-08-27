@@ -70,7 +70,7 @@
 //	         本版不做 GitHub Actions 自动构建（用户拍板），本地 scratch/seren.exe 仅联调不入库。
 //	v0.1.13 M1 收官（#16 + #15）：存储层 SQLite → bbolt（#16，四 bucket 无迁移，
 //	         P1 增量写 / P2 mmap+NoSync / P5 幽灵过滤 O(1)，扩展名 .bbolt）；
-//	         潜在关联 suggest-links 待审清单（#15：2-hop + AA/Jaccard/RA + Borda +
+//	         潜在关联 suggest-links 待审清单（#15：2-hop + AA/Jaccard/RA 加权聚合 +
 //	         top-K 节流 → /api/suggest-links，未落图，co-touch 留 M2）。
 //	v0.1.14 M2 §3.7 touch 行为信号子系统：touch 拆独立 store touch-<hash>.bbolt
 //	         （touch/meta/backups，图库重建不再连坐）；digest 触发（计数≥digest_count
@@ -116,7 +116,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.1.15"
+const version = "v0.2.0"
 
 func main() {
 	code := run(os.Args[1:])
@@ -167,93 +167,93 @@ func usageFor(cmd string) {
 	var text string
 	switch cmd {
 	case "index":
-		text = "index: 解析 + 建图 + 统计 + 持久化（新库 onboarding）\n" +
-			"  seren index <vault|OrcaNote.db> [--profile-name <名>] [--db <store>] [--persist|--store <file>]\n" +
-			"  --profile-name  内置画像 (default-obsidian / okf / example-wiki)\n" +
-			"  --db            从持久化存储读图（跳过解析）\n" +
-			"  --persist       解析后持久化到库内 .serendipity/db-<hash>.bbolt\n" +
-			"  --store         指定持久化路径（覆盖默认）"
+		text = "index: parse + build graph + stats + persist (new-vault onboarding)\n" +
+			"  seren index <vault|OrcaNote.db> [--profile-name <name>] [--db <store>] [--persist|--store <file>]\n" +
+			"  --profile-name  built-in profile (default-obsidian / okf / example-wiki)\n" +
+			"  --db            read graph from persisted store (skip parse)\n" +
+			"  --persist       persist to .serendipity/db-<hash>.bbolt\n" +
+			"  --store         explicit persist path (overrides default)"
 	case "roam":
-		text = "roam: 查询漫游 → top-N 节点簇（--random 随机漫步）\n" +
+		text = "roam: query roam -> top-N node cluster (--random random walk)\n" +
 			"  seren roam <vault|OrcaNote.db> [query] [flags]\n" +
-			"  --top N        输出条数 (默认 15)\n" +
-			"  --hops N       最大跳数 (默认 3)\n" +
-			"  --lambda X     激活衰减 (默认 0.7)\n" +
-			"  --theta Y      激活剪枝阈值 (默认 0.1)\n" +
-			"  --alpha X      结构分权重 (默认 0.5)\n" +
-			"  --beta Y       激活分权重 (默认 0.5)\n" +
-			"  --random       随机漫步：随机 roll 起点 + 它的簇（可省略 query）\n" +
-			"  --seed N       随机种子（默认 0=随机；固定 N 可复现）\n" +
-			"  --rand-alpha X 起点度加权指数（0=均匀，1=偏丰富簇，默认 0.5）\n" +
-			"  --json         结构化 JSON 输出（roam.Outcome）"
+			"  --top N        output count (default 15)\n" +
+			"  --hops N       max hops (default 3)\n" +
+			"  --lambda X     activation decay (default 0.7)\n" +
+			"  --theta Y      activation pruning threshold (default 0.1)\n" +
+			"  --alpha X      structural weight (default 0.5)\n" +
+			"  --beta Y       activation weight (default 0.5)\n" +
+			"  --random       random walk: random start node + its cluster (query optional)\n" +
+			"  --seed N       random seed (default 0=random; fixed N reproducible)\n" +
+			"  --rand-alpha X start degree weighting (0=uniform, 1=favor rich, default 0.5)\n" +
+			"  --json         structured JSON output (roam.Outcome)"
 	case "serve":
-		text = "serve: Web UI（REST + 节点簇可视化 + 自动监听 + 刷新）\n" +
+		text = "serve: Web UI (REST + node-cluster viz + auto watch + refresh)\n" +
 			"  seren serve [<vault|OrcaNote.db>] [--port 8080] [flags]\n" +
-			"  不带 vault = 无库启动，启动后 POST /api/vault {\"path\":\"<库>\"} 配库（v0.1.15）\n" +
-			"  --port N       端口 (默认 8080)\n" +
-			"  --vault-name N Obsidian vault 名（obsidian:// 跳转）\n" +
-			"  --repo <名>    虎鲸 repo 名（orca-note:// 跳转）\n" +
-			"  --token <t>    鉴权 token（默认自动生成）\n" +
-			"  --watch-off    关闭自动监听\n" +
-			"  --watch-interval N  轮询秒 (默认 10)\n" +
-			"  --watch-throttle N  刷新节流秒 (默认 60)"
+			"  no vault = no-vault start, then POST /api/vault {\"path\":\"<vault>\"} to configure (v0.1.15)\n" +
+			"  --port N       port (default 8080)\n" +
+			"  --vault-name N Obsidian vault name (obsidian:// jump)\n" +
+			"  --repo <name>  Orca repo name (orca-note:// jump)\n" +
+			"  --token <t>    auth token (default auto-generated)\n" +
+			"  --watch-off    disable auto watch\n" +
+			"  --watch-interval N  poll seconds (default 10)\n" +
+			"  --watch-throttle N  refresh throttle seconds (default 60)"
 	case "refresh":
-		text = "refresh: 对账刷新（重解析 + 与上次持久化状态 diff 增删改）\n" +
-			"  seren refresh <vault|OrcaNote.db> [--profile-name <名>] [--store <file>] [--json]\n" +
-			"  --store         存储路径 (覆盖默认)\n" +
-			"  --json          结构化 JSON 输出（syncpkg.Result）"
+		text = "refresh: reconcile refresh (reparse + diff against last persisted state)\n" +
+			"  seren refresh <vault|OrcaNote.db> [--profile-name <name>] [--store <file>] [--json]\n" +
+			"  --store        persist path (overrides default)\n" +
+			"  --json         structured JSON output (syncpkg.Result)"
 	case "profile-detect":
-		text = "profile-detect: 扫描 vault，产出解析画像 YAML（新库 onboarding）\n" +
+		text = "profile-detect: scan vault, emit parse profile YAML (new-vault onboarding)\n" +
 			"  seren profile-detect <vault>"
 	case "mcp":
-		text = "mcp: MCP stdio server（只读工具：stats/roam/random/relation/node/similar/community）\n" +
-			"  seren mcp <vault|OrcaNote.db> [--db <store>] [--profile-name <名>]\n" +
-			"  --db            读持久化存储免重解析"
+		text = "mcp: MCP stdio server (read-only tools: stats/roam/random/relation/node/similar/community)\n" +
+			"  seren mcp <vault|OrcaNote.db> [--db <store>] [--profile-name <name>]\n" +
+			"  --db           read persisted store to skip re-parse"
 	default:
 		usage()
 		return
 	}
-	fmt.Printf("Serendipity Engine %s\n用法:\n  %s\n", version, text)
+	fmt.Printf("Serendipity Engine %s\nUsage:\n  %s\n", version, text)
 }
 
 func usage() {
 	fmt.Printf(`Serendipity Engine %s
-用法:
-  seren index <vault|OrcaNote.db> [flags]  解析、建图、统计（.db 自动识别为虎鲸库）
-  seren roam <vault|OrcaNote.db> [query] [flags]   查询漫游 → top-N 节点簇（--random 随机漫步）
-  seren serve [<vault|OrcaNote.db>] [--port 8080]    Web UI（REST + 节点簇可视化 + 刷新；不带 vault = 无库启动，POST /api/vault 配库）
-  seren refresh <vault|OrcaNote.db> [flags] 对账刷新：重解析 + 与上次持久化状态 diff
-  seren profile-detect <vault>          扫描 vault，提出解析画像 YAML（新库 onboarding）
-  seren mcp <vault> [--db <store>]       MCP stdio server（只读七件套，AI 入口）
-  seren version                         打印版本
-flags:
-  --top N        输出条数 (默认 15)
-  --lambda X     激活衰减 (默认 0.7)
-  --theta Y      激活剪枝阈值 (默认 0.1)
-  --hops N       最大跳数 (默认 3)
-  --alpha X      结构分权重 (默认 0.5)
-  --beta Y       激活分权重 (默认 0.5)
-随机漫步 (v0.1.7):
-  --random       随机漫步：随机 roll 起点 + 它的簇（可省略 query）
-  --seed N       随机种子（默认 0=随机；固定 N 可复现同一漫步，便于分享/测试）
-  --rand-alpha X 随机起点度加权指数：0=均匀（惊喜），1=偏丰富簇（默认 0.5）
-安全 (v0.1.8):
-  --token <t>    serve API 鉴权 token（默认自动生成并打印；页面自动注入）
-画像/存储:
-  --profile <file.yaml>       显式画像文件
-  --profile-name <name>       内置画像名 (default-obsidian / okf / example-wiki)
-  --db <file.bbolt>           从持久化存储读图（跳过解析）
-  --persist                   解析后持久化到库内 .serendipity/db-<hash>.bbolt
-  --store <file.bbolt>        指定持久化路径（覆盖默认）
-监听/跳转/埋点:
-  --watch-off                 关闭自动监听（默认开：轮询变化→节流合并刷新）
-  --watch-interval N          监听轮询间隔秒（默认 10）
-  --watch-throttle N          刷新节流秒（默认 60，合并窗口防频繁重解析）
-  --repo <name>               虎鲸 repo 名（orca-note:// 跳转；默认取库文件名）
-CLI 三件套 (v0.1.11):
-  seren help <subcmd>         子命令级帮助（或 seren <subcmd> -h）
-  --json                      roam/index/refresh 结构化 JSON 输出
-  退出码: 0 成功 / 2 用法或参数错误 / 1 运行时错误
+Usage:
+  seren index <vault|OrcaNote.db> [flags]  parse, build graph, stats (.db auto-detected as Orca vault)
+  seren roam <vault|OrcaNote.db> [query] [flags]   query roam -> top-N node cluster (--random random walk)
+  seren serve [<vault|OrcaNote.db>] [--port 8080]    Web UI (REST + node-cluster viz + refresh; no vault = no-vault start, POST /api/vault to configure)
+  seren refresh <vault|OrcaNote.db> [flags]  reconcile refresh: reparse + diff against last persisted state
+  seren profile-detect <vault>           scan vault, emit parse profile YAML (new-vault onboarding)
+  seren mcp <vault> [--db <store>]       MCP stdio server (read-only nine tools, AI channel)
+  seren version                          print version
+Flags:
+  --top N        output count (default 15)
+  --lambda X     activation decay (default 0.7)
+  --theta Y      activation pruning threshold (default 0.1)
+  --hops N       max hops (default 3)
+  --alpha X      structural weight (default 0.5)
+  --beta Y       activation weight (default 0.5)
+Random walk (v0.1.7):
+  --random       random walk: random start node + its cluster (query optional)
+  --seed N       random seed (default 0=random; fixed N reproducible)
+  --rand-alpha X random start degree weighting: 0=uniform (surprise), 1=favor rich clusters (default 0.5)
+Security (v0.1.8):
+  --token <t>    serve API auth token (default auto-generated and printed; page auto-injected)
+Profile/store:
+  --profile <file.yaml>       explicit profile file
+  --profile-name <name>       built-in profile (default-obsidian / okf / example-wiki)
+  --db <file.bbolt>           read graph from persisted store (skip parse)
+  --persist                   persist to .serendipity/db-<hash>.bbolt
+  --store <file.bbolt>        explicit persist path (overrides default)
+Watch/jump/touch:
+  --watch-off                 disable auto watch (default on: poll changes -> throttle merge refresh)
+  --watch-interval N          watch poll interval seconds (default 10)
+  --watch-throttle N          refresh throttle seconds (default 60, merge window)
+  --repo <name>               Orca repo name (orca-note:// jump; default from filename)
+CLI trio (v0.1.11):
+  seren help <subcmd>         per-subcommand help (or seren <subcmd> -h)
+  --json                      structured JSON output for roam/index/refresh
+  exit code: 0 ok / 2 usage or arg error / 1 runtime error
 `, version)
 }
 
@@ -336,25 +336,25 @@ func parseSource(vault string, p *adapter.VaultProfile, dbFile string) ([]*adapt
 	if dbFile != "" {
 		docs, err := store.Load(dbFile)
 		if err != nil {
-			return nil, "", fmt.Errorf("读存储失败: %w", err)
+			return nil, "", fmt.Errorf("read store failed: %w", err)
 		}
 		return docs, "store:" + dbFile, nil
 	}
 	if adapter.IsOrcaDB(vault) {
 		cp, cleanup, err := adapter.CopyDBForRead(vault)
 		if err != nil {
-			return nil, "", fmt.Errorf("快照虎鲸库失败: %w", err)
+			return nil, "", fmt.Errorf("snapshot Orca DB failed: %w", err)
 		}
 		defer cleanup()
 		docs, err := adapter.ParseOrcaDB(cp)
 		if err != nil {
-			return nil, "", fmt.Errorf("解析虎鲸库失败: %w", err)
+			return nil, "", fmt.Errorf("parse Orca DB failed: %w", err)
 		}
 		return docs, "orca:" + vault, nil
 	}
 	docs, err := adapter.ParseVault(vault, p)
 	if err != nil {
-		return nil, "", fmt.Errorf("解析失败: %w", err)
+		return nil, "", fmt.Errorf("parse failed: %w", err)
 	}
 	return docs, "obsidian:" + vault, nil
 }
@@ -408,22 +408,22 @@ func cmdRefresh(args []string) int {
 		return 0
 	}
 	if len(pos) < 1 {
-		usageErr("用法: seren refresh <vault> [--store file]")
+		usageErr("usage: seren refresh <vault> [--store file]")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 	if err != nil {
-		fatal("画像加载失败: %v", err)
+		fatal("profile load failed: %v", err)
 	}
 	storePath := storePathFor(vault, flags["store"])
 
 	old, err := store.Load(storePath)
 	if err != nil {
-		fatal("读旧状态失败: %v", err)
+		fatal("read old state failed: %v", err)
 	}
 	storedRenames, err := store.LoadRenames(storePath)
 	if err != nil {
-		fatal("读改名映射失败: %v", err)
+		fatal("read rename map failed: %v", err)
 	}
 	docs, reused, src, err := refreshParse(vault, p, flags, old)
 	if err != nil {
@@ -435,13 +435,13 @@ func cmdRefresh(args []string) int {
 	// 重定向只在建图时叠加（见 refreshFunc/loadSource 的 redirectForGraph）。
 	merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
 	if err := store.SaveRenames(storePath, merged); err != nil {
-		fatal("改名映射持久化失败: %v", err)
+		fatal("rename map persist failed: %v", err)
 	}
 	if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
-		fatal("touch 迁移失败: %v", err)
+		fatal("touch migration failed: %v", err)
 	}
 	if err := store.Save(storePath, docs); err != nil {
-		fatal("持久化失败: %v", err)
+		fatal("persist failed: %v", err)
 	}
 
 	if flags["json"] != "" {
@@ -456,20 +456,20 @@ func cmdRefresh(args []string) int {
 	}
 
 	fmt.Printf("source: %s\n", src)
-	fmt.Printf("画像: %s\n", p.Name)
+	fmt.Printf("profile: %s\n", p.Name)
 	fmt.Printf("store: %s\n", storePath)
 	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
-		fmt.Printf("解析: %d 文档（快照增量：复用 %d / 重解析 %d）\n", len(docs), reused, len(docs)-reused)
+		fmt.Printf("parsed: %d docs (incremental: reused %d / reparsed %d)\n", len(docs), reused, len(docs)-reused)
 	} else {
-		fmt.Printf("解析: %d 文档（全量）\n", len(docs))
+		fmt.Printf("parsed: %d docs (full)\n", len(docs))
 	}
-	fmt.Printf("对账: 新增 %d / 更新 %d / 删除 %d / 改名 %d / 未变 %d  （耗时 %dms）\n",
+	fmt.Printf("reconcile: +%d / ~%d / -%d / ↦%d / =%d  (%dms)\n",
 		res.Added, res.Updated, res.Deleted, res.Renamed, res.Unchanged, res.DurationMS)
 	limit := fint(flags, "top", 50)
 	show := 0
 	next := func() bool {
 		if show >= limit {
-			fmt.Printf("  … 其余 %d 条略（--top 调整）\n", len(res.Changes)+len(res.Renames)-show)
+			fmt.Printf("  … %d more omitted (adjust --top)\n", len(res.Changes)+len(res.Renames)-show)
 			return false
 		}
 		show++
@@ -479,7 +479,7 @@ func cmdRefresh(args []string) int {
 		if !next() {
 			break
 		}
-		fmt.Printf("  ↦ 改名   %-10s → %-10s %s [%s]\n", r.OldID, r.NewID, r.Title, r.Type)
+		fmt.Printf("  ↦ rename  %-10s → %-10s %s [%s]\n", r.OldID, r.NewID, r.Title, r.Type)
 	}
 	for _, c := range res.Changes {
 		if !next() {
@@ -487,13 +487,13 @@ func cmdRefresh(args []string) int {
 		}
 		switch c.Kind {
 		case syncpkg.KindAdded:
-			fmt.Printf("  + 新增   %-10s %s [%s]\n", c.ID, c.Title, c.Type)
+			fmt.Printf("  + added  %-10s %s [%s]\n", c.ID, c.Title, c.Type)
 		case syncpkg.KindDeleted:
-			fmt.Printf("  - 删除   %-10s %s [%s]\n", c.ID, c.Title, c.Type)
+			fmt.Printf("  - removed %-10s %s [%s]\n", c.ID, c.Title, c.Type)
 		case syncpkg.KindUpdated:
-			fmt.Printf("  ~ 更新   %-10s %s [%s] 字段=%s", c.ID, c.Title, c.Type, strings.Join(c.Fields, ","))
+			fmt.Printf("  ~ updated %-10s %s [%s] fields=%s", c.ID, c.Title, c.Type, strings.Join(c.Fields, ","))
 			if len(c.AddedRefs) > 0 || len(c.RemovedRefs) > 0 {
-				fmt.Printf(" 引用+%d/-%d", len(c.AddedRefs), len(c.RemovedRefs))
+				fmt.Printf(" refs+%d/-%d", len(c.AddedRefs), len(c.RemovedRefs))
 			}
 			fmt.Println()
 		}
@@ -508,12 +508,12 @@ func cmdIndex(args []string) int {
 		return 0
 	}
 	if len(pos) < 1 {
-		usageErr("用法: seren index <vault>")
+		usageErr("usage: seren index <vault>")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 	if err != nil {
-		fatal("画像加载失败: %v", err)
+		fatal("profile load failed: %v", err)
 	}
 	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
 	if flags["json"] != "" {
@@ -532,14 +532,14 @@ func cmdIndex(args []string) int {
 
 	fmt.Printf("vault: %s\n", vault)
 	fmt.Printf("source: %s\n", src)
-	fmt.Printf("画像: %s\n", p.Name)
-	fmt.Printf("解析文档: %d\n", len(docs))
+	fmt.Printf("profile: %s\n", p.Name)
+	fmt.Printf("parsed documents: %d\n", len(docs))
 
 	typeCount := map[string]int{}
 	for _, d := range docs {
 		typeCount[d.Type]++
 	}
-	fmt.Println("类型分布:")
+	fmt.Println("type distribution:")
 	var types []string
 	for t := range typeCount {
 		types = append(types, t)
@@ -550,13 +550,13 @@ func cmdIndex(args []string) int {
 	}
 
 	s := g.Stats()
-	fmt.Printf("图节点: %d\n", s.Nodes)
-	fmt.Printf("链接账目: 总计 %d, 自环 %d, 去重无向边 %d, 重复链接 %d 条\n",
+	fmt.Printf("graph nodes: %d\n", s.Nodes)
+	fmt.Printf("link ledger: total %d, self %d, dedup-edges %d, multi %d\n",
 		s.TotalLinks, s.SelfLinks, s.Edges, s.MultiEdge)
-	fmt.Printf("悬空链接: %d 种 / %d 条 (指向不存在的文件)\n", s.Dangling, s.DanglingLinks)
-	fmt.Printf("孤儿节点: %d (无任何边)\n", s.Orphans)
-	fmt.Printf("连通分量: %d\n", s.Components)
-	fmt.Println("top 枢纽:")
+	fmt.Printf("dangling links: %d kinds / %d links (pointing to missing files)\n", s.Dangling, s.DanglingLinks)
+	fmt.Printf("orphan nodes: %d (no edges)\n", s.Orphans)
+	fmt.Printf("connected components: %d\n", s.Components)
+	fmt.Println("top hubs:")
 	for _, h := range s.TopHubs {
 		fmt.Printf("  %-28s deg=%-4d type=%s title=%s\n", h.ID, h.Deg, h.Type, h.Title)
 	}
@@ -571,13 +571,13 @@ func cmdIndex(args []string) int {
 		if dbPath == "" {
 			dbPath = store.DBPath(base)
 			if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-				fatal("创建 .serendipity 失败: %v", err)
+				fatal("create .serendipity failed: %v", err)
 			}
 		}
 		if err := store.Save(dbPath, docs); err != nil {
-			fatal("持久化失败: %v", err)
+			fatal("persist failed: %v", err)
 		}
-		fmt.Printf("已持久化: %s\n", dbPath)
+		fmt.Printf("persisted: %s\n", dbPath)
 	}
 	return 0
 }
@@ -590,7 +590,7 @@ func cmdRoam(args []string) int {
 	}
 	random := flags["random"] != ""
 	if len(pos) < 1 {
-		usageErr("用法: seren roam <vault> [query] [flags]（--random 随机漫步时可省略 query）")
+		usageErr("usage: seren roam <vault> [query] [flags] (query optional with --random)")
 	}
 	vault := pos[0]
 	var query string
@@ -598,7 +598,7 @@ func cmdRoam(args []string) int {
 		query = pos[1]
 	}
 	if !random && strings.TrimSpace(query) == "" {
-		usageErr("查询不能为空（或加 --random 随机漫步）")
+		usageErr("query cannot be empty (or add --random)")
 	}
 	top := fint(flags, "top", 15)
 	lambda := ffloat(flags, "lambda", 0.7)
@@ -611,7 +611,7 @@ func cmdRoam(args []string) int {
 
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 	if err != nil {
-		fatal("画像加载失败: %v", err)
+		fatal("profile load failed: %v", err)
 	}
 	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
 	opt := roam.Options{
@@ -649,17 +649,17 @@ func cmdRoam(args []string) int {
 
 	fmt.Printf("source: %s\n", src)
 	if random {
-		fmt.Printf("mode: random-walk (🎲 随机起点 + 簇, rand-alpha=%.2f)\n", randAlpha)
+		fmt.Printf("mode: random-walk (🎲 random start + cluster, rand-alpha=%.2f)\n", randAlpha)
 	} else {
 		fmt.Printf("query: %s\n", query)
 	}
-	fmt.Printf("画像: %s\n", p.Name)
+	fmt.Printf("profile: %s\n", p.Name)
 	switch out.Fallback {
 	case roam.ModeNoAnchor:
-		fmt.Println("锚定失败（图内无精确ID/title/别名/标签/LIKE）→ 降级：全文检索")
+		fmt.Println("anchor failed (no exact ID/title/alias/tag/LIKE in graph) → fallback: full-text search")
 		printTextHits(out.FallbackHits, top)
 	case roam.ModeSparse:
-		fmt.Println("--- 降级：查询点无/少链接 → 全文 LIKE 兜底（决策 #10）---")
+		fmt.Println("--- fallback: query node has no/few links → full-text LIKE fallback (decision #10) ---")
 		printTextHits(out.FallbackHits, top)
 	default:
 		fmt.Printf("anchor: ")
@@ -677,15 +677,15 @@ func cmdRoam(args []string) int {
 		for _, a := range out.Anchors {
 			mark := ""
 			if a.Random {
-				mark = " 🎲 随机起点"
+				mark = " 🎲 random start"
 			}
 			fmt.Printf("  -> %s (title=%s, type=%s)%s\n", a.ID, a.Title, a.Type, mark)
 		}
 		fmt.Printf("params: lambda=%.2f theta=%.2f hops=%d alpha=%.2f beta=%.2f top=%d\n",
 			lambda, theta, hops, alpha, beta, top)
-		fmt.Println("--- top 节点簇 ---")
+		fmt.Println("--- top node cluster ---")
 		if len(out.Results) == 0 {
-			fmt.Println("  (该随机节点没有可展示的关联簇——再试一次，或去掉 --random 用查询漫游)")
+			fmt.Println("  (this random node has no cluster — roll again, or drop --random to use query roam)")
 		}
 		for i, r := range out.Results {
 			fmt.Printf("%2d. %-28s %-12s %-6s score=%.3f ppr=%.4f act=%.3f %d-hop  %s\n",
@@ -830,11 +830,11 @@ func (env *serveEnv) startWatch(srv *web.Server) {
 			return err
 		}
 		srv.ReplaceGraph(ng)
-		log.Printf("[watch] 自动刷新完成: 新增 %d / 更新 %d / 删除 %d / 改名 %d（revision=%d）",
+		log.Printf("[watch] auto refresh done: +%d / ~%d / -%d / ↦%d (revision=%d)",
 			res.Added, res.Updated, res.Deleted, res.Renamed, srv.Revision())
 		return nil
 	})
-	fmt.Printf("自动监听: 开（轮询 %v，刷新节流 %v；--watch-off 关闭）\n", env.poll, env.throttle)
+	fmt.Printf("Auto watch: on (poll %v, refresh throttle %v; --watch-off to disable)\n", env.poll, env.throttle)
 }
 
 // cmdServe 启动 Web UI（REST + 节点簇可视化 + 自动监听 + 刷新）。
@@ -853,7 +853,7 @@ func cmdServe(args []string) int {
 	if token == "" {
 		buf := make([]byte, 16)
 		if _, err := cryptorand.Read(buf); err != nil {
-			fatal("token 生成失败: %v", err)
+			fatal("token generation failed: %v", err)
 		}
 		token = hex.EncodeToString(buf)
 	}
@@ -866,6 +866,28 @@ func cmdServe(args []string) int {
 	}
 	srv := web.New(nil, nil, "", "", version, nil, nil)
 	srv.Token = token
+
+	// 内嵌 MCP（v0.2.0）：serve 内 /mcp 端点（Streamable HTTP），Web+REST+MCP 三合一。
+	// GraphProvider 每次调用读当前 VaultState（live 图，修子进程快照吃不到中途改动）；
+	// touch_digest 闭包跟随当前库（配库/换库后经闭包解析当前 touch store）。
+	mcpSrv := mcp.New(srv.MCPGraphProvider(), version, "streamable-http")
+	mcpSrv.SetTouchDigest(func() (any, error) {
+		env.mu.Lock()
+		vault := env.vault
+		env.mu.Unlock()
+		if vault == "" {
+			return map[string]any{"digest": nil, "available": false}, nil
+		}
+		touchPath := touchPathFor(vault)
+		d, err := store.LatestDigest(touchPath)
+		if err != nil || d == nil {
+			return d, err
+		}
+		return map[string]any{
+			"digest": d, "available": store.DigestAvailable(touchPath),
+		}, nil
+	})
+	srv.SetMCP(mcpSrv, true)
 
 	// 配库闭包（POST /api/vault）：opts 覆盖启动 flags 的 profile/store/db
 	srv.SetVault(func(path string, opts web.VaultOpts) (*web.VaultState, error) {
@@ -910,7 +932,7 @@ func cmdServe(args []string) int {
 		vault := pos[0]
 		p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 		if err != nil {
-			fatal("画像加载失败: %v", err)
+			fatal("profile load failed: %v", err)
 		}
 		env.vault, env.p = vault, p
 		st, err := buildServeState(env)
@@ -920,30 +942,30 @@ func cmdServe(args []string) int {
 		srv.ApplyVaultState(st)
 		env.startWatch(srv)
 
-		fmt.Printf("Serendipity Engine %s Web UI: %s  (source: %s, 节点 %d)\n",
-			version, clickableLink("http://"+addr), st.Source, st.G.Stats().Nodes)
+		fmt.Printf("Serendipity Engine %s Web UI: %s  (source: %s, nodes: %d)\n",
+			version, ansi(1, clickableLink("http://"+addr)), ansi(36, st.Source), st.G.Stats().Nodes)
 		switch {
 		case st.OrcaRepo != "":
-			fmt.Printf("跳转: 虎鲸 repo=%s（卡片上点「打开」会跳到虎鲸对应块）\n", st.OrcaRepo)
+			fmt.Printf("Jump: Orca repo=%s (click „Open“ on a card to jump to the corresponding block)\n", st.OrcaRepo)
 		case st.VaultName != "":
-			fmt.Printf("跳转: Obsidian vault 名=%s（卡片上点「打开」会跳到笔记软件）\n", st.VaultName)
+			fmt.Printf("Jump: Obsidian vault name=%s (click „Open“ on a card to open the note app)\n", st.VaultName)
 		}
 		if !adapter.IsOrcaDB(vault) && flags["profile-name"] == "" && flags["profile"] == "" && adapter.DetectLLMWiki(vault) {
-			fmt.Printf("提示: 检测到 LLM Wiki 结构（raw/ + wiki/index.md）——如需只扫 wiki/ 实体页并排除 index.md/log.md，加 --profile-name llm-wiki\n")
+			fmt.Printf("Hint: LLM Wiki structure detected (raw/ + wiki/index.md) — to scan only wiki/ entity pages and exclude index.md/log.md, add --profile-name llm-wiki\n")
 		}
 		if n, err := store.TouchCount(touchPathFor(vault)); err == nil && n > 0 {
-			fmt.Printf("反馈埋点: 已记录 %d 次点击（仅记录不演化边权）\n", n)
+			fmt.Printf("Click telemetry: %d hits recorded (recorded only, no edge-weight evolution)\n", n)
 		}
 		if gen, _ := store.MaybeDigest(touchPathFor(vault), storePathFor(vault, flags["store"]), store.LoadTouchConfig(baseOf(vault))); gen {
-			fmt.Printf("touch digest: 启动补查生成新 digest（间隔兜底）\n")
+			fmt.Printf("touch digest: startup check generated a new digest (interval fallback)\n")
 		}
 	} else {
 		// 无库启动：空图起服务，等待 POST /api/vault 配库
-		fmt.Printf("Serendipity Engine %s Web UI（无库启动）: %s\n", version, clickableLink("http://"+addr))
-		fmt.Printf("  等待配库: POST /api/vault {\"path\":\"<vault 目录或 .db>\"}（页面顶部也有选库入口）\n")
+		fmt.Printf("Serendipity Engine %s Web UI (no-vault start): %s\n", version, clickableLink("http://"+addr))
+		fmt.Printf("  Waiting for configure: POST /api/vault {\"path\":\"<vault dir or .db>\"} (or use the picker at the top of the page)\n")
 	}
 
-	fmt.Printf("API 鉴权: 开（token=%s；页面已自动注入，curl 用 X-Seren-Token 头或 ?token=；--token 可指定固定值）\n", token)
+	fmt.Printf("API auth: on (token=%s; auto-injected into the page; curl with X-Seren-Token header or ?token=; --token sets a fixed value)\n", ansi(33, token))
 
 	// 优雅退出（v0.1.15）：SIGINT/SIGTERM → 停 watch → HTTP Shutdown（等当前请求完成）。
 	// 此前 serve 无信号处理，Ctrl+C 直接硬杀；无库启动 + 自动监听挂后台后需要干净退出。
@@ -955,7 +977,7 @@ func cmdServe(args []string) int {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sig
-		log.Printf("收到退出信号，正在关闭…")
+		log.Printf("shutdown signal received, closing…")
 		env.mu.Lock()
 		if env.cancel != nil {
 			env.cancel() // 停 watch（若有）
@@ -964,13 +986,13 @@ func cmdServe(args []string) int {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(ctx); err != nil {
-			log.Printf("关闭服务超时: %v", err)
+			log.Printf("shutdown timed out: %v", err)
 		}
 	}()
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fatal("服务失败: %v", err)
+		fatal("serve failed: %v", err)
 	}
-	log.Printf("引擎已退出")
+	log.Printf("engine exited")
 	return 0
 }
 
@@ -1000,11 +1022,11 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 	return func() (*syncpkg.Result, *graph.Graph, error) {
 		old, err := store.Load(storePath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("读旧状态失败: %w", err)
+			return nil, nil, fmt.Errorf("read old state failed: %w", err)
 		}
 		storedRenames, err := store.LoadRenames(storePath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("读改名映射失败: %w", err)
+			return nil, nil, fmt.Errorf("read rename map failed: %w", err)
 		}
 		docs, _, _, err := refreshParse(vault, p, flags, old)
 		if err != nil {
@@ -1014,13 +1036,13 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		// 改名迁移（v0.1.5，修订 #8）：见 cmdRefresh 同段注释
 		merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
 		if err := store.SaveRenames(storePath, merged); err != nil {
-			return nil, nil, fmt.Errorf("改名映射持久化失败: %w", err)
+			return nil, nil, fmt.Errorf("rename map persist failed: %w", err)
 		}
 		if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
-			return nil, nil, fmt.Errorf("touch 迁移失败: %w", err)
+			return nil, nil, fmt.Errorf("touch migration failed: %w", err)
 		}
 		if err := store.Save(storePath, docs); err != nil {
-			return nil, nil, fmt.Errorf("持久化失败: %w", err)
+			return nil, nil, fmt.Errorf("persist failed: %w", err)
 		}
 		return res, graph.Build(redirectForGraph(docs, merged)), nil
 	}
@@ -1040,14 +1062,14 @@ func renamesMap(rs []syncpkg.Rename) map[string]string {
 func printTextHits(hits []graph.TextHit, top int) {
 	shown := 0
 	for _, h := range hits {
-		fmt.Printf("%2d. %-28s %-12s %-6s 全文命中 %d 次\n", shown+1, h.ID, h.Title, h.Type, h.Count)
+		fmt.Printf("%2d. %-28s %-12s %-6s full-text hits: %d\n", shown+1, h.ID, h.Title, h.Type, h.Count)
 		shown++
 		if shown >= top {
 			break
 		}
 	}
 	if shown == 0 {
-		fmt.Println("  (全文也无命中——库中确实没有相关内容)")
+		fmt.Println("  (no full-text hit either — nothing relevant in the library)")
 	}
 }
 
@@ -1065,15 +1087,15 @@ func cmdProfileDetect(args []string) int {
 		return 0
 	}
 	if len(pos) < 1 {
-		usageErr("用法: seren profile-detect <vault>")
+		usageErr("usage: seren profile-detect <vault>")
 	}
 	p, err := adapter.DetectProfile(pos[0])
 	if err != nil {
-		fatal("探测失败: %v", err)
+		fatal("profile-detect failed: %v", err)
 	}
 	out, err := adapter.MarshalProfile(p)
 	if err != nil {
-		fatal("序列化失败: %v", err)
+		fatal("serialize failed: %v", err)
 	}
 	fmt.Print(out)
 	return 0
@@ -1089,21 +1111,21 @@ func cmdMCP(args []string) int {
 		return 0
 	}
 	if len(pos) < 1 {
-		usageErr("用法: seren mcp <vault> [--db <store.bbolt>]（库来源同 roam；--db 读持久化存储免重解析）")
+		usageErr("usage: seren mcp <vault> [--db <store.bbolt>] (source same as roam; --db reads persisted store to skip re-parse)")
 	}
 	vault := pos[0]
 	p, err := adapter.ResolveProfile(flags["profile"], flags["profile-name"], vault)
 	if err != nil {
-		fatal("画像加载失败: %v", err)
+		fatal("profile load failed: %v", err)
 	}
 	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
 	// 启动横幅仅在交互式终端（stdout 是 TTY）打印——DSH 等 MCP 客户端 spawn 时
 	// stdout 是管道，静默（否则每次重连/respawn 都在宿主控制台刷一行）。
 	if isTerminal(os.Stdout) {
-		fmt.Fprintf(os.Stderr, "seren mcp: 已建图（source=%s, 节点 %d）——只读 tools: stats/roam/random/relation/node/similar/community/touch_digest\n",
+		fmt.Fprintf(os.Stderr, "seren mcp: graph built (source=%s, nodes %d) — read-only tools: stats/roam/random/relation/node/similar/community/touch_digest\n",
 			src, g.Stats().Nodes)
 	}
-	srv := mcp.New(g, p, version)
+	srv := mcp.New(func() (*graph.Graph, *adapter.VaultProfile) { return g, p }, version, "stdio")
 	// §3.7（v0.1.14）：seren.touch_digest 只读闭包——MCP 保持只 import 纯库边界，
 	// touch store 访问经闭包隔离；digest 映射为 MCP 可见形态。
 	srv.SetTouchDigest(func() (any, error) {
@@ -1117,8 +1139,8 @@ func cmdMCP(args []string) int {
 			"digest": d, "available": store.DigestAvailable(touchPath),
 		}, nil
 	})
-	if err := srv.Serve(os.Stdin, os.Stdout); err != nil {
-		fatal("MCP 服务失败: %v", err)
+	if err := srv.ServeStdio(os.Stdin, os.Stdout); err != nil {
+		fatal("MCP serve failed: %v", err)
 	}
 	return 0
 }
@@ -1131,6 +1153,15 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// ansi 给文本加 ANSI 颜色/样式——仅在 stdout 是 TTY 时生效（管道/重定向不加，
+// 避免污染结构化输出与日志）。c 为 ANSI SGR 码（1=bold, 36=cyan, 33=yellow, 31=red...）。
+func ansi(c int, s string) string {
+	if !isTerminal(os.Stdout) {
+		return s
+	}
+	return "\x1b[" + strconv.Itoa(c) + "m" + s + "\x1b[0m"
 }
 
 // clickableLink 把 URL 渲染为终端可点击链接（v0.1.15）：TTY 下用 OSC 8 超链接
@@ -1180,14 +1211,14 @@ func ffloat(flags map[string]string, k string, def float64) float64 {
 }
 
 func fatal(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "错误: "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "error: "+format+"\n", a...)
 	os.Exit(1)
 }
 
 // usageErr 用法/参数错误 → 退出码 2（CLI 三件套 #3；agent 可自纠补参重跑）。
 // 与 fatal（运行时错误，exit 1）区分——参数错误不是系统故障，重跑即可能成功。
 func usageErr(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "用法错误: "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "usage error: "+format+"\n", a...)
 	os.Exit(2)
 }
 
@@ -1196,6 +1227,6 @@ func usageErr(format string, a ...any) {
 // syncpkg.Result / graph.Stats / adapter.Document），不新增镜像类型。
 func jsonOut(v any) {
 	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
-		fatal("JSON 输出失败: %v", err)
+		fatal("JSON output failed: %v", err)
 	}
 }

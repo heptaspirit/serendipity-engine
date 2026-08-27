@@ -1,6 +1,6 @@
 # 文档导航（docs/）
 
-> 本目录按**主题分层**组织 Serendipity Engine 的文档。除组件架构（`architecture/`）与历史归档（`history/`）外，均为当前有效的设计文档。改算法前请先读对应分层文档。
+> 本目录按**主题分层**组织 Serendipity Engine 的文档。除组件架构（`architecture/`）外，均为当前有效的设计文档。改算法前请先读对应分层文档。
 >
 > **AI agent 入口**：根目录 [`AGENTS.md`](../AGENTS.md)（30 秒定位 / 命令 / 仓库地图 / 红线）——本文档是完整的分层导航。
 
@@ -12,21 +12,20 @@
 | **计划** | [`roadmap.md`](roadmap.md) · [`frontend.md`](frontend.md) · [`backend-backlog.md`](backend-backlog.md) | 接下来做什么？ |
 | **契约** | [`api-contract.md`](api-contract.md) | 引擎与外部（插件/MCP）怎么对接？ |
 | **架构** | [`architecture/`](architecture/) | 组件怎么组织、如何维护？ |
-| **历史** | [`history/`](history/) | 哪些决策/验证已被吸收进 design/roadmap？ |
 
 ## 设计 · 战略
 
 | 文档 | 说明 |
 |---|---|
-| [`design.md`](design.md) | **核心设计**（修订版 v2）：图谱漫游机制、四维打分（PPR + 激活 + 跳数配额）、边语义、技术栈与产品形态。历史决策与 spike 实测均已在此吸收。 |
-| [`positioning.md`](positioning.md) | **战略定位**：笔记库 = agent 记忆的「激活层」、生态差异化、LLM Wiki 互补、embedding/数据源边界、明确不做、护城河。 |
+| [`design.md`](design.md) | **核心设计**（修订版 v3）：图谱漫游机制、四维打分（PPR + 激活 + 跳数配额）、边语义、技术栈与产品形态。历史决策与 spike 实测均已在此吸收。 |
+| [`positioning.md`](positioning.md) | **战略定位**：笔记库 = agent 记忆的「激活层」、生态差异化、LLM Wiki 互补、纯本地算法定位/数据源边界、明确不做、护城河。 |
 
 ## 计划
 
 | 文档 | 说明 |
 |---|---|
 | [`roadmap.md`](roadmap.md) | **总路线图（唯一权威）**：阶段 1 引擎核心+Web UI 完善(作者自用) / 2 插件薄壳(M2)，含依赖链与状态快照。 |
-| [`plugin-dev-plan.md`](plugin-dev-plan.md) | **插件开发计划（M2）**：生命周期四态机 / 多平台分发 / 插件×AI 协作。⚠️ 具体插件代码在独立仓库开发（不在本仓库），本仓库仅放引擎内核（与插件唯一的共享物是 `api-contract.md`） |
+| [`plugin-dev-plan.md`](plugin-dev-plan.md) | **插件开发计划（M2）**：生命周期四态机 / 多平台分发 / 引擎×AI 协作边界（插件薄壳不内置 AI）。⚠️ 具体插件代码在独立仓库开发（不在本仓库），本仓库仅放引擎内核（与插件唯一的共享物是 `api-contract.md`） |
 | [`frontend.md`](frontend.md) | **前端计划（Web UI）**：插件化前置、易用性、UI/UX 打磨规范 + 测试速查与交接。 |
 | [`backend-backlog.md`](backend-backlog.md) | **后端积压清单**：性能优化、功能缺口（similar/export/touch 统计）、CLI 三件套、MCP 工具扩展、风险红线与优先级。 |
 
@@ -43,20 +42,7 @@
 | [`architecture/00-overview.md`](architecture/00-overview.md) | 总览与维护指南入口 |
 | [`architecture/`](architecture/) | 数据模型 / 适配器 / 引擎 / 同步 / Web / 维护指南 / MCP 研究 |
 
-## 历史（已归档）
-
-> 以下文档的内容**已被 `design.md` / `roadmap.md` 吸收**，仅保留完整的历史叙事与原始依据。主文档区不再重复。
-
-| 文档 | 被谁吸收 |
-|---|---|
-| [`history/DESIGN_REVIEW.md`](history/DESIGN_REVIEW.md) | 设计评审 13 条决策 → `design.md` 修订版 v2 |
-| [`history/spike-report.md`](history/spike-report.md) | spike 实测（F1–F7 + λ/θ/hops）→ `design.md` §3.4 / §6.1 + `architecture/03-engine.md` |
-| [`history/product-form.md`](history/product-form.md) | 三层产品形态决策 → `design.md` §6.8 + `history/plugin-evaluation.md` + `roadmap.md` |
-| [`history/plugin-evaluation.md`](history/plugin-evaluation.md) | 插件薄壳决策（D1–D8 + 工作清单）→ `roadmap.md` M2 |
-| [`history/frontend-issues.md`](history/frontend-issues.md) | 前端问题/测试移交 → `frontend.md`（测试速查 + 防回归清单折叠保留） |
-| [`history/agent-memory-research.md`](history/agent-memory-research.md) | agent 记忆库研究（OpenViking/Graphiti/A-MEM）立场与借鉴 → `positioning.md` §六/§八 + `backend-backlog.md` §三/§七 |
-
 ## 目录约定
 
-- `architecture/` 与 `history/` 之外为**当前有效**文档，改动需同步本导航。
+- `architecture/` 之外为**当前有效**文档，改动需同步本导航。
 - 属于联调记录等本地敏感内容，放 `docs-local/`（已在 `.gitignore`，不入库）。

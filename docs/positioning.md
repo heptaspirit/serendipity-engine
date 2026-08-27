@@ -3,7 +3,7 @@
 > 日期：2026-08-23（由外部审计定位草稿定稿并汇入仓库）
 > 来源：与用户讨论（2026-08-23）+ 生态调研（GraphRAG / PPR / agent 记忆 / LLM Wiki）
 > 性质：**我们为什么做、做哪一层、不做哪一层**——战略层，回答"为什么"，不回答"怎么做"（后者见 [`docs/design.md`](design.md) 与组件架构）。
-> 相关：后端积压 [`docs/backend-backlog.md`](backend-backlog.md) · 前端计划 [`docs/frontend.md`](frontend.md) · 总路线图 [`docs/roadmap.md`](roadmap.md) · 数据源立场依据 [`docs/history/agent-memory-research.md`](history/agent-memory-research.md)。
+> 相关：后端积压 [`docs/backend-backlog.md`](backend-backlog.md) · 前端计划 [`docs/frontend.md`](frontend.md) · 总路线图 [`docs/roadmap.md`](roadmap.md) · 数据源立场依据 agent-memory-research（已归档）。
 
 > **一句话定位：把用户笔记库变成 agent 的记忆——引擎是记忆的「激活层」。**
 
@@ -52,44 +52,38 @@
 
 **合体价值**：LLM Wiki 生成/维护（持续积累）→ serendipity 激活/漫游（当下相关）→ MCP 给 agent 消费（已铺路）。这正是"笔记库 = agent 记忆"叙事的最强注脚。
 
-## 四、embedding 边界决策（已定）
+## 四、纯本地算法定位（已定：不引入语义层）
 
-- **引擎不碰 embedding**：保持结构×激活、零依赖、白盒可解释。
-- **口子留在 Web 层**（不是插件）：语义候选**注入 Web API / 前端融合**；引擎核心（graph/roam/score）不知道 embedding 存在。
-- **插件只是 Web 的壳**：Obsidian 插件 = iframe 嵌引擎 Web UI（M2 方案，见 [`docs/roadmap.md`](roadmap.md)），语义融合逻辑全部在 Web 前端，插件不感知。
-- 效果：引擎 = 结构 + 语义双通道的融合点；引擎核心保持纯净。
-- 顺带收益：任何想要语义的插件/工具都要经过引擎 Web 层融合 → 引擎成为「结构侧守门人」。
+- **引擎是纯本地算法核心，零 AI 依赖，不引入任何语义 / embedding 层**。所有能力（图构建 / PPR / 激活扩散 / similar / 潜在关联 / communities）均为确定性、可解释、永远在线、免费的结构算法。
+- **先前讨论过的「Web 层语义注入口 / 可选语义旁路」不作为项目方向**——保持引擎与 Web UI 纯结构，避免任何隐藏语义黑箱。
+- 效果：引擎输出始终可信、可解释，信任承诺稳固（见 [`docs/roadmap.md`](roadmap.md) 明确不做）。
 
-## 五、运行架构：embedding 在哪一层（已定）
-
-> Obsidian 场景示意（语义服务为可选旁路，虚线）：
+## 五、运行架构（纯本地，无语义旁路）
 
 ```
 Obsidian（宿主）
  ├── Obsidian vault（笔记 + 双链）          ← 数据层，无人拥有
- └── 插件（iframe 壳，仅嵌 Web UI）         ← 消费端，不感知语义
-        ▲            ▲
-        │结构候选API   │语义候选API（可选注入）
-        │            │
- seren serve ────── 语义服务·可选旁路（Smart Connections + Ollama）
- （引擎：adapter→图→PPR） （向量索引 → 语义候选 top-k）
+ └── 插件薄壳（iframe 嵌 Web UI + 隐式 touch + digest 导出，不内置 AI）
+        ▲
+        │ 结构候选 API（只读）
+        │
+ seren serve（引擎：adapter → 图 → PPR / 激活 / roam / relation）
+        ▲
+        │ 只读 MCP 工具面
+        │
+ 外部 AI / agent（独立消费者，经 MCP 消费引擎产出，不在引擎/插件内）
 ```
 
-| 层 | 放什么 | 是否碰 embedding |
+| 层 | 放什么 | 是否碰语义/AI |
 |---|---|---|
-| 数据层（vault） | 笔记 + 双链 | 不碰——语义服务直接读文件 |
+| 数据层（vault） | 笔记 + 双链 | 不碰 |
 | 结构引擎（seren serve） | 图构建、PPR、激活、roam/relation API | **不碰** |
-| 语义旁路（可选） | Smart Connections / Ollama / 向量索引 | 独立进程或独立插件，与引擎平级 |
-| 融合点（Web 前端） | 合并两条候选流、排序、展示 | 唯一知道两条流的地方 |
+| 插件薄壳 | iframe + 隐式 touch + digest 导出 | 不内置 AI |
+| 外部 AI/agent | 经只读 MCP 消费引擎产出、在其上推理 | 在引擎之外 |
 
-**两个关键设计：**
-1. **引擎与语义服务是两个平行的消费者**——都从 vault 读数据，互不依赖；语义服务挂掉，引擎照常，插件降级为纯结构而非不可用。
-2. **融合点放 Web 前端**——融合逻辑必须"同时懂结构分和语义分"，引擎刻意不懂语义；Web 层已存在（index.html），未来换语义服务只动前端/API，不动引擎核心。
-
-**给开发留的口子（M2 时落实，见 [`docs/roadmap.md`](roadmap.md)）：**
-- Web API 侧：`/api/roam` 等接受**外部候选注入**（`extra_candidates: [{id, score}]`），并入现有 score 融合管线（可选参数，默认关闭，不破坏契约）。
-- 前端侧：融合视图预留「语义候选」数据槽位，与结构候选并行渲染。
-- 引擎核心：零改动。
+**关键设计：**
+1. **引擎与插件均不感知语义**——只做结构算法；外部 AI/agent 作为独立消费者经只读 MCP 读取引擎产出，不在引擎/插件内部。
+2. **融合点不存在于引擎**——引擎刻意只懂结构分；任何语义推理都在引擎之外的外部 AI 完成，引擎核心零改动。
 
 ## 六、数据源边界：真实性门槛 + adapter 唯一接入点（已定）
 
@@ -112,7 +106,7 @@ Obsidian（宿主）
 
 | 形态 | 节点本身 | 是否允许 |
 |---|---|---|
-| **语义检索通道**（如 Smart Connections 注入候选，节点是用户真实笔记） | 真实笔记 | ✅ 保留（Web 层注入口已设计） |
+| **语义检索通道**（如第三方语义检索，节点是用户真实笔记） | 真实笔记 | ✅ 保留（第三方可选，不内置引擎、不经 Web 层融合） |
 | **LLM 生成数据源**（如 OpenViking 记忆库，节点本身是 LLM 编的） | LLM 生成 | ❌ 不做 |
 
 语义通道只是「检索线索」来源不同，节点仍是真实笔记——没有 GIGO 问题；LLM 生成数据源的节点本身不可信——无论怎么筛都是垃圾进垃圾出。**两者不要混淆。**
@@ -157,12 +151,11 @@ MCP 八工具（只读）即 agent 接口（见 [`docs/architecture/07-mcp.md`](
 ## 九、护城河
 
 1. **克制即护城河**：纯 Go 零依赖、单二进制、白盒可解释——在云端 agent 记忆泛滥的时代是稀缺品
-2. **结构侧守门人**：语义候选需经引擎 Web 层融合，引擎位置稳固
+2. **白盒可解释**：引擎输出确定性、可解释、永远在线、免费，无隐藏语义黑箱，信任承诺稳固
 3. **可复现**：`--seed` 让漫游可复现——对 agent 联调、测试、分享有实际价值
 4. **双数据源 + 对账刷新 + 自动监听**：真实库上已验证（两库 74 单测绿）
 
 ## 十、后续动作
 
-- [ ] M2 开发时落实「Web 层语义注入口」（API `extra_candidates` + 前端语义候选槽位，见 §五）
-- [ ] LLM Wiki adapter 画像（`llm-wiki` + `ExcludedFiles`）落地，见 [`docs/backend-backlog.md`](backend-backlog.md) §3.5
-- [ ] 诊断层（Leiden 社区发现 → 知识缺口诊断）排期时实现，见 [`docs/backend-backlog.md`](backend-backlog.md) §3.4
+- [x] LLM Wiki adapter 画像（`llm-wiki` + `ExcludedFiles`）落地，见 [`docs/backend-backlog.md`](backend-backlog.md) §3.5
+- [x] 诊断层（Leiden 社区发现 → 知识缺口诊断）排期时实现，见 [`docs/backend-backlog.md`](backend-backlog.md) §3.4

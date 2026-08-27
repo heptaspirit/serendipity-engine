@@ -59,7 +59,6 @@ go run ./cmd/seren mcp <vault>              # MCP（stdio JSON-RPC，AI 通道�
 | 改后端（性能 / 功能 / CLI / MCP / 存储） | [`docs/backend-backlog.md`](docs/backend-backlog.md) |
 | 改 Web UI | [`docs/frontend.md`](docs/frontend.md) |
 | 组件级实现细节 | [`docs/architecture/`](docs/architecture/)（从 00-overview.md 入口） |
-| 查历史决策 / 验证记录 | [`docs/history/`](docs/history/)（内容已吸收进主文档，作溯源用） |
 
 ## 开发约定（红线，违反需谨慎）
 
@@ -67,11 +66,12 @@ go run ./cmd/seren mcp <vault>              # MCP（stdio JSON-RPC，AI 通道�
 2. **工程纪律**（backend-backlog §一.5）：单文件 500 行左右、不超千行；按领域拆文件不碎片化；算法 = 包级可复用函数（为 MCP 暴露准备）；第三方算法库可引入（MIT + vendor 锁版本 + attribution，first case = leiden-go）。
 3. **克制哲学**：埋点只记录不演化（touch 绝不反馈排序/hot）；监听节流合并；**不加中间态恢复逻辑**（1 分钟快照对账已免疫中间态）。
 4. **安全红线**：凭据类数据一律不读；活库先一致性快照再读；个人数据不进 git；MCP 只读（不写 touch、不触发 refresh）。
-5. **真实性门槛**：无事实锚点、纯 LLM 生成且无人验证的数据源默认拒绝接入（见 positioning / history/agent-memory-research）。
+5. **真实性门槛**：无事实锚点、纯 LLM 生成且无人验证的数据源默认拒绝接入（见 positioning；agent-memory-research 已归档）。
+6. **文档克制（不搞文档工程）**：项目文档保持简洁、明了、结构化——已落地 / 已被项目吸收的决策与已放弃的决策不保留叙事，只记「决定 + 理由 + 当前状态」；正文中文 + 英文条目标题，不写纯英文段落。
 
 ## 明确不做（防跑偏）
 
-- **embedding / 本地语义模型 / 在线语义 API**——结构替代语义（similar/mentions）；语义注入口只留在 Web 层供插件调用，引擎核心不碰
+- **embedding / 本地语义模型 / 在线语义 API / 语义层**——纯本地算法，结构替代语义（similar / 潜在关联）；不引入任何语义 / embedding 层
 - **GraphRAG / LLM 建图**——图必须是真实链接
 - **graph 数据库**（Neo4j / Kuzu / FalkorDB）——数千~2 万节点规模是负资产，内存图 + 自研算法足够
 - **LLM 生成记忆库的 adapter**（OpenViking / Mem0 / server-memory 等）——真实性门槛；架构预留但官方不做

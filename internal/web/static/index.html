@@ -340,6 +340,26 @@
   .vault-status .vs-dot.off { background: var(--warn); }
   .vault-status b { color: var(--text); }
 
+  /* MCP 状态 + 一键配置（v0.2.0） */
+  .mcp-panel { margin: 8px 0; padding: 10px 12px; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 12.5px;
+    color: var(--muted); max-width: 640px; }
+  .mcp-panel.hidden { display: none; }
+  .mcp-head { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .mcp-head .vs-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .mcp-head .vs-dot.off { background: var(--warn); }
+  .mcp-head b { color: var(--text); }
+  .mcp-head .tag.ok { background: rgba(80,250,123,.15); color: var(--ok); }
+  .mcp-head .tag.off { background: rgba(247,118,142,.15); color: var(--warn); }
+  .mcp-head .tag.warn { background: rgba(250,189,47,.15); color: var(--warn); }
+  .mcp-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .mcp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .mcp-msg { font-size: 12px; color: var(--warn); }
+  .mcp-cfg { margin-top: 8px; }
+  .mcp-hint { font-size: 12px; margin-bottom: 6px; }
+  .mcp-cfg pre { overflow-x: auto; padding: 10px; background: var(--surface2, #1a1b26);
+    border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 12px; line-height: 1.5; }
+
   @media (max-width: 560px) {
     .brand .tag { display: none; }
     .header-right .btn .txt { display: none; }
@@ -381,6 +401,8 @@
   </div>
   <!-- 已配库状态条（v0.1.15）：配库成功后显示当前库名 + 节点数引导（仅 configured 时渲染） -->
   <div id="vault-status" class="vault-status hidden"></div>
+  <!-- MCP 状态 + 一键配置（v0.2.0）：显示 AI 接入状态，配库后给出可复制配置 -->
+  <div id="mcp-panel" class="mcp-panel hidden"></div>
   <div id="source" class="source-line"></div>
 
   <!-- 待刷新提示条（v0.1.12，roadmap #14） -->
@@ -452,6 +474,12 @@ const I18N = {
     vaultTitle: '选择笔记库', vaultSub: '引擎以无库模式启动——指定笔记库（Obsidian 目录或虎鲸 .db 路径）后开始分析',
     vaultPh: '笔记库路径（vault 目录 / OrcaNote.db）', vaultGo: '配置库', vaultFail: '配置失败',
     curNodePh: '当前节点', relFromCur: '与当前节点查关系',
+    mcpTitle: 'AI 接入（MCP）', mcpTransport: '传输', mcpEnabled: '已启用', mcpDisabled: '已停用',
+    mcpTools: '工具数', mcpConfigured: '已配置库', mcpNotConfigured: '未配置库',
+    mcpEnable: '启用', mcpDisable: '停用', mcpCopyConfig: '一键配置（复制）',
+    mcpCopied: '已复制到剪贴板', mcpCopyFail: '复制失败', mcpToggleFail: '启停失败',
+    mcpConfigHint: '把下面配置粘贴到你的 MCP 客户端（DeepSeek Harness dsh / Codex / Claude Desktop 等）的 mcpServers 即可接入。',
+    mcpNoVault: '先配置笔记库，MCP 才能出数据。',
   },
   en: {
     tag: 'tag', node: 'nodes', edge: 'edges', source: 'source',
@@ -488,6 +516,12 @@ const I18N = {
     vaultTitle: 'Choose a library', vaultSub: 'Engine started without a library — point it at your notes (Obsidian vault or Orca .db) to begin',
     vaultPh: 'Library path (vault dir / OrcaNote.db)', vaultGo: 'Configure', vaultFail: 'Configure failed',
     curNodePh: 'Current node', relFromCur: 'Relation: current node',
+    mcpTitle: 'AI access (MCP)', mcpTransport: 'Transport', mcpEnabled: 'Enabled', mcpDisabled: 'Disabled',
+    mcpTools: 'Tools', mcpConfigured: 'Configured', mcpNotConfigured: 'Not configured',
+    mcpEnable: 'Enable', mcpDisable: 'Disable', mcpCopyConfig: 'One-click config (copy)',
+    mcpCopied: 'Copied to clipboard', mcpCopyFail: 'Copy failed', mcpToggleFail: 'Toggle failed',
+    mcpConfigHint: 'Paste the config below into your MCP client (DeepSeek Harness dsh / Codex / Claude Desktop etc.) under mcpServers to connect.',
+    mcpNoVault: 'Configure your library first; MCP can only serve data afterwards.',
   }
 };
 let lang = (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en';
@@ -623,11 +657,14 @@ fetch('/api/config').then(r => r.json()).then(cfg => {
   if (cfg.configured === true) renderVaultStatus(cfg.vault, cfg.nodes, cfg.edges);
   // 无库启动（v0.1.15）：configured=false → 显示选库引导，隐藏主搜索
   if (cfg.configured === false) showVaultSetup();
+  // MCP 状态 + 一键配置（v0.2.0）：无论是否配库都查询并显示
+  renderMCP();
 }).catch(() => {
   fetch('/api/stats').then(r => r.json()).then(s => {
     if (s.version && $('#ver')) $('#ver').textContent = s.version;
     if (s.configured === true) renderVaultStatus(s.vault, s.nodes, s.edges);
     if (s.configured === false) showVaultSetup();
+    renderMCP();
   }).catch(() => {});
 });
 applyStaticI18n();
@@ -639,6 +676,91 @@ function renderVaultStatus(vault, nodes, edges) {
   el.classList.remove('hidden');
   el.innerHTML = `<span class="vs-dot"></span>已配置引擎 · <b>${esc(vault || '')}</b>
     · ${nodes || 0} 节点 / ${edges || 0} 边`;
+}
+
+// ---- MCP 状态 + 一键配置（v0.2.0）：读 /api/mcp/status，显示 AI 接入状态，
+// 配库后给出 mcpServers 配置（endpoint /mcp + token）供一键复制；可启停。 ----
+async function renderMCP() {
+  const el = $('#mcp-panel');
+  if (!el) return;
+  let st;
+  try { st = await (await fetch('/api/mcp/status')).json(); }
+  catch (e) { el.classList.add('hidden'); return; } // 无 MCP（旧服务）→ 隐藏
+  // 4xx 说明后端无 /api/mcp（未启用 MCP 的旧版）→ 隐藏
+  if (st.enabled === undefined) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const cfg = st.configured;
+  const on = st.enabled;
+  const tools = st.tools || 0;
+  const transport = st.transport || (st.endpoint ? 'streamable-http' : 'stdio');
+  const badge = on
+    ? '<span class="tag ok">' + t('mcpEnabled') + '</span>'
+    : '<span class="tag off">' + t('mcpDisabled') + '</span>';
+  const cfgBadge = cfg
+    ? '<span class="tag">' + t('mcpConfigured') + '</span>'
+    : '<span class="tag warn">' + t('mcpNotConfigured') + '</span>';
+  el.innerHTML = `
+    <div class="mcp-head"><span class="vs-dot"></span>${t('mcpTitle')} ${badge} ${cfgBadge}</div>
+    <div class="mcp-body">
+      <span class="meta">${t('mcpTransport')}: <b>${esc(transport)}</b> · ${t('mcpTools')}: <b>${tools}</b></span>
+      <div class="mcp-actions">
+        <button id="mcp-toggle" class="btn ghost sm">${on ? t('mcpDisable') : t('mcpEnable')}</button>
+        <button id="mcp-copy" class="btn primary sm">${t('mcpCopyConfig')}</button>
+      </div>
+      <div id="mcp-msg" class="mcp-msg"></div>
+      <div id="mcp-cfg" class="mcp-cfg hidden"></div>
+    </div>`;
+  const toggle = $('#mcp-toggle');
+  if (toggle) toggle.onclick = async () => {
+    try {
+      await fetch('/api/mcp/' + (on ? 'disable' : 'enable'), { method: 'POST' });
+      renderMCP();
+    } catch (e) { const m = $('#mcp-msg'); m.textContent = t('mcpToggleFail'); }
+  };
+  const copy = $('#mcp-copy');
+  if (copy) copy.onclick = () => buildAndCopyMCP(cfg, st);
+  if (!cfg) {
+    const msg = $('#mcp-msg');
+    if (msg) msg.textContent = t('mcpNoVault');
+  }
+}
+
+// buildAndCopyMCP 生成 mcpServers 配置并复制到剪贴板（endpoint /mcp + token）。
+function buildAndCopyMCP(configured, st) {
+  const cfg = $('#mcp-cfg');
+  const msg = $('#mcp-msg');
+  const token = __API_TOKEN__;
+  const flavor = configured
+    ? { type: 'streamable-http', url: '/mcp', headers: { 'X-Seren-Token': token } }
+    : null;
+  // 当前 serve 是 streamable-http；给出注入 host 的完整配置
+  const host = location.origin || 'http://127.0.0.1:8080';
+  const mcpConfig = {
+    mcpServers: {
+      seren: {
+        type: 'streamable-http',
+        url: host + (st.endpoint || '/mcp'),
+        headers: { 'X-Seren-Token': token },
+      }
+    }
+  };
+  const text = JSON.stringify(mcpConfig, null, 2);
+  if (cfg) {
+    cfg.classList.remove('hidden');
+    cfg.innerHTML = '<div class="mcp-hint">' + esc(t('mcpConfigHint')) + '</div><pre>' + esc(text) + '</pre>';
+  }
+  if (msg) msg.textContent = '';
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      if (msg) msg.textContent = t('mcpCopied');
+    } catch (e) {
+      // clipboard 不可用（非常规上下文）→ 退化为手动选中
+      if (cfg) { const pre = cfg.querySelector('pre'); if (pre) { const r = document.createRange(); r.selectNodeContents(pre); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); } }
+      if (msg) msg.textContent = t('mcpCopyFail');
+    }
+  };
+  copy();
 }
 
 // ---- 无库启动选库引导（v0.1.15）：POST /api/vault {path} 配库，成功后重载 ----
