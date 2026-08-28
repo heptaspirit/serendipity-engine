@@ -24,6 +24,8 @@
 - **AI 可接入**：MCP 只读工具 + CLI `--json` 结构化输出
 - **可选兼容**：LLM Wiki 库画像（`--profile-name llm-wiki`）
 
+> **⚠️ 给你的库画像加排除规则（v0.2.1 起）**：**引擎会在你第一次对某个库跑命令时,自动落一个 `<vault>/.serendipity/profile.yaml` 模板**——默认"空"（全部规则注释掉,引擎回落到通用 default-obsidian）,里面有 `excluded_dirs`/`excluded_prefixes`/`excluded_files` 的可注释示例。若库里有自动生成/工具文件（如 `.ingest-report-*`、`health_*` 报告、原始归档目录）,打开该模板取消对应注释即可——否则这些文件会污染 `graph.community` 与 `graph.suggest` 的共享邻居证据,并在 `dangling_refs` 里产生大量格式噪声。
+
 ## 设计哲学
 
 1. **结构 × 激活**：图结构提供"可能相关"，激活机制提供"此刻相关"——只有结构没有激活的 wiki 是死的。
@@ -70,7 +72,7 @@ go build -o seren.exe ./cmd/seren
 # 对账刷新（增删改后同步，输出 增/删/改 明细）
 .\seren.exe refresh <vault> --store <file.bbolt>
 
-# MCP（AI 通道，只读八工具；给 dsh/agent 配 stdio MCP 指向此命令）
+# MCP（AI 通道，只读十一工具；给 dsh/agent 配 stdio MCP 指向此命令）
 .\seren.exe mcp <vault> --db <file.bbolt>
 
 # 子命令级帮助 + 结构化输出（CLI 三件套）

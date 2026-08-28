@@ -70,6 +70,30 @@ func TestParseVaultExcludeFiles(t *testing.T) {
 	}
 }
 
+// v0.2.1 bugfix：excluded_files 写裸名（log/index 不带 .md）也要能排除 log.md/index.md。
+// 此前 ExcludedName 只做全名精确匹配，裸名匹配不上 "log.md"，排除不生效。
+func TestExcludedNameBareStem(t *testing.T) {
+	p := &VaultProfile{ExcludedFiles: []string{"log", "index", "status"}}
+	for _, name := range []string{"log.md", "index.md", "status.md", "LOG.md"} {
+		if !p.ExcludedName(name) {
+			t.Fatalf("ExcludedName(%q) 应为 true（裸名排除）", name)
+		}
+	}
+	if p.ExcludedName("chapter_001.md") {
+		t.Fatal("普通文件不应被排除")
+	}
+	// 带 .md 的历史写法仍生效
+	p2 := &VaultProfile{ExcludedFiles: []string{"log.md", "CLAUDE.md"}}
+	if !p2.ExcludedName("log.md") || !p2.ExcludedName("CLAUDE.md") {
+		t.Fatal("带 .md 的排除条目应继续生效")
+	}
+	// 前缀排除不受 .md 影响
+	p3 := &VaultProfile{ExcludedPrefixes: []string{".ingest-report-", "health_"}}
+	if !p3.ExcludedName(".ingest-report-2024-01-01.md") || !p3.ExcludedName("health_index.md") {
+		t.Fatal("前缀排除应生效")
+	}
+}
+
 // DetectLLMWiki：raw/ + wiki/index.md 组合命中；缺 raw 或 index 不命中。
 func TestDetectLLMWiki(t *testing.T) {
 	dir := t.TempDir()

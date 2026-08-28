@@ -64,7 +64,93 @@ var (
 	bDocs    = []byte("docs")
 	bLinks   = []byte("links")
 	bRenames = []byte("renames")
+	bMeta    = []byte("meta")
 )
+
+// metaParserVersion meta 桶里的解析器版本键（v0.2.1）：存"最后一次写此 store 的
+// seren 版本"。loadSource/refreshParse 据此判断是否过期——任一解析规则/算法变化
+// 都会 bump 版本，从而自动触发全量重析（否则增量复用 mtime/size 未变的旧文档，
+// 升级后旧解析结果不失效，曾导致反斜杠 dangling 残留）。
+const metaParserVersion = "parser_version"
+
+// metaProfileSignature meta 桶里的画像签名键（v0.2.1）：存"最后一次建此 store 的画像"
+// 签名（hash）。用户改画像（如加 log/index 排除）后签名变化 → 自动全量重析，
+// 否则增量会复用未变文件的旧文档，新增排除不生效（log 权重/touch 残留等）。
+const metaProfileSignature = "profile_signature"
+
+// SaveParserVersion 记录写入该 store 的解析器版本。
+func SaveParserVersion(dbPath, ver string) error {
+	db, err := open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.Update(func(tx *bolt.Tx) error {
+		mb, err := tx.CreateBucketIfNotExists(bMeta)
+		if err != nil {
+			return err
+		}
+		return mb.Put([]byte(metaParserVersion), []byte(ver))
+	})
+}
+
+// LoadParserVersion 读取该 store 记录的解析器版本；无 meta/键 → ""（旧库/未记录）。
+// 文件不存在 → ""（不创建文件，避免版本检查的副作用）。
+func LoadParserVersion(dbPath string) string {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return ""
+	}
+	db, err := open(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var ver string
+	_ = db.View(func(tx *bolt.Tx) error {
+		if mb := tx.Bucket(bMeta); mb != nil {
+			ver = string(mb.Get([]byte(metaParserVersion)))
+		}
+		return nil
+	})
+	return ver
+}
+
+// SaveProfileSignature 记录建当前 store 所用的画像签名。
+func SaveProfileSignature(dbPath, sig string) error {
+	db, err := open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.Update(func(tx *bolt.Tx) error {
+		mb, err := tx.CreateBucketIfNotExists(bMeta)
+		if err != nil {
+			return err
+		}
+		return mb.Put([]byte(metaProfileSignature), []byte(sig))
+	})
+}
+
+// LoadProfileSignature 读取建 store 用的画像签名；无 meta/键 → ""（旧库/未记录）。
+// 文件不存在 → ""（不创建文件）。
+func LoadProfileSignature(dbPath string) string {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return ""
+	}
+	db, err := open(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var sig string
+	_ = db.View(func(tx *bolt.Tx) error {
+		if mb := tx.Bucket(bMeta); mb != nil {
+			sig = string(mb.Get([]byte(metaProfileSignature)))
+		}
+		return nil
+	})
+	return sig
+}
 
 // docRow 是 docs bucket 的持久化形态：Document 去 Refs（Refs 单独存 links
 // bucket，Load 时回读拼接——与 SQLite 时代 documents 表不含引用的结构一致）。

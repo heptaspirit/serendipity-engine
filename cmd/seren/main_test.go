@@ -9,6 +9,8 @@ package main
 import (
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -68,5 +70,32 @@ func TestUsageForAllSubcommands(t *testing.T) {
 		if !strings.Contains(s, cmd) {
 			t.Fatalf("%s 帮助应含子命令名：%q", cmd, s)
 		}
+	}
+}
+
+// writePIDFile：原子写入自身 PID,覆盖陈旧文件;目录不存在自动创建(v0.2.1 managed 句柄)。
+func TestWritePIDFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "seren.pid")
+	if err := writePIDFile(path); err != nil {
+		t.Fatalf("writePIDFile: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pid: %v", err)
+	}
+	if got := strings.TrimSpace(string(b)); got != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("pid mismatch: got %q want %d", got, os.Getpid())
+	}
+	// 覆盖陈旧内容(模拟 stale pid 文件)
+	if err := os.WriteFile(path, []byte("999999\n"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+	if err := writePIDFile(path); err != nil {
+		t.Fatalf("rewrite pid: %v", err)
+	}
+	b2, _ := os.ReadFile(path)
+	if got := strings.TrimSpace(string(b2)); got != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("rewrite pid mismatch: got %q", got)
 	}
 }

@@ -3,13 +3,91 @@ package adapter
 // 快照增量解析单元测试（v0.1.6）：增量结果必须与全量解析完全一致
 // （含同名消歧、ID 分配）；mtime/size 未变才复用。
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 )
+
+// parseLinks 鲁棒性（v0.1.13，反馈 #1）：剔代码块/行内代码、处理表格反斜杠、过滤占位符。
+// 返回按序去重后的链接目标列表（parseLinks 内部已按出现顺序去重，这里有序化便于比较）。
+func TestParseLinksRobustness(t *testing.T) {
+	inline := "`[[wikilink]]`"
+	fence := "```"
+	text := "# 测试\n" +
+		"正文真链接 [[周真]] 和 [[人物_012]]。\n" +
+		"行内代码 " + inline + " 不是链接。\n" +
+		fence + "\n代码块里的 [[人物_xxx]] 和 [[章节_XXX]] 也不是。\n" + fence + "\n" +
+		"列表 [[人物_xxx|别名]]、[[章节_XXX]]、[[...]]、[[wikilink]] 都是模板。\n" +
+		"表格带反斜杠：| [[人物_003\\]] | 结尾反斜杠。\n" +
+		"md 链接 [正文](文档乙.md) 应保留；[外链](https://x.com) 忽略。"
+
+	got := parseLinks(text)
+	// 期望：真链接 + md 链接；无代码块/行内代码/占位符/反斜杠噪音。
+	want := []string{"周真", "人物_012", "人物_003", "文档乙"}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseLinks 鲁棒性失败:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// 表格反斜杠单独核验（人物_003\ → 人物_003，去尾部 \）。
+func TestParseLinksTableBackslash(t *testing.T) {
+	got := parseLinks("| 列 | 值 |\n|---|---|\n| 人物 | [[人物_003\\]] |\n")
+	if len(got) != 1 || got[0] != "人物_003" {
+		t.Fatalf("表格反斜杠未归一: got=%v", got)
+	}
+}
+
+// 代码块/行内代码里的链接应被剔除（`[[x]]` 与 ```...``` 内）。
+func TestParseLinksStripsCode(t *testing.T) {
+	text := "真 [[a]]。\n`inline [[b]]` 不算。\n```\nblock [[c]]\n```"
+	got := parseLinks(text)
+	if len(got) != 1 || got[0] != "a" {
+		t.Fatalf("代码区链接未剔除: got=%v", got)
+	}
+}
+
+// 前缀级排除（v0.1.13，反馈 #3）：.ingest-report- / health_ 等自动生成文件不进图。
+func TestParseVaultPrefixExclude(t *testing.T) {
+	root := t.TempDir()
+	writeTestNote(t, filepath.Join(root, "人物_012.md"), "# 周真\n\n内容。")
+	writeTestNote(t, filepath.Join(root, ".ingest-report-CH020.md"), "# 报告\n\n[[人物_xxx]]。")
+	writeTestNote(t, filepath.Join(root, "health_2026-08-01.md"), "# 健康\n\n[[人物_012]]。")
+	p := &VaultProfile{Name: "test", ExcludedPrefixes: []string{".ingest-report-", "health_"}}
+	docs, err := ParseVault(root, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 || docs[0].ID != "人物_012" {
+		t.Fatalf("前缀排除应只剩 人物_012, got %v", docs)
+	}
+}
+
+// 批量表格反斜杠（反馈 #2）：设定_人物称呼 的 [[人物_001\]]..[[人物_026\]] + log 的
+// [[实体\]]——反斜杠应全部剔除，不再产生带 \ 的悬空链接。
+func TestParseLinksBackslashBatch(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("# 设定_人物称呼\n\n| 角色 | 称呼 |\n|---|---|\n")
+	for i := 1; i <= 26; i++ {
+		b.WriteString(fmt.Sprintf("| [[人物_%03d\\]] | 称呼%d |\n", i, i))
+	}
+	b.WriteString("\nlog: [[实体\\]]\n")
+	got := parseLinks(b.String())
+	if len(got) != 27 {
+		t.Fatalf("应 27 个链接(人物_001..026 + 实体), got %d: %v", len(got), got)
+	}
+	for _, g := range got {
+		if strings.HasSuffix(g, "\\") {
+			t.Fatalf("链接仍带反斜杠: %q", g)
+		}
+	}
+}
 
 func writeTestNote(t *testing.T, path, content string) {
 	t.Helper()

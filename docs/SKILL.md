@@ -1,6 +1,6 @@
 ---
 name: SKILL
-description: 使用 serendipity MCP 工具（graph.stats/roam/random/relation/node/similar/community + seren.touch_digest）并正确解读结果。当可用 serendipity MCP 工具、或用户提到 graph/roam/漫游/图谱/related/similar/community/touch/digest/serendipity/奇遇 时加载。核心立场：这些工具输出的是"候选/建议"（图结构估算），不是库内既定事实——教 AI 何时调用、如何解读、哪些反模式会把它变成噪声。
+description: 使用 serendipity MCP 工具（graph.stats/roam/random/relation/node/similar/community/suggest + seren.touch_digest + seren.touch_stats）并正确解读结果。当可用 serendipity MCP 工具、或用户提到 graph/roam/漫游/图谱/related/similar/community/suggest/touch/digest/serendipity/奇遇 时加载。核心立场：这些工具输出的是"候选/建议"（图结构估算），不是库内既定事实——教 AI 何时调用、如何解读、哪些反模式会把它变成噪声。
 version: 0.1.0
 ---
 
@@ -24,8 +24,10 @@ version: 0.1.0
 | graph.relation | 问 A-B 有无关系 | "结构上似乎相关，非库内既有边" |
 | graph.node | 确认目标笔记 | 确认/否定 |
 | graph.similar | 找结构孪生 | "这两篇像一对，值得连一下" |
-| graph.community | 主题审计/找空洞 | "这些成簇 / 这片稀疏" |
-| seren.touch_digest | 用户问注意力在哪（被动） | "主题在升温"，高计数≠重要 |
+| graph.community | 主题审计/找空洞 | "这些成簇 / 这片稀疏"（默认只看最大 top10；传 node 查单簇归属） |
+| graph.suggest | AI 研判互链补全 | "这对看似相关（共享 X/Y），你判、接受者写回 kind=ai"（带端点标题） |
+| seren.touch_digest | 用户问注意力在哪（被动） | "主题在升温"，高计数≠重要（窗口摘要，易为空） |
+| seren.touch_stats | 看累计点击热度 | "哪些被点得多"（累计，与窗口 digest 互补） |
 
 全部**只读**：不写 touch、不触发刷新、不改图。
 

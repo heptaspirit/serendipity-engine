@@ -18,6 +18,8 @@ package mcp
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"math/rand/v2"
@@ -38,12 +40,13 @@ type GraphProvider func() (*graph.Graph, *adapter.VaultProfile)
 
 // Server 持有图提供器与画像，提供只读 MCP 服务（transport-agnostic）。
 type Server struct {
-	provider   GraphProvider     // 每次调用取 live 图（nil,nil = 未配库）
-	version    string
-	transport  string            // "streamable-http" | "stdio"
-	touchDigFn func() (any, error) // §3.7 只读 digest 查询（nil = 不提供）
-	tools      []mcp.Tool        // 工具定义（供 seren.state 计数）
-	srv        *server.MCPServer // mcp-go 服务端（持工具注册）
+	provider     GraphProvider // 每次调用取 live 图（nil,nil = 未配库）
+	version      string
+	transport    string              // "streamable-http" | "stdio"
+	touchDigFn   func() (any, error) // §3.7 只读 digest 查询（nil = 不提供）
+	touchStatsFn func() (any, error) // §3.7 累计点击统计（nil = 不提供；v0.2.1）
+	tools        []mcp.Tool          // 工具定义（供 seren.state 计数）
+	srv          *server.MCPServer   // mcp-go 服务端（持工具注册）
 }
 
 // New 创建 MCP 服务（图与画像经 provider 注入；transport 描述当前形态）。
@@ -62,6 +65,12 @@ func (s *Server) SetTouchDigest(fn func() (any, error)) {
 	s.touchDigFn = fn
 }
 
+// SetTouchStats 注入只读累计点击统计闭包（§3.7，v0.2.1 反馈 #1）：等价 REST
+// /api/touch/stats 的 total/targets/sources。与 seren.touch_digest（窗口摘要）互补。
+func (s *Server) SetTouchStats(fn func() (any, error)) {
+	s.touchStatsFn = fn
+}
+
 // registerPrompts 注册 MCP prompts（§3.8 Layer B）：一份 `seren_orientation`——
 // 客户端（Claude Code 等）以斜杠命令触发，把"serendipity 使用说明"注入下文。
 // prompt 按需触发（说明书），与常驻 Skill（SKILL.md 行为准则）互补。内容英文（与
@@ -78,8 +87,10 @@ Read-only MCP tools (all take JSON object arguments — arguments are optional u
   graph.relation      — relation between two nodes. args: from (required), to (required) — accept ID or title.
   graph.node          — node detail. args: id (required) — ID or title.
   graph.similar       — structurally similar nodes. args: id (required), k (1-60).
-  graph.community     — topic clusters (Leiden). args: resolution (default 1.0), seed (fixed=reproducible).
-  seren.touch_digest  — behavioral digest of click activity. No args. Passive: only call when the user asks where attention is.
+  graph.community     — topic clusters (Leiden). args: resolution (default 1.0), seed (fixed=reproducible), top (default 10 = return the largest N clusters only; 0 = all).
+  graph.suggest       — potential link candidates (structural AA/Jaccard/RA, uncommitted). args: k (default 20, max 200). Each has shared-neighbor evidence — judge and write back kind=ai edges.
+  seren.touch_digest  — behavioral digest of recent windowed click activity. No args. NOTE: the windowed digest only fires after enough activity accumulates (trigger threshold) — until then the digest field is null, but total/top targets/top sources (cumulative) are always returned. Passive: call when the user asks where attention is.
+  seren.touch_stats   — cumulative click statistics (total/top targets/top sources). No args. Mirrors the Web /api/touch/stats.
   seren.state         — session state (vault configured? transport? tools). No args. Always available.
 
 Interpretation: these tools output candidates/hypotheses (structural estimates), not library facts. Treat as "worth a look" to confirm with the user — never present them as established edges or facts. Don't infer importance from touch counts; don't poll the digest proactively.`
@@ -112,9 +123,33 @@ func (s *Server) registerHandlers() {
 
 // Handler 返回 Streamable HTTP 服务（挂到 serve 的 /mcp）。mcp-go 的
 // NewStreamableHTTPServer 返回的即 http.Handler，端点路径由 WithEndpointPath("/mcp") 指定。
+//
+// 会话管理（v0.2.1，反馈 #9）：默认的 StatelessGeneratingSessionIdManager 会校验客户端
+// 回传的 Mcp-Session-Id，检测不匹配即回 404 "Invalid session ID"。实测 .NET HttpClient
+// 等客户端在重连/未正确回传会话 id 时被拒绝，而 curl 同流程正常。seren 是只读工具服务、
+// 无推送/采样/会话内状态，改用宽松 manager——生成一个会话 id（客户端可拿），但无论
+// 客户端回传任何/空的 Mcp-Session-Id 都放行，最大化兼容各种 MCP 客户端。
 func (s *Server) Handler() http.Handler {
-	return server.NewStreamableHTTPServer(s.srv, server.WithEndpointPath("/mcp"))
+	return server.NewStreamableHTTPServer(s.srv,
+		server.WithEndpointPath("/mcp"),
+		server.WithSessionIdManager(lenientSessionIdManager{}),
+	)
 }
+
+// lenientSessionIdManager 对会话 ID 不做本地校验（Generate 返回随机 id，Validate/Terminate
+// 恒放行）。只读工具服务无需强制会话一致性，据此兼容不回传/错传会话 id 的客户端。
+type lenientSessionIdManager struct{}
+
+func (lenientSessionIdManager) Generate() string {
+	b := make([]byte, 16)
+	if _, err := crand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+func (lenientSessionIdManager) Validate(string) (bool, error)  { return false, nil }
+func (lenientSessionIdManager) Terminate(string) (bool, error) { return false, nil }
 
 // ServeStdio 处理 stdio 请求流（独立 `seren mcp` 子进程；Claude Desktop 兜底）。
 // stdout 仅承载协议；启动提示必须写 stderr（main 里做），否则污染协议流。
@@ -129,6 +164,9 @@ func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
 }
 
 // ---- tools/list ----
+
+// maxDanglingRefs graph.stats 悬空明细上限（防大库轮询响应膨胀）。
+const maxDanglingRefs = 50
 
 // toolDefs 返回九只读工具（v0.2.x：+seren.state）。描述为英文（跨 AI 客户端兼容），
 // 全部标注只读语义（§3.8 Layer A：readOnlyHint/destructiveHint/idempotentHint——
@@ -175,13 +213,24 @@ func toolDefs() []mcp.Tool {
 			mcp.WithInteger("k", mcp.Description("output count (1-60, default 10)")),
 		),
 		mcp.NewTool("graph.community",
-			mcp.WithDescription("Community detection (Leiden): break the graph into topic clusters — an AI can locate 'which topic clusters exist / which areas are disconnected' without walking the whole library (diagnostic layer: knowledge gaps). Larger resolution = more fragmented."),
+			mcp.WithDescription("Community detection (Leiden): break the graph into topic clusters — an AI can locate 'which topic clusters exist / which areas are disconnected' without walking the whole library (diagnostic layer: knowledge gaps). Larger resolution = more fragmented. Optional node returns just that node's cluster membership (bounded) instead of the whole list."),
 			readOnly(),
 			mcp.WithNumber("resolution", mcp.Description("resolution parameter (default 1.0; larger = more fragmented)")),
 			mcp.WithInteger("seed", mcp.Description("random seed (0=random; fixed reproduces same partition)")),
+			mcp.WithInteger("top", mcp.Description("return only the top-N communities capped at this (default 10; 0=all). Trims the membership to those clusters so the response stays bounded.")),
+			mcp.WithString("node", mcp.Description("optional node id/title — return only that node's community (id/size/representative titles + its members), not the whole graph")),
+		),
+		mcp.NewTool("graph.suggest",
+			mcp.WithDescription("Potential link candidates (uncommitted): structural approximation over the 2-hop neighborhood (AA/Jaccard/RA), each with a shared-neighbor evidence list ('both link X/Y') plus endpoint titles. Read-only, bounded, no side effects — an AI judges each candidate from note bodies and writes back kind=ai edges. The link-completion gap-filler."),
+			readOnly(),
+			mcp.WithInteger("k", mcp.Description("output count (default 20, max 200)")),
 		),
 		mcp.NewTool("seren.touch_digest",
-			mcp.WithDescription("Behavioral-signal digest (§3.7): top clicked nodes in the window (ghost-filtered + title) + top sources + timespan + new total — an AI can spot 'which topics are heating up, likely worth linking'. Read-only, passive (empty digest when none)."),
+			mcp.WithDescription("Behavioral-signal digest (§3.7): a windowed summary of recent click activity. IMPORTANT: by design it only fires once enough click activity accumulates past the digest trigger threshold (count/interval) — until then the windowed `digest` is null. It ALWAYS returns cumulative context alongside: total + top targets + top sources (ghost-filtered + titles), so you get the all-time picture even before a window digest exists. Read-only, passive. Treat high counts as 'worth a look' — never as importance/authority; the engine never feeds touch back into ranking."),
+			readOnly(),
+		),
+		mcp.NewTool("seren.touch_stats",
+			mcp.WithDescription("Cumulative click statistics: total count + top clicked targets + top sources (ghost-filtered, titles resolved). Mirrors the Web /api/touch/stats; complements seren.touch_digest (windowed). Read-only. Don't infer importance from high counts."),
 			readOnly(),
 		),
 		mcp.NewTool("seren.state",
@@ -216,7 +265,7 @@ func (s *Server) callTool(name string, req mcp.CallToolRequest) (*mcp.CallToolRe
 	args := argsOf(req)
 	switch name {
 	case "graph.stats":
-		return okText(g.Stats())
+		return okText(s.stats(g))
 	case "graph.roam":
 		return s.roam(g, p, args)
 	case "graph.random":
@@ -237,8 +286,12 @@ func (s *Server) callTool(name string, req mcp.CallToolRequest) (*mcp.CallToolRe
 		return s.similar(g, p, args)
 	case "graph.community":
 		return okText(s.community(g, p, args))
+	case "graph.suggest":
+		return s.suggest(g, p, args)
 	case "seren.touch_digest":
 		return s.touchDigest()
+	case "seren.touch_stats":
+		return s.touchStats()
 	default:
 		return errText("unknown tool: " + name)
 	}
@@ -400,17 +453,111 @@ func (s *Server) similar(g *graph.Graph, p *adapter.VaultProfile, raw map[string
 	return okText(g.Similar(id, clamp(m.K, 10, 1, 60), structural))
 }
 
-func (s *Server) community(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) *graph.CommunityResult {
+func (s *Server) community(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) any {
 	var m struct {
 		Resolution float64 `json:"resolution"`
 		Seed       int64   `json:"seed"`
+		Top        *int    `json:"top"`
+		Node       string  `json:"node"`
 	}
 	remarshal(raw, &m)
 	res, err := g.Communities(clampF(m.Resolution, 1.0, 0, 100), m.Seed)
 	if err != nil {
 		return &graph.CommunityResult{}
 	}
+
+	// 单节点归属（v0.2.1，反馈 #7 可选优化）：只回该节点所在社区，而非全图 membership。
+	if m.Node != "" {
+		id := s.resolveID(g, m.Node)
+		comm, ok := res.Membership[id]
+		if !ok {
+			return map[string]any{"node": id, "community": nil}
+		}
+		for _, c := range res.Communities {
+			if c.ID == comm {
+				return map[string]any{
+					"node":       id,
+					"community":  c,
+					"membership": map[string]int{id: comm},
+				}
+			}
+		}
+		return map[string]any{"node": id, "community": nil}
+	}
+
+	// top 裁剪（v0.1.13，反馈 #6）：默认只回最大 top-10 社区，并把 membership 裁剪到
+	// 这些簇——AI 只需"最大的几个簇 / 某节点属于哪个簇"，不必吞全量响应。
+	// *int 区分"省略（默认 10）"与"显式 0（=全量）"。
+	top := 10
+	if m.Top != nil {
+		top = *m.Top
+	}
+	if top > 0 && len(res.Communities) > top {
+		keep := map[int]bool{}
+		for _, c := range res.Communities[:top] {
+			keep[c.ID] = true
+		}
+		res.Communities = res.Communities[:top]
+		for id, c := range res.Membership {
+			if !keep[c] {
+				delete(res.Membership, id)
+			}
+		}
+	}
 	return res
+}
+
+func (s *Server) suggest(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) (*mcp.CallToolResult, error) {
+	var m struct {
+		K int `json:"k"`
+	}
+	remarshal(raw, &m)
+	structural := map[string]bool{}
+	for _, t := range p.StructuralTypes {
+		structural[t] = true
+	}
+	links := g.PotentialLinks(2, structural)
+	if k := clamp(m.K, 20, 1, 200); len(links) > k {
+		links = links[:k]
+	}
+	// 补齐端点标题（v0.2.1，反馈 #5）：与 REST /api/suggest-links 的 a_title/b_title 对齐，
+	// AI 拿到即读，无需自行 ID→标题映射。
+	out := make([]map[string]any, 0, len(links))
+	for _, e := range links {
+		out = append(out, map[string]any{
+			"a": e.A, "b": e.B, "score": e.Score,
+			"algorithms": e.Algorithms, "shared": e.Shared,
+			"a_title": s.nodeTitle(g, e.A), "b_title": s.nodeTitle(g, e.B),
+		})
+	}
+	return okText(map[string]any{"count": len(out), "results": out})
+}
+
+// stats graph.stats 结果：Stats + 悬空明细（反馈 #8）——保留明细供 AI 定位噪声。
+func (s *Server) stats(g *graph.Graph) *statsResp {
+	st := g.Stats()
+	dr := g.DanglingRefs()
+	if len(dr) > maxDanglingRefs {
+		dr = dr[:maxDanglingRefs]
+	}
+	return &statsResp{Stats: st, DanglingRefs: dr}
+}
+
+// statsResp graph.stats 输出；内嵌 graph.Stats（字段名即 JSON key），另加悬空明细。
+type statsResp struct {
+	graph.Stats
+	DanglingRefs []graph.DanglingRef `json:"dangling_refs"` // v0.2.1 反馈 #8
+}
+
+func (s *Server) touchStats() (*mcp.CallToolResult, error) {
+	if s.touchStatsFn == nil {
+		return errText("touch stats unavailable (no touch store configured)")
+	}
+	v, err := s.touchStatsFn()
+	if err != nil {
+		return errText("touch stats: " + err.Error())
+	}
+	return okText(v)
 }
 
 func (s *Server) touchDigest() (*mcp.CallToolResult, error) {
@@ -433,6 +580,14 @@ func (s *Server) resolveID(g *graph.Graph, q string) string {
 		return ""
 	}
 	return ms[0].ID
+}
+
+// nodeTitle 取节点标题；缺失/为空用 ID 兜底（展示不崩，供 suggest/community 输出）。
+func (s *Server) nodeTitle(g *graph.Graph, id string) string {
+	if n, ok := g.Node(id); ok && n.Title != "" {
+		return n.Title
+	}
+	return id
 }
 
 // ---- 小工具 ----

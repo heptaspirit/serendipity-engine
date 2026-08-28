@@ -129,6 +129,11 @@ token 由 `seren serve` 启动时打印（或 `--token` 指定）；前端页面
 
 调用刷新闭包（重解析 → diff → 改名迁移 → 写回存储）→ 替换内存图。**鉴权必带。**
 
+> **v0.2.1 新增 `POST /api/rebuild?limit=50`（全量重建）**：与 refresh 同构，但**忽略增量复用、
+> 强制重新解析整库**（相当于 CLI `seren index`）。GUI/插件"重建索引"按钮用它（加画像排除等后
+> 强制重建、清存量）。响应形状与 refresh 相同（added/updated/deleted/renamed/unchanged/
+> duration_ms/nodes/changes/renames）。鉴权必带。
+
 **响应**：
 
 | 字段 | 类型 | 说明 |
@@ -351,6 +356,7 @@ Leiden 社区检测（`github.com/vsuryav/leiden-go`，MIT，vendor）——把�
 | v0.1.14 | **新增 touch digest 子系统（§3.7）**：/api/touch/digest（只读查询）+ /api/touch/digest/ack（已读）+ stats 加 `digest_available`；**MCP tools 扩至 8（+seren.touch_digest）**；touch 拆独立 store（`touch-<hash>.bbolt`，touch/meta/backups） |
 | v0.1.15 | **无库启动 + 配库**：`seren serve` 无 vault 空库启动；**新增 /api/vault**（GET 查配置 / POST 配库换库，换图 + 闭包重建 + watch 重启）；stats 加 `configured`；数据端点未配库时返回 `configured:false`；前端导出改 fetch+blob（a 标签不带 token 被 auth 拒的修复） |
 | v0.2.0 | **MCP 迁移 mcp-go + Streamable HTTP**：serve 内嵌 `/mcp` 端点（Web+REST+MCP 三合一，live 图）；**新增 /api/mcp/status + /api/mcp/enable + /api/mcp/disable**（前端/插件查状态与启停）；MCP tools 扩至 9（+seren.state）；`seren_orientation` prompt；suggest-links 聚合改原始分（修 Borda 跨锚点不可比/非确定）；CLI 用户可见输出英文化 |
+| v0.2.1 | **mcp**：MCP tools 扩至 11（**+graph.suggest**、**+seren.touch_stats**）；graph.community 加 `top`（默认 10 裁剪社区 + membership）与 `node`（单节点归属）；graph.node 详情加 `text_len`/`text_truncated`；graph.suggest 输出补 `a_title`/`b_title`（反馈 #5）；graph.stats 附带 `dangling_refs` 明细（反馈 #8）；**/mcp 会话兼容**（反馈 #9：宽松 SessionIdManager，未回传/错传 `Mcp-Session-Id` 不再 404 "Invalid session ID"，修 .NET HttpClient 类客户端）。**graph**：Build 加 title/alias 重定向（非精确 ID 的 `[[名字]]` 落到拥有该名节点，不再丢成 dangling）。**adapter**：parseLinks 剔代码块/行内代码、处理表格反斜杠、过滤占位符；VaultProfile 加 `excluded_prefixes`（文件名前缀级排除，贯穿 watch）；**画像 onboarding**：ResolveProfile 在 per-vault `.serendipity/profile.yaml` 缺失且 vault 为 Obsidian 目录时，自动落一个全注释的 llm-wiki 模板（`ObsidianProfileTemplate`），用户按需取消注释启用。**store**：**解析失效**（`SaveParserVersion`/`LoadParserVersion` 记 meta bucket + `SaveProfileSignature`/`LoadProfileSignature` 记画像签名）——loadSource/refreshParse 检测**binary 版本或画像签名**变化即强制全量重析，否则增量复用 mtime/size 未变文件会让升级后的解析规则/画像排除不生效（曾导致反斜杠 dangling 残留、新增 log/index 排除后图不更新）；改画像后引擎自动重析，无需手动 seren index。**web/touch**：**结构性文件 touch 跳过**——handleTouch 记录前对照画像排除（文件名精确/前缀，basename 与带 .md 两种形态），log/index/.ingest-report-/health_ 等工具文件不再污染 touch 权重（反馈：log 权重异常大）；与图解析排除同源（画像当唯一真相源）。**web/rebuild**：**新增 `POST /api/rebuild`**（全量重建，忽略增量强制重析整库，等价 CLI `seren index`）——GUI/插件"重建索引"按钮用；Web UI 设置抽屉已加该按钮。**adapter/bugfix**：`ExcludedName` 对 `.md` 后缀免疫（画像里写裸名 `log`/`index` 也能排除 `log.md`/`index.md`，此前只做全名精确匹配，裸名排除不生效）。**serve**：新增 `--pid-file <path>`——启动原子写入自身 PID（覆盖陈旧文件），优雅退出（SIGINT/SIGTERM）时删除；供 managed 启动方（Obsidian 插件）可靠获得/清理进程句柄（配合插件侧自愈，治"关宿主不杀进程/孤儿占端口连到旧引擎"）。 |
 
 > 参考：/api/roam 的 random 走的是 `roam.ComputeRandom`（随机层），其它查询走
 > `roam.Compute`；两者共用同一簇管线（clusterFromSeeds）。内核语义见

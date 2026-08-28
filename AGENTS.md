@@ -46,7 +46,7 @@ go run ./cmd/seren mcp <vault>              # MCP（stdio JSON-RPC，AI 通道�
 | `internal/sync` | 对账 diff（增 / 删 / 改 / 改名） |
 | `internal/watch` | 自动监听（轮询 + 节流合并） |
 | `internal/web` | REST `/api/*`（15 端点，见 api-contract.md）+ Web UI（static/index.html）+ 无库启动配库（/api/vault） |
-| `internal/mcp` | MCP 只读八工具：graph.stats / roam / random / relation / node / similar / community / seren.touch_digest |
+| `internal/mcp` | MCP 只读十一工具：graph.stats / roam / random / relation / node / similar / community / suggest / seren.touch_digest / seren.touch_stats / seren.state |
 
 ## 文档地图（改什么，先读什么）
 

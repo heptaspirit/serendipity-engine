@@ -52,6 +52,14 @@ var (
 	tagRe        = regexp.MustCompile(`(?m)^\s*-\s*(.+?)\s*$`)
 	kvRe         = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
 	inlineListRe = regexp.MustCompile(`^\s*\[(.*)\]\s*$`)
+
+	// 链接提取前置清洗（v0.1.13，反馈 #1）：代码块/行内代码里的 [[...]] 不是真链接，
+	// 必须剔除；否则行内代码 `[[wikilink]]`、模板示例、表格转义都会污染 dangling 与
+	// shared 证据。fenceRe 匹配 ``` 与 ~~~ 围栏块（(?s) 让 . 跨行）；inlineCodeRe 匹配 `代码`。
+	fenceRe      = regexp.MustCompile("(?ms)```.*?```|~~~.*?~~~")
+	inlineCodeRe = regexp.MustCompile("`[^`]*`")
+	// placeholderRe：模板占位符（如 人物_xxx / 章节_XXX）——不是真实节点，过滤。
+	placeholderRe = regexp.MustCompile(`^[^\s]+_[xX]{2,}$`)
 )
 
 // ParseVault 递归扫描 vault 根下所有 .md，按 VaultProfile 解析为 Document 列表。
@@ -74,8 +82,8 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
-		if containsStr(p.ExcludedFiles, d.Name()) {
-			return nil // v0.1.12：文件名级排除（画像 ExcludedFiles，LLM Wiki 的 index.md/log.md）
+		if p.ExcludedName(d.Name()) {
+			return nil // v0.1.12/13：文件名级/前缀级排除（画像 ExcludedFiles/ExcludedPrefixes）
 		}
 		doc, err := ParseFile(path, root, p)
 		if err != nil {
@@ -134,8 +142,8 @@ func ParseVaultIncremental(root string, p *VaultProfile, old []*Document) ([]*Do
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
-		if containsStr(p.ExcludedFiles, d.Name()) {
-			return nil // v0.1.12：文件名级排除（与 ParseVault 同源，LLM Wiki 的 index.md/log.md）
+		if p.ExcludedName(d.Name()) {
+			return nil // v0.1.12/13：文件名级/前缀级排除（与 ParseVault 同源）
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
@@ -355,11 +363,17 @@ func inferType(rel string, meta map[string]string, p *VaultProfile) string {
 // 统一归一：去别名（|）、去 #锚点、去 .md 后缀、取文件名（相对/绝对路径均按 basename）。
 // Markdown 链接只认指向 .md 的（OKF 约定：概念间以 .md 链接相连）；带协议的外链
 // （http/mailto/obsidian:// 等）、附件、目录、纯锚点一律不进图。
+//
+// 鲁棒性（v0.1.13，反馈 #1）：
+//   - 先剔除围栏代码块与行内代码（`[[x]]`、代码块里的示例不算真链接）；
+//   - 表格单元格里的反斜杠转义（如 `人物_003\`）去除尾部反斜杠；
+//   - 模板占位符（人物_xxx / 章节_XXX / ... / wikilink）过滤，不产生悬空链接。
 func parseLinks(text string) []string {
+	text = stripCode(text)
 	seen := map[string]bool{}
 	var out []string
 	add := func(id string) {
-		if id == "" || seen[id] {
+		if id == "" || isPlaceholder(id) || seen[id] {
 			return
 		}
 		seen[id] = true
@@ -374,6 +388,7 @@ func parseLinks(text string) []string {
 			raw = raw[:i]
 		}
 		raw = strings.TrimSpace(raw)
+		raw = strings.TrimRight(raw, "\\") // 表格反斜杠转义（人物_003\）
 		raw = strings.TrimSuffix(raw, ".md")
 		if raw != "" {
 			add(raw)
@@ -395,6 +410,23 @@ func parseLinks(text string) []string {
 		add(raw)
 	}
 	return out
+}
+
+// stripCode 剔除围栏代码块（``` / ~~~）与行内代码（`code`）后返回文本。
+// 这些区域里的 [[...]] 是示例/代码，不是真实双链——必须先清掉再提链接。
+func stripCode(text string) string {
+	text = fenceRe.ReplaceAllString(text, " ")
+	return inlineCodeRe.ReplaceAllString(text, " ")
+}
+
+// isPlaceholder 判断是否模板占位符（人物_xxx / 章节_XXX / ... / wikilink）。
+// 这些不是真实节点名，提取为链接只会产生污染 dangling 的噪声。
+func isPlaceholder(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "...", "…", "wikilink":
+		return true
+	}
+	return placeholderRe.MatchString(s)
 }
 
 func containsStr(ss []string, s string) bool {

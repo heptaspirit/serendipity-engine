@@ -65,6 +65,7 @@ seren serve "D:\WorkSpace\WriteLib\Novel_AI_Helper" --port 8901
 | 漫游 API | `GET /api/roam?q=<词>&top=<N>`（锚点/结果/路径/降级都在 JSON 里） |
 | 关系 API | `GET /api/relation?from=<ID或标题>&to=<ID或标题>`（最短路径+PPR+证据） |
 | 手动刷新 | `POST /api/refresh?limit=50`（响应含 added/updated/deleted/renamed） |
+| 全量重建 | `POST /api/rebuild?limit=50`（v0.2.1：忽略增量强制重析整库；设置抽屉"重建索引"按钮） |
 | 埋点 | `POST /api/touch {"target":"7128","from":"10156"}` |
 | 自动监听 | 改库文件 → 等 60s 节流窗口 → revision+1 + 页面提示 |
 

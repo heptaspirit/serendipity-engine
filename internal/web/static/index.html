@@ -467,6 +467,10 @@ const I18N = {
     hitCount: '全文命中 {n} 次', updated: '库已自动更新（节点 {n}）',
     refreshDone: '已刷新: 新增 {a} · 更新 {u} · 删除 {d} · 改名 {r} · 未变 {c}（{ms}ms，节点 {n}）',
     refreshFail: '刷新失败', refreshing: '刷新中…', reqFail: '请求失败', pageErr: '页面错误',
+    rebuildBtn: '重建索引（全量重解析）',
+    rebuildConfirm: '将丢弃增量缓存、全量重新解析整个库（加画像排除后用它强制重建），耗时可能较长。确认？',
+    rebuildDone: '已重建: 新增 {a} · 更新 {u} · 删除 {d} · 改名 {r} · 未变 {c}（{ms}ms，节点 {n}）',
+    rebuilding: '重建中…',
     detailFail: '详情失败', previewTextNone: '（无正文摘要）', neighbors: '邻居', backlinks: '被引用',
     noNeighbors: '无邻居', noBacklinks: '无被引用', deg: '度',
     pendingText: '库有变化，将在 1 分钟后自动刷新', pendingNow: '立即刷新',
@@ -509,6 +513,10 @@ const I18N = {
     hitCount: 'hit {n} times', updated: 'Library updated (nodes {n})',
     refreshDone: 'Refreshed: +{a} ~{u} -{d} ↦{r} ~{c} ({ms}ms, {n} nodes)',
     refreshFail: 'Refresh failed', refreshing: 'Refreshing…', reqFail: 'Request failed', pageErr: 'Page error',
+    rebuildBtn: 'Rebuild index (full re-parse)',
+    rebuildConfirm: 'Drops incremental cache and fully re-parses the whole library. Confirm?',
+    rebuildDone: 'Rebuilt: +{a} ~{u} -{d} ↦{r} ~{c} ({ms}ms, {n} nodes)',
+    rebuilding: 'Rebuilding…',
     detailFail: 'Detail failed', previewTextNone: '(no text summary)', neighbors: 'Neighbors', backlinks: 'Backlinks',
     noNeighbors: 'no neighbors', noBacklinks: 'no backlinks', deg: 'deg',
     pendingText: 'Library changed, auto-refresh in ~1 min', pendingNow: 'Refresh now',
@@ -1168,9 +1176,14 @@ function openSettings() {
   const groups = {};
   for (const d of paramDefs) (groups[d.group || '其他'] = groups[d.group || '其他'] || []).push(d);
   const grid = '<div id="cfg-fields"></div>';
-  openDrawer(t('cfgTitle2'), `<div class="cfg-head"><span>${t('cfgTitle2')}</span><button id="cfg-reset" class="btn ghost sm">${t('cfgReset')}</button></div>${grid}`);
+  // 重建（深处操作）：丢弃增量缓存、全量重析整库（加画像排除后强制重建用）
+  const rebuild = `<div class="cfg-head" style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+    <span class="meta">${t('rebuildConfirm')}</span>
+    <button id="rebuild" class="btn ghost sm">${t('rebuildBtn')}</button></div>`;
+  openDrawer(t('cfgTitle2'), `<div class="cfg-head"><span>${t('cfgTitle2')}</span><button id="cfg-reset" class="btn ghost sm">${t('cfgReset')}</button></div>${grid}${rebuild}`);
   renderCfg();
   $('#cfg-reset').onclick = resetParams;
+  $('#rebuild').onclick = doRebuild;
 }
 function resetParams() {
   for (const d of paramDefs) params[d.key] = +d.default;
@@ -1330,6 +1343,22 @@ $('#refresh').onclick = async () => {
   } catch (e) { hint.textContent = t('refreshFail') + ': ' + e.message; }
   finally { btn.disabled = false; }
 };
+
+// ---- 全量重建（POST /api/rebuild）---- 丢弃增量缓存、全量重析整库
+function doRebuild() {
+  if (!confirm(t('rebuildConfirm'))) return;
+  const hint = $('#meta');
+  hint.textContent = t('rebuilding');
+  fetch('/api/rebuild', { method: 'POST' }).then(r => r.json()).then(d => {
+    if (d.error) { hint.textContent = t('refreshFail') + ': ' + d.error; return; }
+    hint.textContent = t('rebuildDone', {
+      a: d.added, u: d.updated, d: d.deleted, r: (d.renamed || 0), c: d.unchanged,
+      ms: d.duration_ms, n: d.nodes
+    });
+    const q = $('#q').value.trim();
+    if (q) roam(q, 'replace'); else renderHome();
+  }).catch(e => { hint.textContent = t('refreshFail') + ': ' + e.message; });
+}
 
 // ---- 键盘导航简版（v0.1.12）：/ 聚焦搜索，Esc 关抽屉/浮层 ----
 document.addEventListener('keydown', e => {

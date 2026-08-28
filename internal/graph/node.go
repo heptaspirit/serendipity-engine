@@ -21,6 +21,7 @@ package graph
 
 import (
 	"sort"
+	"unicode/utf8"
 )
 
 // textSummaryMax 详情里正文摘要的最大字符数（发现层不读全文，克制边界；
@@ -41,7 +42,9 @@ type NodeDetail struct {
 	Type      string    `json:"type"`
 	Aliases   []string  `json:"aliases,omitempty"`
 	Tags      []string  `json:"tags,omitempty"`
-	Text      string    `json:"text"` // 摘要截断（L0）
+	Text      string    `json:"text"`                     // 摘要截断（L0）
+	TextLen   int       `json:"text_len,omitempty"`       // 全文 rune 长度（未截断，v0.1.13 反馈 #8）
+	TextTrunc bool      `json:"text_truncated,omitempty"` // text 是否被截断（默认 textSummaryMax rune）
 	Deg       int       `json:"deg"`
 	Neighbors []NodeRef `json:"neighbors"` // 无向邻接：链接到谁
 	Backlinks []NodeRef `json:"backlinks"` // 有向入边：谁链接我
@@ -61,7 +64,9 @@ func (g *Graph) NodeDetail(id string) *NodeDetail {
 	if n.Doc != nil {
 		d.Aliases = append([]string(nil), n.Doc.Aliases...)
 		d.Tags = append([]string(nil), n.Doc.Tags...)
+		d.TextLen = utf8.RuneCountInString(n.Doc.Text)
 		d.Text = truncateRunes(n.Doc.Text, textSummaryMax)
+		d.TextTrunc = d.TextLen > textSummaryMax
 	}
 	// 邻居（无向邻接）
 	seen := map[string]bool{}

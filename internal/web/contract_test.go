@@ -118,6 +118,32 @@ func TestRefreshEndpointJSONContract(t *testing.T) {
 	mustKeys(t, m, "added", "updated", "deleted", "renamed", "unchanged", "duration_ms", "nodes", "changes", "renames")
 }
 
+// POST /api/rebuild 契约（v0.2.1）：全量重建 → diff 摘要（与 refresh 同构）。
+func TestRebuildEndpointJSONContract(t *testing.T) {
+	s := contractServer(t, "")
+	s.Rebuild = func() (*syncpkg.Result, *graph.Graph, error) {
+		res := &syncpkg.Result{Added: 1, Updated: 2, Deleted: 0, Renamed: 1, Unchanged: 1, DurationMS: 3}
+		return res, endpointGraph(), nil
+	}
+	ts := newAuthServer(t, s)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/rebuild", nil)
+	req.Header.Set(tokenHeader, testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("rebuild 应 200, got %d", resp.StatusCode)
+	}
+	body := decodeRaw(t, resp.Body)
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("rebuild 应为对象：%v", body)
+	}
+	mustKeys(t, m, "added", "updated", "deleted", "renamed", "unchanged", "duration_ms", "nodes", "changes", "renames")
+}
+
 // POST /api/touch 契约：埋点上报成功（写失败静默，仍返回 ok）。
 func TestTouchEndpointJSONContract(t *testing.T) {
 	s := contractServer(t, "")

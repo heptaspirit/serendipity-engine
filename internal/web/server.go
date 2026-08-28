@@ -162,7 +162,8 @@ type VaultState struct {
 	Source    string
 	VaultName string // Obsidian vault 名（跳转）；空 = 不提供
 	OrcaRepo  string // 虎鲸 repo 名（跳转）；空 = 不提供
-	Refresh   RefreshFunc
+	Refresh   RefreshFunc // 增量刷新（复用未变文件）
+	Rebuild   RefreshFunc // 全量重建（忽略增量，重新解析整库；v0.2.1）
 	Touch     TouchFunc
 	TouchStat TouchStatsFunc
 	TouchDg   TouchDigestFunc
@@ -185,6 +186,7 @@ type Server struct {
 	OrcaRepo  string // 虎鲸 repo 名（orca-note:// URI 跳转用）；空 = 不提供跳转
 	Version   string
 	Refresh   RefreshFunc    // 非空时注册 POST /api/refresh
+	Rebuild   RefreshFunc     // 非空时注册 POST /api/rebuild（全量重建，v0.2.1）
 	Touch     TouchFunc      // 非空时注册 POST /api/touch（反馈埋点）
 	TouchStat TouchStatsFunc // 非空时注册 GET /api/touch/stats（只读统计，v0.1.11）
 	TouchDg   TouchDigestFunc // 非空时注册 GET /api/touch/digest（§3.7，v0.1.14）
@@ -293,6 +295,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/vault", s.handleVault) // v0.1.15 无库启动配库指令
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
+	mux.HandleFunc("/api/rebuild", s.handleRebuild) // v0.2.1：全量重建（force re-parse）
 	mux.HandleFunc("/api/touch", s.handleTouch)
 	mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
 	mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
@@ -337,6 +340,7 @@ func (s *Server) ApplyVaultState(st *VaultState) {
 	s.VaultName = st.VaultName
 	s.OrcaRepo = st.OrcaRepo
 	s.Refresh = st.Refresh
+	s.Rebuild = st.Rebuild
 	s.Touch = st.Touch
 	s.TouchStat = st.TouchStat
 	s.TouchDg = st.TouchDg
@@ -501,6 +505,21 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"ok": "false"})
 		return
 	}
+	// 结构性文件跳过（v0.2.1，反馈：log/index 等工具文件 touch 权重异常大）：命中画像的
+	// 排除（文件名精确 / 前缀）→ 记录前直接丢弃，与图解析的排除同源（画像当唯一真相源）。
+	// 归一：touch 的 target 可能是 basename（无 .md，插件）或带 .md；画像 excluded_files 也可能
+	// 两种形态——先剥 .md 得 base，再同时查 base 与 base+".md" 两种形态的排除。
+	s.mu.RLock()
+	var excluded bool
+	if s.P != nil {
+		base := strings.TrimSuffix(body.Target, ".md")
+		excluded = s.P.ExcludedName(base) || s.P.ExcludedName(base+".md")
+	}
+	s.mu.RUnlock()
+	if excluded {
+		writeJSON(w, map[string]string{"ok": "true"}) // 接受但不记录（fire-and-forget 语义）
+		return
+	}
 	if err := s.Touch(body.Target, body.From); err != nil {
 		// 埋点失败不影响主流程（克制：静默）
 		writeJSON(w, map[string]string{"ok": "false"})
@@ -532,8 +551,27 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "refresh unavailable"})
 		return
 	}
+	s.applyRefresh(w, r, s.Refresh)
+}
+
+// handleRebuild POST /api/rebuild：全量重建（v0.2.1，GUI/插件"重建库"按钮）——
+// 忽略增量复用、重新解析整库、写回存储并换图。供"强制全量"逃生口用。
+func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.Rebuild == nil {
+		writeJSON(w, map[string]string{"error": "rebuild unavailable"})
+		return
+	}
+	s.applyRefresh(w, r, s.Rebuild)
+}
+
+// applyRefresh 共享的"调用闭包 → 换图 → 返回 diff 摘要"逻辑（refresh 与 rebuild 同构）。
+func (s *Server) applyRefresh(w http.ResponseWriter, r *http.Request, fn RefreshFunc) {
 	limit := atoiDefault(r.URL.Query().Get("limit"), 50)
-	res, g, err := s.Refresh()
+	res, g, err := fn()
 	if err != nil {
 		writeJSON(w, map[string]string{"error": err.Error()})
 		return

@@ -89,8 +89,9 @@ func setPending(p *atomic.Bool, v bool) {
 // (mtime, size) 快照，含新增/删除检测。快照存于闭包内（量级 = 文件数）。
 // extraExclude 为额外排除的目录名（画像 ExcludedDirs），extraExcludeFiles 为额外
 // 排除的文件名（画像 ExcludedFiles，v0.1.12——与 ParseVault 排除同源，否则 LLM Wiki
-// 的 index.md/log.md 变化会无效触发刷新，backlog §四 缺口③）。
-func NewVaultChecker(root string, extraExclude, extraExcludeFiles []string) func() (bool, error) {
+// 的 index.md/log.md 变化会无效触发刷新，backlog §四 缺口③）。extraExcludePrefixes
+// 为额外排除的文件名前缀（画像 ExcludedPrefixes，v0.1.13——与 ParseVault 同源）。
+func NewVaultChecker(root string, extraExclude, extraExcludeFiles, extraExcludePrefixes []string) func() (bool, error) {
 	exclude := map[string]bool{}
 	for k := range excludedDirs {
 		exclude[k] = true
@@ -101,6 +102,12 @@ func NewVaultChecker(root string, extraExclude, extraExcludeFiles []string) func
 	fileExclude := map[string]bool{}
 	for _, f := range extraExcludeFiles {
 		fileExclude[f] = true
+	}
+	filePrefixExclude := map[string]bool{}
+	for _, p := range extraExcludePrefixes {
+		if p != "" {
+			filePrefixExclude[p] = true
+		}
 	}
 	last := map[string][2]int64{} // path → {mtimeNs, size}
 	return func() (bool, error) {
@@ -119,8 +126,8 @@ func NewVaultChecker(root string, extraExclude, extraExcludeFiles []string) func
 			if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 				return nil
 			}
-			if fileExclude[d.Name()] {
-				// 被画像排除的文件：不进快照（也不计变化）——与 ParseVault 同源
+			if fileExclude[d.Name()] || filePrefixExcluded(filePrefixExclude, d.Name()) {
+				// 被画像排除的文件（精确名或前缀）：不进快照（也不计变化）——与 ParseVault 同源
 				delete(last, path)
 				return nil
 			}
@@ -145,6 +152,19 @@ func NewVaultChecker(root string, extraExclude, extraExcludeFiles []string) func
 		}
 		return changed, err
 	}
+}
+
+// filePrefixExcluded 判断文件名是否命中任一前缀排除规则（与画像 ExcludedPrefixes 同源）。
+func filePrefixExcluded(m map[string]bool, name string) bool {
+	if len(m) == 0 {
+		return false
+	}
+	for pre := range m {
+		if strings.HasPrefix(name, pre) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewOrcaChecker 构造虎鲸库的变化检测器：stat 库文件 (mtime, size)。

@@ -72,7 +72,7 @@ go build -o seren.exe ./cmd/seren
 # Reconcile (sync after add/edit/delete; prints added/updated/deleted)
 .\seren.exe refresh <vault> --store <file.bbolt>
 
-# MCP (AI channel, eight read-only tools; point a stdio MCP client at this)
+# MCP (AI channel, eleven read-only tools; point a stdio MCP client at this)
 .\seren.exe mcp <vault> --db <file.bbolt>
 
 # Subcommand help + structured output (CLI triplet)

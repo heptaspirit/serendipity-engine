@@ -49,23 +49,33 @@ store, score, sync}`（纯库、无副作用、不启动监听）；**绝不 imp
   `seren mcp --db <store>` 或 `seren serve` 的 `/mcp`；dsh-mneme 类 agent 即可调用。
   这条通道就是 design.md §6.10 "dsh 生态现成的 AI 桥"。
 
-## 3. Tools 设计（只读九工具；v0.1.9 四件套 + v0.1.11 扩 node/similar + v0.1.12 加 community + v0.1.14 加 touch_digest + v0.2.0 加 state）
+## 3. Tools 设计（只读十一工具；v0.1.9 四件套 + v0.1.11 扩 node/similar + v0.1.12 加 community + v0.1.14 加 touch_digest + v0.2.0 加 state + v0.2.1 加 suggest/touch_stats）
 
 | tool | 入参 | 复用内核 | 说明 |
 |---|---|---|---|
-| `graph.stats` | 无 | `Graph.Stats()` | 库规模/连通/枢纽——AI 先摸库 |
+| `graph.stats` | 无 | `Graph.Stats()` | 库规模/连通/枢纽——AI 先摸库。v0.2.1 起附带 `dangling_refs` 悬空明细（截断），供 AI 定位格式噪声 |
 | `graph.roam` | `q, top, lambda, theta, hops` | `roam.Compute` | 查询漫游 → 节点簇（锚点+路径+分数） |
 | `graph.random` | `top, seed, rand_alpha` | `roam.ComputeRandom` | 🎲 随机漫步（v0.1.7）：随机起点 + 簇——AI 无明确目标时的"随便逛逛"入口；`seed` 固定可复现 |
 | `graph.relation` | `from, to` | `Graph.ComputeRelation` | 两节点：最短路径 + 双向 PPR + 证据链（v0.1.5 已铺路） |
-| `graph.node` | `id` | `Graph.NodeDetail` | 单节点详情（v0.1.11）：L0 Text 摘要 + L1 邻居/被引用——AI 漫游到节点后"确认这是不是我要的" |
+| `graph.node` | `id` | `Graph.NodeDetail` | 单节点详情（v0.1.11）：L0 Text 摘要 + L1 邻居/被引用——AI 漫游到节点后"确认这是不是我要的"。v0.2.1 起 text 摘要带 `text_len`（全文 rune 长度）+ `text_truncated`（是否被截断），AI 不会误当全文 |
 | `graph.similar` | `id, k` | `Graph.Similar` | 结构相似节点（v0.1.11 Jaccard → v0.1.12 **Adamic-Adar** 度加权）：共同邻居多但互不链接，带共享邻居证据——AI 判断"哪些笔记说同一件事" |
-| `graph.community` | `resolution, seed` | `Graph.Communities` | 社区发现（v0.1.12，Leiden）：把图拆成主题簇——AI 不用遍历全库就能定位"有哪些主题簇、哪块互不相连"（诊断层：知识缺口） |
-| `seren.touch_digest` | 无 | store 只读闭包（§3.7） | 行为信号 digest（v0.1.14）：窗口点击聚合 TopN（幽灵过滤 + 标题）+ 来源 TopN——AI 识别"哪些主题在升温、疑似该连一下"。只读、被动（无 digest 返回空摘要）；经 main 注入闭包读 touch store，MCP 本体保持"只 import 纯库"边界 |
-| `seren.state` | 无 | server 状态（provider） | 会话状态（v0.2.0）：是否已配库 / 传输方式 / 工具数——未配库时给出引导提示（engine 已启动但无 vault 时的入口）；永远可用、不依赖图 |
+| `graph.community` | `resolution, seed, top, node` | `Graph.Communities` | 社区发现（v0.1.12，Leiden）：把图拆成主题簇——AI 定位"有哪些主题簇、哪块互不相连"（诊断层）。v0.2.1 加 `top`（默认 10 = 只回最大几个簇并裁剪 membership；0 = 全量）+ `node`（只回该节点所在社区，避免吞全图 membership） |
+| `graph.suggest` | `k` | `Graph.PotentialLinks` | 潜在关联候选（v0.2.1，roadmap #15 / backlog §3.6 落 MCP）：2-hop 邻域 AA/Jaccard/RA 三算法融合，带共享邻居证据（"都链接了 X/Y"）+ 端点标题 `a_title`/`b_title`（反馈 #5，与 REST 对齐）、**未落图**——AI 取清单 + 笔记正文研判，接受者写回 kind=ai 边。互链补全缺口 |
+| `seren.touch_digest` | 无 | store 只读闭包（§3.7） | 行为信号 digest（v0.1.14）：窗口点击聚合 TopN（幽灵过滤 + 标题）+ 来源 TopN——AI 识别"哪些主题在升温"。只读、被动（当前窗口无活动返回空摘要，非累计统计）。v0.2.1 起明确与 `seren.touch_stats`（累计）区分 |
+| `seren.touch_stats` | 无 | store.TouchStats（§3.7） | 累计点击统计（v0.2.1，反馈 #1）：total + TopN targets/sources（幽灵过滤 + 标题），等价 REST /api/touch/stats——补 MCP 侧的"非空"累计视角，与窗口 digest 互补 |
+| `seren.state` | 无 | server 状态（provider） | 会话状态（v0.2.0）：是否已配库 / 传输方式 / 工具数——未配库时给出引导提示；永远可用、不依赖图 |
 
 > 2026-08-23 用户指示：把随机漫游也加进 MCP（灵感：恐龙工具箱 SRS 的 roam /
 > 随机漫步交互）。`graph.random` 与 `graph.roam` 共用同一簇管线（clusterFromSeeds），
 > 只是起点从查询锚定换成 roll——实现成本几乎为零。
+
+> **会话管理（v0.2.1，反馈 #9）**：serve 的 `/mcp` 是 mcp-go Streamable HTTP。
+> 默认 `StatelessGeneratingSessionIdManager` 会校验客户端回传的 `Mcp-Session-Id`，
+> 不匹配即回 404 "Invalid session ID"——`.NET HttpClient` 等客户端在重连/未正确回传
+> 会话 id 时被拒（curl 同流程正常）。seren 是只读工具服务、无推送/采样/会话内状态，
+> 改用宽松 `SessionIdManager`：`Generate` 返回随机 id（客户端可拿），`Validate/Terminate`
+> 恒放行——任何/空的会话 id 都接受，最大化兼容各类 MCP 客户端。代价是服务端不做会话
+> 一致性（seren 本就不依赖）。
 
 原则：
 - **全部只读**；不暴露 refresh / touch / 配置写接口。v0.2.0 起工具级 `readOnlyHint`/

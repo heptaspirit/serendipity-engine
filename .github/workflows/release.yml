@@ -1,0 +1,84 @@
+# ============================================================================
+# release.yml · Serendipity Engine 自动发布（打 v* tag 触发）
+#
+#   - test  : go vet + go test（全绿才进 build）
+#   - build : CGO_ENABLED=0 跨平台静态单二进制（windows/linux/darwin × amd64/arm64）
+#   - release: 收集产物，作为 assets 挂到 tag 的 GitHub Release
+#
+# 手动触发：Actions → Release binaries → Run workflow（用于不打 tag 试跑）。
+# 产物名：seren-<tag>-<os>-<arch>(.exe)。Obsidian 插件用 windows 那份改名 seren.exe 即可。
+# ============================================================================
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}   # 手动试跑，不依赖打 tag
+
+permissions:
+  contents: write   # 打 release + 传 assets 需要
+
+jobs:
+  # 质量门：先 vet + test，绿了才构建
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # 读取 go.mod 的 go 指令（1.26）
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  # 跨平台构建（矩阵）
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows, arch: amd64 }
+          - { os: linux,   arch: amd64 }
+          - { os: linux,   arch: arm64 }
+          - { os: darwin,  arch: amd64 }
+          - { os: darwin,  arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: |
+          OUT="seren-${GITHUB_REF_NAME:-dev}-${{ matrix.os }}-${{ matrix.arch }}"
+          if [ "${{ matrix.os }}" = "windows" ]; then OUT="$OUT.exe"; fi
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
+            go build -trimpath -o "$OUT" ./cmd/seren
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seren-${{ matrix.os }}-${{ matrix.arch }}
+          path: seren-*-${{ matrix.os }}-${{ matrix.arch }}*
+
+  # 打 tag 才发布（workflow_dispatch 手动跑时不打 release，只留 artifacts）
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true   # 矩阵产物合并到一个目录
+      - name: Show assets
+        run: ls -l dist
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

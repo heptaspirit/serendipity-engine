@@ -47,6 +47,10 @@ func Build(docs []*adapter.Document) *Graph {
 	for _, d := range docs {
 		g.nodes[d.ID] = &Node{ID: d.ID, Title: d.Title, Doc: d}
 	}
+	// 名称索引（v0.1.13，反馈 #2 引擎侧）：精确 ID 未命中的 [[名字]] 重定向到
+	// 拥有该 title/alias 的节点——避免真链接被丢成 dangling（Resolve 查询路径已按
+	// title/alias 匹配，Build 链路此前只认精确 ID，两者不一致导致实体分裂）。
+	titleIdx, aliasIdx := buildNameIndexes(g.nodes)
 	seen := map[string]bool{} // "a\x00b" 去重
 	for _, d := range docs {
 		for _, ref := range d.Refs {
@@ -55,22 +59,72 @@ func Build(docs []*adapter.Document) *Graph {
 				g.selfLinks++
 				continue // 自环
 			}
-			if _, ok := g.nodes[ref]; !ok {
-				g.dangling[ref]++
-				g.danglingSrc[d.ID] = append(g.danglingSrc[d.ID], ref)
-				continue
+			target := ref
+			if _, ok := g.nodes[target]; !ok {
+				// 精确 ID 未命中：尝试 title → alias 重定向（不变更精确 ID 行为）
+				if rd := resolveNameIndex(titleIdx, aliasIdx, ref); rd != "" {
+					target = rd
+				} else {
+					g.dangling[ref]++
+					g.danglingSrc[d.ID] = append(g.danglingSrc[d.ID], ref)
+					continue
+				}
 			}
-			key := pairKey(d.ID, ref)
+			if target == d.ID {
+				continue // 重定向后可能折叠成自环
+			}
+			key := pairKey(d.ID, target)
 			if seen[key] {
 				g.multiedge++
 				continue
 			}
 			seen[key] = true
-			g.adj[d.ID] = append(g.adj[d.ID], ref)
-			g.adj[ref] = append(g.adj[ref], d.ID)
+			g.adj[d.ID] = append(g.adj[d.ID], target)
+			g.adj[target] = append(g.adj[target], d.ID)
 		}
 	}
 	return g
+}
+
+// buildNameIndexes 建 title→IDs 与 alias→IDs 索引（供 Build 里 ref 重定向）。
+// v0.1.13 反馈 #2：让 [[名字]] 在不精确命中节点 ID 时，仍能落到拥有该名字的节点。
+func buildNameIndexes(nodes map[string]*Node) (titleIdx, aliasIdx map[string][]string) {
+	titleIdx = map[string][]string{}
+	aliasIdx = map[string][]string{}
+	for id, n := range nodes {
+		if n.Title != "" {
+			titleIdx[n.Title] = append(titleIdx[n.Title], id)
+		}
+		for _, a := range n.Aliases() {
+			if a != "" {
+				aliasIdx[a] = append(aliasIdx[a], id)
+			}
+		}
+	}
+	return titleIdx, aliasIdx
+}
+
+// resolveNameIndex 从 title/alias 索引解析 ref 的尽可能佳目标 ID：
+// 优先 title（节点规范名 > 别名）；同级别取 ID 字典序最小（确定性，图不可变）。
+// 无可解析目标返回 ""（调用方按悬空处理）。
+func resolveNameIndex(titleIdx, aliasIdx map[string][]string, ref string) string {
+	if ids := titleIdx[ref]; len(ids) > 0 {
+		return minID(ids)
+	}
+	if ids := aliasIdx[ref]; len(ids) > 0 {
+		return minID(ids)
+	}
+	return ""
+}
+
+func minID(ids []string) string {
+	m := ids[0]
+	for _, s := range ids[1:] {
+		if s < m {
+			m = s
+		}
+	}
+	return m
 }
 
 // DanglingRef 一条悬空链接明细（v0.1.12，backlog §四 缺口①）。

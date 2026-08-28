@@ -125,7 +125,7 @@ touch 表 5000 条硬上限 / recent ring 32 / watch 快照 = 文件数 / 内存
 | LLM Wiki 画像 | v0.1.12 | `llm-wiki` 画像 + `ExcludedFiles` + watch 排除同源 |
 | bbolt 存储层 | v0.1.13 | SQLite → bbolt 四 bucket；无迁移；编译秒级 |
 | 性能 P1/P2/P5/P8 | v0.1.13 | 增量写 / mmap+NoSync / 幽灵过滤 O(1) / 读不阻塞 |
-| 潜在关联候选清单 | v0.1.13 | `graph.PotentialLinks` + `GET /api/suggest-links`（未落图） |
+| 潜在关联候选清单 | v0.1.13/v0.2.1 | `graph.PotentialLinks` + `GET /api/suggest-links`（未落图）+ **MCP `graph.suggest`**（v0.2.1 暴露） |
 | touch 行为信号子系统 | v0.1.14 | 独立 touch store + digest（计数/间隔双触发 + 启动补查）+ ack + MCP seren.touch_digest |
 | 无库启动 + 配库 | v0.1.15 | 空库 serve + `POST /api/vault` 配库/换库 + 优雅退出 + OSC 8 链接 |
 

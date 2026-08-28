@@ -88,7 +88,8 @@ package main
 
 import (
 	"context"
-	cryptorand "crypto/rand"
+	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -116,7 +117,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.2.0"
+const version = "v0.2.1"
 
 func main() {
 	code := run(os.Args[1:])
@@ -194,6 +195,7 @@ func usageFor(cmd string) {
 			"  --vault-name N Obsidian vault name (obsidian:// jump)\n" +
 			"  --repo <name>  Orca repo name (orca-note:// jump)\n" +
 			"  --token <t>    auth token (default auto-generated)\n" +
+			"  --pid-file <p> write own PID to <p> on start, remove on clean exit (managed-launch handle)\n" +
 			"  --watch-off    disable auto watch\n" +
 			"  --watch-interval N  poll seconds (default 10)\n" +
 			"  --watch-throttle N  refresh throttle seconds (default 60)"
@@ -332,8 +334,10 @@ func redirectForGraph(docs []*adapter.Document, renames map[string]string) []*ad
 }
 
 // parseSource 统一加载（error 版，供 refresh 复用）：返回 Document 列表与源描述。
+// v0.2.1：--db 加载前校验 build 是否过期（binary 版本或画像签名变化）——过期 → 强制
+// 全量重析，否则升级后的解析规则/画像排除不生效（增量复用 mtime/size 未变文件）。
 func parseSource(vault string, p *adapter.VaultProfile, dbFile string) ([]*adapter.Document, string, error) {
-	if dbFile != "" {
+	if dbFile != "" && !storeStale(dbFile, p) {
 		docs, err := store.Load(dbFile)
 		if err != nil {
 			return nil, "", fmt.Errorf("read store failed: %w", err)
@@ -359,13 +363,42 @@ func parseSource(vault string, p *adapter.VaultProfile, dbFile string) ([]*adapt
 	return docs, "obsidian:" + vault, nil
 }
 
+// profileSignature 对画像做稳定签名（sha256 hex）：画像任一字段变（如新增排除）→ 签名变。
+// storeStale 据此在下次加载时强制全量重析，让"改画像"自动生效（无需手动 seren index）。
+func profileSignature(p *adapter.VaultProfile) string {
+	if p == nil {
+		return ""
+	}
+	s, err := adapter.MarshalProfile(p)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// storeStale 判断 store 是否过期：binary 版本或画像签名变化 → 需强制全量重析（否则增量
+// 复用 mtime/size 未变的旧文档，升级/改画像后的新规则不生效）。
+func storeStale(dbPath string, p *adapter.VaultProfile) bool {
+	if store.LoadParserVersion(dbPath) != version {
+		return true
+	}
+	if store.LoadProfileSignature(dbPath) != profileSignature(p) {
+		return true
+	}
+	return false
+}
+
 // refreshParse 刷新专用解析（v0.1.6 快照增量优化）：
 //
 //	Obsidian 源且已有旧状态 → ParseVaultIncremental（复用 mtime/size 未变文件，
 //	只重解析变更/新增；返回 reused 计数供日志）；其余（--db 回读 / 虎鲸 /
 //	首次全量）→ parseSource。语义与全量解析等价（见 adapter/obsidian.go）。
 func refreshParse(vault string, p *adapter.VaultProfile, flags map[string]string, old []*adapter.Document) (docs []*adapter.Document, reused int, src string, err error) {
-	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
+	// v0.2.1：build 过期（binary 版本或画像签名变化）→ 强制全量重析（否则增量复用旧解析结果，
+	// 升级/改画像后的规则不生效——曾导致反斜杠 dangling 残留、新排除不生效）。
+	stale := storeStale(storePathFor(vault, flags["store"]), p)
+	if !stale && flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
 		docs, reused, err = adapter.ParseVaultIncremental(vault, p, old)
 		return docs, reused, "obsidian:" + vault, err
 	}
@@ -383,6 +416,21 @@ func storePathFor(vault string, storeFlag string) string {
 		base = filepath.Dir(vault)
 	}
 	return store.DBPath(base)
+}
+
+// writePIDFile 原子写入当前进程 PID 到 path（temp+rename，覆盖陈旧文件），
+// 目录不存在则创建。供 managed 启动方（Obsidian 插件）读取/清理。v0.2.1。
+func writePIDFile(path string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path) // 原子替换：Windows 上 Go 的 Rename 覆盖已存在目标
 }
 
 // touchPathFor 计算 touch 独立 store 路径（§3.7，v0.1.14）：与图库同源派生，
@@ -443,6 +491,8 @@ func cmdRefresh(args []string) int {
 	if err := store.Save(storePath, docs); err != nil {
 		fatal("persist failed: %v", err)
 	}
+	_ = store.SaveParserVersion(storePath, version)                // 记解析器版本（v0.2.1，升级失效）
+	_ = store.SaveProfileSignature(storePath, profileSignature(p)) // 记画像签名（改画像自动重析）
 
 	if flags["json"] != "" {
 		// --json：复用 syncpkg.Result 结构体（含 Changes/Renames 明细）。为可读，
@@ -577,6 +627,8 @@ func cmdIndex(args []string) int {
 		if err := store.Save(dbPath, docs); err != nil {
 			fatal("persist failed: %v", err)
 		}
+		_ = store.SaveParserVersion(dbPath, version)                // 记解析器版本（v0.2.1，升级失效）
+		_ = store.SaveProfileSignature(dbPath, profileSignature(p)) // 记画像签名（改画像自动重析）
 		fmt.Printf("persisted: %s\n", dbPath)
 	}
 	return 0
@@ -745,9 +797,18 @@ func buildServeState(env *serveEnv) (*web.VaultState, error) {
 	}
 	storePath := storePathFor(vault, flags["store"])
 	// 刷新闭包：重解析 → diff → 改名迁移 → 写回 → 换图（成功清 pending）
-	baseRefresh := refreshFunc(vault, p, flags)
+	baseRefresh := refreshFunc(vault, p, flags, false)
 	refreshFn := func() (*syncpkg.Result, *graph.Graph, error) {
 		res, ng, err := baseRefresh()
+		if err == nil {
+			env.pending.Store(false)
+		}
+		return res, ng, err
+	}
+	// 全量重建闭包（v0.2.1，POST /api/rebuild）：忽略增量、重新解析整库
+	baseRebuild := refreshFunc(vault, p, flags, true)
+	rebuildFn := func() (*syncpkg.Result, *graph.Graph, error) {
+		res, ng, err := baseRebuild()
 		if err == nil {
 			env.pending.Store(false)
 		}
@@ -765,7 +826,7 @@ func buildServeState(env *serveEnv) (*web.VaultState, error) {
 	}
 	st := &web.VaultState{
 		G: g, P: p, Source: src, VaultName: vaultName, OrcaRepo: orcaRepo,
-		Refresh: refreshFn, Touch: touchFn,
+		Refresh: refreshFn, Rebuild: rebuildFn, Touch: touchFn,
 		IsPending: func() bool { return env.pending.Load() },
 	}
 	// 埋点只读统计（幽灵过滤跨图库，双路径）
@@ -819,7 +880,7 @@ func (env *serveEnv) startWatch(srv *web.Server) {
 	if adapter.IsOrcaDB(vault) {
 		check = watch.NewOrcaChecker(vault)
 	} else {
-		check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles)
+		check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles, p.ExcludedPrefixes)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	env.cancel = cancel
@@ -852,10 +913,20 @@ func cmdServe(args []string) int {
 	token := flags["token"]
 	if token == "" {
 		buf := make([]byte, 16)
-		if _, err := cryptorand.Read(buf); err != nil {
+		if _, err := crand.Read(buf); err != nil {
 			fatal("token generation failed: %v", err)
 		}
 		token = hex.EncodeToString(buf)
+	}
+
+	// v0.2.1：--pid-file 供 managed 启动方（Obsidian 插件）可靠获得/清理本进程。
+	// 启动即写（原子替换，覆盖陈旧 pid 文件），优雅退出时删除；硬杀残留的陈旧
+	// pid 文件由插件侧自愈读取校验后清理（见 serendipity-obsidian 交接说明）。
+	pidFile := flags["pid-file"]
+	if pidFile != "" {
+		if err := writePIDFile(pidFile); err != nil {
+			log.Printf("warning: write pid file %s: %v", pidFile, err)
+		}
 	}
 
 	env := &serveEnv{
@@ -876,16 +947,38 @@ func cmdServe(args []string) int {
 		vault := env.vault
 		env.mu.Unlock()
 		if vault == "" {
-			return map[string]any{"digest": nil, "available": false}, nil
+			return map[string]any{"digest": nil, "available": false, "total": 0, "targets": []store.TouchRow{}, "sources": []store.TouchRow{}}, nil
 		}
 		touchPath := touchPathFor(vault)
+		storePath := storePathFor(vault, flags["store"])
 		d, err := store.LatestDigest(touchPath)
-		if err != nil || d == nil {
-			return d, err
+		if err != nil {
+			return nil, err
+		}
+		// v0.2.1 反馈 #1：digest（窗口摘要）与累计统计(ycle 口径)一起返回——
+		// AI 不会只看到 null，总有累计上下文；窗口未触发时 digest 为 null 但 total/targets/sources 有值。
+		total, targets, sources, serr := store.TouchStats(touchPath, storePath, 10)
+		if serr != nil {
+			return nil, serr
 		}
 		return map[string]any{
-			"digest": d, "available": store.DigestAvailable(touchPath),
+			"digest": d, "available": d != nil && store.DigestAvailable(touchPath),
+			"total": total, "targets": targets, "sources": sources,
 		}, nil
+	})
+	// 累计点击统计（v0.2.1，反馈 #1）：等价 REST /api/touch/stats，补 MCP 侧的"非空"视角。
+	mcpSrv.SetTouchStats(func() (any, error) {
+		env.mu.Lock()
+		vault := env.vault
+		env.mu.Unlock()
+		if vault == "" {
+			return map[string]any{"total": 0, "targets": []store.TouchRow{}, "sources": []store.TouchRow{}}, nil
+		}
+		total, targets, sources, err := store.TouchStats(touchPathFor(vault), storePathFor(vault, flags["store"]), 10)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"total": total, "targets": targets, "sources": sources}, nil
 	})
 	srv.SetMCP(mcpSrv, true)
 
@@ -988,6 +1081,11 @@ func cmdServe(args []string) int {
 		if err := httpSrv.Shutdown(ctx); err != nil {
 			log.Printf("shutdown timed out: %v", err)
 		}
+		if pidFile != "" {
+			if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+				log.Printf("warning: remove pid file: %v", err)
+			}
+		}
 	}()
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fatal("serve failed: %v", err)
@@ -1014,10 +1112,11 @@ func toWebDigestTargets(ts []store.DigestTarget) []web.DigestTarget {
 	return out
 }
 
-// refreshFunc 构造 Web 端的刷新闭包：重解析 → 对账 diff → 改名迁移（合并持久化
+// refreshFunc 构造 Web 端的刷新/重建闭包：重解析 → 对账 diff → 改名迁移（合并持久化
 // 映射 + touch 迁移 + renames 落盘）→ 写回存储（原始 Refs）→ 返回 diff 结果与
 // 刷新后的新图（建图叠加重定向）。Store 路径与 CLI refresh 一致。
-func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string) web.RefreshFunc {
+// forceFull=true → POST /api/rebuild 用：忽略增量复用、重新解析整库（强制全量重建）。
+func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string, forceFull bool) web.RefreshFunc {
 	storePath := storePathFor(vault, flags["store"])
 	return func() (*syncpkg.Result, *graph.Graph, error) {
 		old, err := store.Load(storePath)
@@ -1028,9 +1127,17 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read rename map failed: %w", err)
 		}
-		docs, _, _, err := refreshParse(vault, p, flags, old)
-		if err != nil {
-			return nil, nil, err
+		var docs []*adapter.Document
+		if forceFull {
+			docs, _, err = parseSource(vault, p, "") // 全量重建：从库重析，无视增量
+			if err != nil {
+				return nil, nil, err
+			}
+		} else {
+			docs, _, _, err = refreshParse(vault, p, flags, old)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		res := syncpkg.Diff(old, docs)
 		// 改名迁移（v0.1.5，修订 #8）：见 cmdRefresh 同段注释
@@ -1044,6 +1151,8 @@ func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string)
 		if err := store.Save(storePath, docs); err != nil {
 			return nil, nil, fmt.Errorf("persist failed: %w", err)
 		}
+		_ = store.SaveParserVersion(storePath, version)                // 记解析器版本（v0.2.1，升级失效）
+		_ = store.SaveProfileSignature(storePath, profileSignature(p)) // 记画像签名（改画像自动重析）
 		return res, graph.Build(redirectForGraph(docs, merged)), nil
 	}
 }

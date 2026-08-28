@@ -76,7 +76,7 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("initialize serverInfo 错误: %v", init["serverInfo"])
 	}
 
-	// tools/list → 9 工具 + readOnlyHint + roam.q required
+	// tools/list → 11 工具 + readOnlyHint + roam.q required
 	r = callTool(t, srv, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	var tl struct {
 		Tools []struct {
@@ -90,8 +90,8 @@ func TestMCPLifecycle(t *testing.T) {
 		} `json:"tools"`
 	}
 	json.Unmarshal(r.Result, &tl)
-	if len(tl.Tools) != 9 {
-		t.Fatalf("应有 9 个 tools, got %d", len(tl.Tools))
+	if len(tl.Tools) != 11 {
+		t.Fatalf("应有 11 个 tools, got %d", len(tl.Tools))
 	}
 	names := map[string]bool{}
 	for _, x := range tl.Tools {
@@ -111,7 +111,7 @@ func TestMCPLifecycle(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar", "graph.community", "seren.touch_digest", "seren.state"} {
+	for _, want := range []string{"graph.stats", "graph.roam", "graph.random", "graph.relation", "graph.node", "graph.similar", "graph.community", "graph.suggest", "seren.touch_digest", "seren.touch_stats", "seren.state"} {
 		if !names[want] {
 			t.Fatalf("tools 缺 %s", want)
 		}
@@ -192,14 +192,40 @@ func TestMCPLifecycle(t *testing.T) {
 		t.Fatalf("community 应返回有效社区: %+v", cmRes)
 	}
 
-	// seren.state → configured:true, tools=9
-	r = callTool(t, srv, `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"seren.state","arguments":{}}}`)
+	// graph.suggest → 潜在关联候选（带共享邻居证据 + 端点标题,反馈 #5）
+	r = callTool(t, srv, `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"graph.suggest","arguments":{"k":5}}}`)
+	var sg struct{ Content []struct{ Text string } }
+	json.Unmarshal(r.Result, &sg)
+	var sgOut struct {
+		Count   int `json:"count"`
+		Results []struct {
+			A          string   `json:"a"`
+			B          string   `json:"b"`
+			ATitle     string   `json:"a_title"`
+			BTitle     string   `json:"b_title"`
+			Algorithms []string `json:"algorithms"`
+			Shared     []string `json:"shared"`
+		} `json:"results"`
+	}
+	json.Unmarshal([]byte(sg.Content[0].Text), &sgOut)
+	if len(sgOut.Results) == 0 || len(sgOut.Results[0].Shared) == 0 {
+		t.Fatalf("suggest 应返回带共享邻居的候选: %+v", sgOut)
+	}
+	if sgOut.Results[0].ATitle == "" || sgOut.Results[0].BTitle == "" {
+		t.Fatalf("suggest 候选应带 a_title/b_title: %+v", sgOut.Results[0])
+	}
+	if len(sgOut.Results[0].Algorithms) == 0 {
+		t.Fatalf("suggest 候选 algorithms 应为数组(反馈 #10 观察): %+v", sgOut.Results[0].Algorithms)
+	}
+
+	// seren.state → configured:true, tools=11
+	r = callTool(t, srv, `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"seren.state","arguments":{}}}`)
 	var stRes struct{ Content []struct{ Text string } }
 	json.Unmarshal(r.Result, &stRes)
 	var stateOut map[string]any
 	json.Unmarshal([]byte(stRes.Content[0].Text), &stateOut)
-	if stateOut["configured"] != true || stateOut["tools"].(float64) != 9 {
-		t.Fatalf("state 应 configured=true, tools=9, got %+v", stateOut)
+	if stateOut["configured"] != true || stateOut["tools"].(float64) != 11 {
+		t.Fatalf("state 应 configured=true, tools=11, got %+v", stateOut)
 	}
 }
 
@@ -209,7 +235,9 @@ func TestMCPPrompt(t *testing.T) {
 
 	// prompts/list → 含 seren_orientation
 	r := callTool(t, srv, `{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}`)
-	var pl struct{ Prompts []struct{ Name, Description string } }
+	var pl struct {
+		Prompts []struct{ Name, Description string }
+	}
 	json.Unmarshal(r.Result, &pl)
 	found := false
 	for _, p := range pl.Prompts {
@@ -273,9 +301,34 @@ func TestMCPServerNotConfigured(t *testing.T) {
 
 	// graph.stats → isError（引导错误）
 	r = callTool(t, srv, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"graph.stats","arguments":{}}}`)
-	var er struct{ IsError bool `json:"isError"` }
+	var er struct {
+		IsError bool `json:"isError"`
+	}
 	json.Unmarshal(r.Result, &er)
 	if !er.IsError {
 		t.Fatalf("未配库调用 graph.stats 应 isError, got %+v", r.Result)
+	}
+}
+
+// seren.touch_stats（v0.2.1 反馈 #1）→ 累计点击统计（total/targets/sources）。
+func TestMCPServerTouchStats(t *testing.T) {
+	srv := testServer(t)
+	srv.SetTouchStats(func() (any, error) {
+		return map[string]any{
+			"total":   22,
+			"targets": []map[string]any{{"id": "人物_015", "count": 5}},
+			"sources": []map[string]any{{"id": "query", "count": 3}},
+		}, nil
+	})
+	r := callTool(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"seren.touch_stats","arguments":{}}}`)
+	var ts struct{ Content []struct{ Text string } }
+	json.Unmarshal(r.Result, &ts)
+	var out struct {
+		Total   int              `json:"total"`
+		Targets []map[string]any `json:"targets"`
+	}
+	json.Unmarshal([]byte(ts.Content[0].Text), &out)
+	if out.Total != 22 || len(out.Targets) != 1 || out.Targets[0]["id"] != "人物_015" {
+		t.Fatalf("touch_stats 应返回累计统计: %+v", out)
 	}
 }
