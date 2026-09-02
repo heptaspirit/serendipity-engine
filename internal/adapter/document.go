@@ -19,12 +19,3 @@ type Document struct {
 	Tags    []string  // frontmatter tags（v1 标签锚定通道）
 	Text    string    // 正文全文（去 frontmatter）——全文 LIKE 降级兜底用（决策 #10）
 }
-
-// ExcludedDirs 是扫描时需要跳过的工具目录（不进图）。
-var ExcludedDirs = map[string]bool{
-	".obsidian": true,
-	".agents":   true,
-	".dsh":      true,
-	".trash":    true,
-	".git":      true,
-}

@@ -4,6 +4,7 @@ package adapter
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestProfileLLMWiki(t *testing.T) {
 	if p.Name != "llm-wiki" {
 		t.Fatalf("name: %s", p.Name)
 	}
-	if !containsStr(p.ExcludedFiles, "index.md") || !containsStr(p.ExcludedFiles, "AGENTS.md") {
+	if !slices.Contains(p.ExcludedFiles, "index.md") || !slices.Contains(p.ExcludedFiles, "AGENTS.md") {
 		t.Fatalf("ExcludedFiles 应含 index.md/AGENTS.md: %v", p.ExcludedFiles)
 	}
 	// 继承 default-obsidian 的默认（TitleKeys/AliasKeys/TagKeys/TypeField）

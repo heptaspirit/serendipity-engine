@@ -91,18 +91,12 @@ type orcaBlock struct {
 	left     sql.NullInt64  // 前兄弟指针（页内顺序链）
 }
 
-// orcaRef 一条 BlockRef：引用目标 + 引用别名（type=2 带属性引用时的标签）。
-type orcaRef struct {
-	t     int64
-	alias string
-}
-
 // orcaDB 解析上下文：块表 + 子块索引 + 别名 + 引用 + 所属页面缓存。
 type orcaDB struct {
 	blocks map[int64]*orcaBlock
 	kids   map[int64][]int64   // parent id → 子块 id（已按 left 链排序）
 	alias  map[int64][]string  // block id → 别名（title）
-	refs   map[int64][]orcaRef // f → 引用列表
+	refs   map[int64][]int64   // f → 引用目标列表（BlockRef 的 t）
 	owner  map[int64]int64     // block id → 所属页面块 id；-1 = 游离块（缓存）
 }
 
@@ -124,7 +118,7 @@ func ParseOrcaDB(dbPath string) ([]*Document, error) {
 		blocks: map[int64]*orcaBlock{},
 		kids:   map[int64][]int64{},
 		alias:  map[int64][]string{},
-		refs:   map[int64][]orcaRef{},
+		refs:   map[int64][]int64{},
 		owner:  map[int64]int64{},
 	}
 
@@ -174,19 +168,18 @@ func ParseOrcaDB(dbPath string) ([]*Document, error) {
 	}
 	rows.Close()
 
-	// 3. 引用（边）；alias 列暂存，未来可作边标签展示
-	rows, err = db.Query(`SELECT f, t, alias FROM BlockRef`)
+	// 3. 引用（边）
+	rows, err = db.Query(`SELECT f, t FROM BlockRef`)
 	if err != nil {
 		return nil, fmt.Errorf("读 BlockRef: %w", err)
 	}
 	for rows.Next() {
 		var f, t int64
-		var a sql.NullString
-		if err := rows.Scan(&f, &t, &a); err != nil {
+		if err := rows.Scan(&f, &t); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		o.refs[f] = append(o.refs[f], orcaRef{t: t, alias: a.String})
+		o.refs[f] = append(o.refs[f], t)
 	}
 	rows.Close()
 
@@ -278,12 +271,6 @@ func (o *orcaDB) documents() []*Document {
 		refSet := map[string]bool{}
 		addRef := func(t int64) {
 			pt, ok := o.pageOf(t)
-			if !ok {
-				// 目标是游离块：它自己是文档
-				if _, isDoc := docs[t]; isDoc {
-					pt, ok = t, true
-				}
-			}
 			if !ok || pt == id {
 				return // 悬空 / 页内自环
 			}
@@ -297,8 +284,8 @@ func (o *orcaDB) documents() []*Document {
 		if b := o.blocks[id]; b != nil && b.text.Valid && strings.TrimSpace(b.text.String) != "" {
 			d.Text += b.text.String
 		}
-		for _, r := range o.refs[id] {
-			addRef(r.t)
+		for _, rt := range o.refs[id] {
+			addRef(rt)
 		}
 		seen := map[int64]bool{id: true}
 		var walk func(pid int64)
@@ -316,8 +303,8 @@ func (o *orcaDB) documents() []*Document {
 				if kb != nil && kb.text.Valid && strings.TrimSpace(kb.text.String) != "" {
 					d.Text += kb.text.String
 				}
-				for _, r := range o.refs[kid] {
-					addRef(r.t)
+				for _, rt := range o.refs[kid] {
+					addRef(rt)
 				}
 				walk(kid)
 			}

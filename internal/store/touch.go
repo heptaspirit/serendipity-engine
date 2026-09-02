@@ -376,7 +376,6 @@ func RenameTouch(dbPath string, renames map[string]string) error {
 var (
 	mLastSeq      = []byte("last_seq")        // 上次 digest 时的 touch seq（窗口起点）
 	mLastDigestTS = []byte("last_digest_ts")  // 上次 digest 生成时间（unix 秒）
-	mLastDigestID = []byte("last_digest_id")  // 上次 digest 唯一 id
 	mLastDigest   = []byte("last_digest")     // 上次 digest 完整内容（JSON）
 	mLastAckID    = []byte("last_ack_id")     // 已读 digest id（ack）
 )
@@ -534,9 +533,6 @@ func MaybeDigest(touchPath, graphPath string, cfg TouchConfig) (bool, error) {
 			return err
 		}
 		if err := mb.Put(mLastDigestTS, []byte(strconv.FormatInt(dig.GeneratedAt, 10))); err != nil {
-			return err
-		}
-		if err := mb.Put(mLastDigestID, []byte(dig.ID)); err != nil {
 			return err
 		}
 		dbJSON, err := json.Marshal(dig)

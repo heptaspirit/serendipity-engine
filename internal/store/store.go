@@ -190,19 +190,6 @@ func open(dbPath string) (*bolt.DB, error) {
 	return bolt.Open(dbPath, 0o600, &bolt.Options{NoSync: true})
 }
 
-// ensureBuckets 建图库的三个 bucket（幂等；首次 Save/SaveRenames 时调用）。
-// 注：touch 于 v0.1.14 迁出独立 store（touch.go），图库不再持有 touch bucket。
-func ensureBuckets(db *bolt.DB) error {
-	return db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bDocs, bLinks, bRenames} {
-			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 // LoadRenames 读回改名迁移映射（v0.1.5，修订 #8）：renames bucket = 持久化的
 // 身份迁移层（old_id → new_id）。documents/links 存文件真相（原始 Refs），
 // 图构建时叠加本映射重定向——改名是持久身份事实，不能只在下一次刷新生效。

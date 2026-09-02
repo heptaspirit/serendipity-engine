@@ -32,6 +32,7 @@ import (
 	"embed"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -134,7 +135,7 @@ func LoadProfile(path string) (*VaultProfile, error) {
 // 此前 ExcludedName 只做全名精确匹配，裸名（排除 log.md 但写 `excluded_files: [log]`）
 // 匹配不上 "log.md"，解析器实际不排除（曾导致日志/索引页照进图）。
 func (p *VaultProfile) ExcludedName(name string) bool {
-	if containsStr(p.ExcludedFiles, name) {
+	if slices.Contains(p.ExcludedFiles, name) {
 		return true
 	}
 	// 裸名/大小写不敏感匹配：画像写 "log" 排除 "log.md"/"LOG.md"（Obsidian 常跑在
@@ -279,15 +280,6 @@ func ensureObsidianProfileTemplate(vault string) error {
 		return nil // 已存在，不覆盖用户配置
 	}
 	return os.WriteFile(path, []byte(ObsidianProfileTemplate()), 0o644)
-}
-
-// SaveProfile 把画像写为 YAML。
-func SaveProfile(path string, p *VaultProfile) error {
-	b, err := yaml.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o644)
 }
 
 // MarshalProfile 序列化为 YAML 文本。

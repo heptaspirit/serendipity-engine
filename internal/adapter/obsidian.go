@@ -40,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -74,7 +75,7 @@ func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() != "." && containsStr(p.ExcludedDirs, d.Name()) {
+			if d.Name() != "." && slices.Contains(p.ExcludedDirs, d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -134,7 +135,7 @@ func ParseVaultIncremental(root string, p *VaultProfile, old []*Document) ([]*Do
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() != "." && containsStr(p.ExcludedDirs, d.Name()) {
+			if d.Name() != "." && slices.Contains(p.ExcludedDirs, d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -427,13 +428,4 @@ func isPlaceholder(s string) bool {
 		return true
 	}
 	return placeholderRe.MatchString(s)
-}
-
-func containsStr(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

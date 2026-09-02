@@ -253,14 +253,6 @@ func (s *Server) SetVault(fn VaultFunc) {
 	s.Vault = fn
 }
 
-// Configured 当前是否已配库（G 非空 = 已配）。无库启动时 false，
-// /api/stats 返回 configured:false，前端据此显示选库引导。
-func (s *Server) Configured() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.G != nil
-}
-
 // ReplaceGraph 用新图整体替换内存图并递增 revision（手动 /api/refresh 与
 // 自动监听触发共用）。调用方须持有新图所有权。
 func (s *Server) ReplaceGraph(g *graph.Graph) {
@@ -293,20 +285,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/node", s.handleNode)
 	mux.HandleFunc("/api/communities", s.handleCommunities)
 	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/vault", s.handleVault) // v0.1.15 无库启动配库指令
-	mux.HandleFunc("/api/refresh", s.handleRefresh)
-	mux.HandleFunc("/api/rebuild", s.handleRebuild) // v0.2.1：全量重建（force re-parse）
-	mux.HandleFunc("/api/touch", s.handleTouch)
+	mux.HandleFunc("/api/vault", s.handleVault) // v0.1.15 无库启动配库指令（GET+POST 双方法）
+	mux.HandleFunc("POST /api/refresh", s.handleRefresh)
+	mux.HandleFunc("POST /api/rebuild", s.handleRebuild) // v0.2.1：全量重建（force re-parse）
+	mux.HandleFunc("POST /api/touch", s.handleTouch)
 	mux.HandleFunc("/api/touch/stats", s.handleTouchStats)
 	mux.HandleFunc("/api/touch/digest", s.handleTouchDigest)
-	mux.HandleFunc("/api/touch/digest/ack", s.handleTouchDigestAck)
+	mux.HandleFunc("POST /api/touch/digest/ack", s.handleTouchDigestAck)
 	if s.MCP != nil {
 		mux.HandleFunc("/mcp", s.handleMCP)
 		mux.HandleFunc("/api/mcp/status", s.handleMCPStatus)
 		mux.HandleFunc("/api/mcp/enable", s.handleMCPEnable)
 		mux.HandleFunc("/api/mcp/disable", s.handleMCPDisable)
 	}
-	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/{$}", s.handleIndex) // 仅精确根路径（静态单页，方法模式由 mux 兜底 405）
 	return s.auth(mux)
 }
 
@@ -475,10 +467,6 @@ func (s *Server) handleMCPDisable(w http.ResponseWriter, r *http.Request) {
 // （index.html 的 const __API_TOKEN__，fetch 包装自动携带）。
 // 禁用缓存：前端迭代频繁，避免浏览器缓存旧页面导致"点了没反应"。
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	b, _ := staticFS.ReadFile("static/index.html")
 	out := strings.ReplaceAll(string(b), "__SEREN_TOKEN__", s.Token)
@@ -489,10 +477,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // handleTouch POST /api/touch：反馈埋点（点击节点 = touch）。
 // 克制设计：仅记录，不演化边权；写失败静默（埋点不影响主流程）。
 func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, map[string]string{"error": "method not allowed"})
-		return
-	}
 	if s.Touch == nil {
 		writeJSON(w, map[string]string{"error": "touch unavailable"})
 		return
@@ -543,10 +527,6 @@ type refreshResp struct {
 
 // handleRefresh POST /api/refresh：调用刷新闭包 → 替换内存图 → 返回 diff 摘要。
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, map[string]string{"error": "method not allowed"})
-		return
-	}
 	if s.Refresh == nil {
 		writeJSON(w, map[string]string{"error": "refresh unavailable"})
 		return
@@ -557,10 +537,6 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 // handleRebuild POST /api/rebuild：全量重建（v0.2.1，GUI/插件"重建库"按钮）——
 // 忽略增量复用、重新解析整库、写回存储并换图。供"强制全量"逃生口用。
 func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, map[string]string{"error": "method not allowed"})
-		return
-	}
 	if s.Rebuild == nil {
 		writeJSON(w, map[string]string{"error": "rebuild unavailable"})
 		return
@@ -843,10 +819,6 @@ func (s *Server) handleTouchDigest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTouchDigestAck(w http.ResponseWriter, r *http.Request) {
 	if s.TouchAck == nil {
 		writeJSON(w, map[string]string{"error": "touch digest ack unavailable"})
-		return
-	}
-	if r.Method != http.MethodPost {
-		writeJSON(w, map[string]string{"error": "method not allowed"})
 		return
 	}
 	var body struct {

@@ -41,8 +41,8 @@ package sync
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path"
 	"sort"
-	"strings"
 	"time"
 
 	"serendipity-engine/internal/adapter"
@@ -342,11 +342,11 @@ func contentHash(d *adapter.Document) string {
 //  同目录 = 0.9 基准；再按 basename 公共前缀长度加权（0~0.1）。
 //  目录不同 = 0（改名通常不动目录；跨目录移动不判改名，保守）。
 func pathSimilarity(a, b string) float64 {
-	da, db := pathDir(a), pathDir(b)
+	da, db := path.Dir(a), path.Dir(b)
 	if da != db {
 		return 0
 	}
-	ba, bb := baseName(a), baseName(b)
+	ba, bb := path.Base(a), path.Base(b)
 	common := 0
 	for i := 0; i < len(ba) && i < len(bb); i++ {
 		if ba[i] != bb[i] {
@@ -355,20 +355,6 @@ func pathSimilarity(a, b string) float64 {
 		common++
 	}
 	return 0.9 + 0.1*float64(common)/float64(max(len(ba), len(bb)))
-}
-
-func pathDir(p string) string {
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[:i]
-	}
-	return ""
-}
-
-func baseName(p string) string {
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[i+1:]
-	}
-	return p
 }
 
 // MergeRenames 合并持久化映射与本次新检测到的改名：

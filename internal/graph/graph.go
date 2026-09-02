@@ -3,6 +3,7 @@
 package graph
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -14,11 +15,6 @@ type Node struct {
 	ID    string
 	Title string
 	Doc   *adapter.Document
-}
-
-// Edge 是去重后的无向边（v1 关联语义）。
-type Edge struct {
-	A, B string
 }
 
 // Graph 不可变（Build 后只读；刷新整体替换新图，不原地改）——
@@ -109,22 +105,12 @@ func buildNameIndexes(nodes map[string]*Node) (titleIdx, aliasIdx map[string][]s
 // 无可解析目标返回 ""（调用方按悬空处理）。
 func resolveNameIndex(titleIdx, aliasIdx map[string][]string, ref string) string {
 	if ids := titleIdx[ref]; len(ids) > 0 {
-		return minID(ids)
+		return slices.Min(ids)
 	}
 	if ids := aliasIdx[ref]; len(ids) > 0 {
-		return minID(ids)
+		return slices.Min(ids)
 	}
 	return ""
-}
-
-func minID(ids []string) string {
-	m := ids[0]
-	for _, s := range ids[1:] {
-		if s < m {
-			m = s
-		}
-	}
-	return m
 }
 
 // DanglingRef 一条悬空链接明细（v0.1.12，backlog §四 缺口①）。
@@ -304,9 +290,9 @@ func (g *Graph) Resolve(q string) []Match {
 			out = append(out, Match{ID: id, Level: MatchExact})
 		case n.Title == q:
 			out = append(out, Match{ID: id, Level: MatchTitle})
-		case contains(n.Aliases(), q):
+		case slices.Contains(n.Aliases(), q):
 			out = append(out, Match{ID: id, Level: MatchAlias})
-		case contains(n.Doc.Tags, q):
+		case slices.Contains(n.Doc.Tags, q):
 			out = append(out, Match{ID: id, Level: MatchTag})
 		case strings.Contains(id, q) || strings.Contains(n.Title, q):
 			out = append(out, Match{ID: id, Level: MatchLike})
@@ -315,15 +301,6 @@ func (g *Graph) Resolve(q string) []Match {
 	// 按级别降序（同级别顺序不保证——展示层再按度排序）
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Level > out[j].Level })
 	return out
-}
-
-func contains(ss []string, q string) bool {
-	for _, s := range ss {
-		if s == q {
-			return true
-		}
-	}
-	return false
 }
 
 // TextHit 全文 LIKE 命中（降级策略输出，决策 #10）。

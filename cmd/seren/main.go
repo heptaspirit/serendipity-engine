@@ -94,11 +94,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -594,7 +596,7 @@ func cmdIndex(args []string) int {
 	for t := range typeCount {
 		types = append(types, t)
 	}
-	sortStrings(types)
+	sort.Strings(types)
 	for _, t := range types {
 		fmt.Printf("  %-8s %d\n", t, typeCount[t])
 	}
@@ -984,10 +986,7 @@ func cmdServe(args []string) int {
 
 	// 配库闭包（POST /api/vault）：opts 覆盖启动 flags 的 profile/store/db
 	srv.SetVault(func(path string, opts web.VaultOpts) (*web.VaultState, error) {
-		merged := map[string]string{}
-		for k, v := range flags {
-			merged[k] = v
-		}
+		merged := maps.Clone(flags)
 		if opts.ProfileName != "" {
 			merged["profile-name"] = opts.ProfileName
 		}
@@ -1282,14 +1281,6 @@ func clickableLink(url string) string {
 		return url
 	}
 	return "\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\"
-}
-
-func sortStrings(ss []string) {
-	for i := 1; i < len(ss); i++ {
-		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
-			ss[j], ss[j-1] = ss[j-1], ss[j]
-		}
-	}
 }
 
 func fint(flags map[string]string, k string, def int) int {

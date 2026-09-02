@@ -13,14 +13,6 @@ import (
 	"serendipity-engine/internal/graph"
 )
 
-// Dim 是单个候选节点的四维原始分。
-type Dim struct {
-	PPR  float64 // 结构分：查询锚定 PPR
-	Act  float64 // 激活分：扩散值
-	Heat float64 // 时效分：v1 恒 0
-	Dep  float64 // 依赖分：v1 恒 0（独立为路径排序，不混入）
-}
-
 // Result 是融合排序后的输出项（含可解释路径）。
 type Result struct {
 	ID    string   `json:"id"`
