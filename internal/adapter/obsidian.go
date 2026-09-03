@@ -34,6 +34,8 @@ package adapter
 //   v0.1.1  OKF 通用格式落地：markdown 链接入图、type 字段作节点类型、
 //           description/resource 并入正文。
 //   v0.1.2  同名文件 ID 消歧（重名文档改用相对路径 ID，防持久化 UNIQUE 冲突）。
+//   v0.2.2  frontmatter 改由 yaml.v3 解码（替换手写 mini-YAML）：支持块标量/引号
+//           转义/嵌套缩进列表；解析器版本 bump（v0.2.1 → v0.2.2）使旧 store 全量重析。
 // ============================================================================
 
 import (
@@ -43,6 +45,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -50,8 +54,6 @@ var (
 	mdLinkRe     = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 	schemeRe     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
 	h1Re         = regexp.MustCompile(`(?m)^#\s+(.+?)\s*$`)
-	tagRe        = regexp.MustCompile(`(?m)^\s*-\s*(.+?)\s*$`)
-	kvRe         = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$`)
 	inlineListRe = regexp.MustCompile(`^\s*\[(.*)\]\s*$`)
 
 	// 链接提取前置清洗（v0.1.13，反馈 #1）：代码块/行内代码里的 [[...]] 不是真链接，
@@ -208,8 +210,18 @@ func okfMetaText(meta map[string]string, lists map[string][]string, p *VaultProf
 
 // ---- frontmatter ----
 
-// parseFrontmatter 解析开头的 --- 块，返回 kv 与列表型字段。
-// 已知限制：不支持 YAML 块标量（| > 多行值）——description 建议单行（OKF 规范同）。
+// parseFrontmatter 解析开头的 --- 块为 kv 与列表型字段（v0.2.2：改由 yaml.v3 解码，
+// 替换手写 mini-YAML——旧版不支持块标量（| > 多行值）、引号转义、嵌套缩进列表，
+// description 只能单行（OKF 规范同））。
+// 语义与旧版对齐：
+//   - 只认顶层**字符串键**，且沿用旧版键字符集口径（^[A-Za-z_][A-Za-z0-9_]*$），
+//     数字/带空格/引号键不进 meta（避免改变画像 TypeByKey 前缀与键统计口径）；
+//   - 标量值一律存**原文文本**（字符串已按 YAML 解码——去引号/转义、块标量合并；
+//     数字/布尔保留源码 token 不转型，与旧版 raw text 一致）；null/空 → ""；
+//   - 顶层数组（内联 [a, b] 或 - 列表，含缩进形态）→ lists；同时 meta 落空串标记
+//     （旧版 kvRe 对 "key:" 空值行的行为，profile-detect 键统计口径不变）；
+//   - 嵌套映射忽略（仅空串标记）；重复键后者覆盖；整块 YAML 非法 → 空 meta/lists
+//     （解析健壮性优先：坏 frontmatter 不崩解析，当无 frontmatter 处理）。
 func parseFrontmatter(text string) (map[string]string, map[string][]string) {
 	meta := map[string]string{}
 	lists := map[string][]string{}
@@ -221,19 +233,51 @@ func parseFrontmatter(text string) (map[string]string, map[string][]string) {
 	if idx < 0 {
 		return meta, lists
 	}
-	block := rest[:idx]
-	var lastKey string
-	for _, line := range strings.Split(block, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if m := kvRe.FindStringSubmatch(line); m != nil {
-			lastKey = m[1]
-			val := strings.TrimSpace(m[2])
-			meta[lastKey] = strings.Trim(val, `"'`)
-		} else if m := tagRe.FindStringSubmatch(line); m != nil && lastKey != "" {
-			lists[lastKey] = append(lists[lastKey], strings.Trim(m[1], `"'`))
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(rest[:idx]), &doc); err != nil ||
+		doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return meta, lists
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return meta, lists
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		k, v := root.Content[i], root.Content[i+1]
+		if k.Tag != "!!str" || !plainKeyRe.MatchString(k.Value) {
+			continue // 非字符串 / 非旧版字符集键 → 忽略（维持画像规则既有口径）
+		}
+		key := k.Value
+		switch v.Kind {
+		case yaml.ScalarNode:
+			meta[key] = scalarText(v)
+		case yaml.SequenceNode:
+			meta[key] = "" // 旧版 kvRe 对空值行的标记（键统计口径）
+			for _, item := range v.Content {
+				if item.Kind == yaml.ScalarNode && item.Tag != "!!null" {
+					if s := scalarText(item); s != "" {
+						lists[key] = append(lists[key], s)
+					}
+				}
+			}
+		case yaml.MappingNode:
+			meta[key] = "" // 嵌套结构忽略，仅保留键存在标记
 		}
 	}
 	return meta, lists
+}
+
+// plainKeyRe 旧版 frontmatter 键字符集：yaml 键解出后按此过滤，带空格/短横/数字键
+// 不进入 meta（否则画像 TypeByKey 前缀规则与 profile-detect 键统计口径会漂移）。
+var plainKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// scalarText 取 yaml 标量的文本形态：!!str 已解码（去引号/转义、块标量合并换行）；
+// !!int/!!float/!!bool 等保留源码 token 原文——不转型，与旧版"存文件原文"一致。
+func scalarText(n *yaml.Node) string {
+	if n.Tag == "!!null" {
+		return ""
+	}
+	return n.Value
 }
 
 func stripFrontmatter(text string) string {

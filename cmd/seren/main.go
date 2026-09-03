@@ -118,7 +118,7 @@ import (
 )
 
 // version 语义化版本号；发布时同步 git tag（README 徽章版本号也在此次同步）。
-const version = "v0.2.1"
+const version = "v0.2.2"
 
 func main() {
 	code := run(os.Args[1:])

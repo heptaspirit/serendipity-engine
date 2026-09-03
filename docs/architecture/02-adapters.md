@@ -21,7 +21,10 @@
   `resource_keys`（并入正文可全文检索）、markdown 链接入图；`--profile-name okf`
   与 default-obsidian 等价。`index.md/log.md` 不默认结构类型化（真实库可能是正文）。
 - **同名文件消歧**：ID 撞车时从第二个改用相对路径 ID（v0.1.3，见 01-data-model）。
-- 已知限制：frontmatter 不支持 YAML 块标量（`|`/`>` 多行值）；wiki 链接大小写敏感。
+- frontmatter 由 yaml.v3 解码（v0.2.2 起，替换手写 mini-YAML）：支持块标量
+  （`|`/`>` 多行值）、引号转义、嵌套缩进列表；键字符集与旧版一致
+  （`^[A-Za-z_][A-Za-z0-9_]*$`），标量保留源码文本（不转型）。
+- 已知限制：wiki 链接大小写敏感。
 
 ## 3. 虎鲸 Orca Note（`orca.go`）—— 安全红线集中地
 
