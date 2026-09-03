@@ -3,7 +3,7 @@ module serendipity-engine
 go 1.26
 
 require (
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.0.0
 	github.com/vsuryav/leiden-go v0.0.0-20251120005855-0f56599dc139
 	go.etcd.io/bbolt v1.5.0
 	gopkg.in/yaml.v3 v3.0.1
