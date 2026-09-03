@@ -53,9 +53,28 @@ type SimilarResult struct {
 	Shared []string `json:"shared"` // 共同邻居 ID（证据："都链接了 X/Y"）
 }
 
+// commonNeighbors 计算候选节点 cid 与目标邻居集 nbSet 的共同邻居（证据）及同一
+// shared 集合的 Adamic-Adar（Σ1/log(deg)）/ Resource-Allocation（Σ1/deg）加权和。
+// similar（查看器，只要 AA 分）与 approx（候选清单，AA+RA+Jaccard）共用的底座。
+// shared 排序后返回（输出确定性）。nb 同时邻接目标与候选（两者互异）故 deg ≥ 2，
+// log/deg 无除零；度越大权重越低（高介数节点对所有都常见，区分度低）。
+func (g *Graph) commonNeighbors(cid string, nbSet map[string]bool) (shared []string, aa, ra float64) {
+	for _, nb := range g.adj[cid] {
+		if !nbSet[nb] {
+			continue
+		}
+		shared = append(shared, nb)
+		d := float64(max(2, len(g.adj[nb])))
+		aa += 1.0 / math.Log(d)
+		ra += 1.0 / d
+	}
+	sort.Strings(shared)
+	return shared, aa, ra
+}
+
 // Similar 返回与 id 结构相似的节点（Adamic-Adar，top k，降序）。
 // structuralTypes：结构类型名集合（画像 StructuralTypes，调用方传入——
-// 与 roam 的 FilterStructural 同口径，目录/机器节点不参与）。
+// 与 roam 同口径，目录/机器节点不参与）。
 // 排除：自身、直接邻居（互链 = 相关不是相似）、目录枢纽（deg ≥ 半数）、
 // 结构类型、空标题、孤立（无邻居，AA 恒 0）。
 // 得分 > 0（至少 1 个共享邻居）才进入候选；并列按 ID 稳定排序（v0.1.7 同款）。
@@ -96,23 +115,11 @@ func (g *Graph) Similar(id string, k int, structuralTypes map[string]bool) []Sim
 		if deg == 0 || deg >= hubThresh {
 			continue
 		}
-		// 共同邻居（证据）+ Adamic-Adar 度加权（v0.1.12）
-		shared := []string{}
-		score := 0.0
-		for _, nb := range g.adj[cid] {
-			if !nbSet[nb] {
-				continue
-			}
-			// 共同邻居的度。nb 同时邻接目标与候选（两者互异），故 deg ≥ 2，
-			// log(deg) > 0 无除零。度越大权重越低（高介数节点对所有都常见）。
-			w := 1.0 / math.Log(float64(max(2, len(g.adj[nb]))))
-			score += w
-			shared = append(shared, nb)
-		}
+		// 共同邻居（证据）+ Adamic-Adar 度加权（v0.1.12）——approx 共用同底座
+		shared, score, _ := g.commonNeighbors(cid, nbSet)
 		if len(shared) == 0 || score == 0 {
 			continue
 		}
-		sort.Strings(shared)
 		cands = append(cands, cand{cid, shared, score})
 	}
 	sort.Slice(cands, func(i, j int) bool {

@@ -89,7 +89,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
@@ -212,39 +211,14 @@ type Server struct {
 	recent []string   // 最近随机起点（防重复 ring，上限 32）
 }
 
-// New 创建 Web 服务；refresh/touch/touchStat 为 nil 时不注册对应端点。
-func New(g *graph.Graph, p *adapter.VaultProfile, source, vaultName, version string, refresh RefreshFunc, touch TouchFunc) *Server {
+// New 创建 Web 服务。图/画像与全套闭包是运行时状态（无库启动、配库/换库），
+// 经 ApplyVaultState 应用或经 Set* 注入——构造只带版本号（v0.1.15 无库启动后
+// New 的其余入参已全为死值，随 ponytail C/D 收口）。
+func New(version string) *Server {
 	return &Server{
-		G: g, P: p, Source: source, VaultName: vaultName, Version: version,
-		Refresh: refresh, Touch: touch,
-		rng: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15)),
+		Version: version,
+		rng:     roam.SeededRNG(0),
 	}
-}
-
-// SetTouchStats 注入埋点只读统计闭包（v0.1.11；New 后调用，避免改签名波及调用方）。
-func (s *Server) SetTouchStats(fn TouchStatsFunc) {
-	s.TouchStat = fn
-}
-
-// SetTouchDigest 注入 digest 查询闭包（§3.7，v0.1.14；New 后调用）。
-func (s *Server) SetTouchDigest(fn TouchDigestFunc) {
-	s.TouchDg = fn
-}
-
-// SetTouchAck 注入 digest 已读闭包（§3.7，v0.1.14；New 后调用）。
-func (s *Server) SetTouchAck(fn TouchAckFunc) {
-	s.TouchAck = fn
-}
-
-// SetDigestAvailable 注入 digest_available 查询（§3.7，v0.1.14；New 后调用）。
-func (s *Server) SetDigestAvailable(fn func() bool) {
-	s.DigAvail = fn
-}
-
-// SetIsPending 注入"有待刷新变化"查询（v0.1.12，roadmap #14）。non-nil 时
-// /api/stats 返回 is_pending；手动刷新后由 main 的刷新闭包清 pending。
-func (s *Server) SetIsPending(fn func() bool) {
-	s.IsPending = fn
 }
 
 // SetVault 注入配库闭包（无库启动 v0.1.15）：path + opts → 解析建图 → 完整状态。
@@ -496,8 +470,9 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	var excluded bool
 	if s.P != nil {
-		base := strings.TrimSuffix(body.Target, ".md")
-		excluded = s.P.ExcludedName(base) || s.P.ExcludedName(base+".md")
+		// 排除口径与图解析同源：ExcludedName 对 .md 免疫（画像写 "log" 或 "log.md"
+		// 都能排除），target 剥不剥 .md 一次查询即覆盖（v0.2.1 归一）
+		excluded = s.P.ExcludedName(strings.TrimSuffix(body.Target, ".md"))
 	}
 	s.mu.RUnlock()
 	if excluded {
@@ -605,7 +580,7 @@ func (s *Server) handleRelation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "node not found"})
 		return
 	}
-	rel := s.G.ComputeRelation(from, to, 0.7)
+	rel := s.G.ComputeRelation(from, to)
 	if rel == nil {
 		writeJSON(w, map[string]string{"error": "node not found"})
 		return
@@ -613,11 +588,7 @@ func (s *Server) handleRelation(w http.ResponseWriter, r *http.Request) {
 	// 路径节点 ID→标题（white-box：路径可读可点击）
 	pathNodes := make([]relationNode, 0, len(rel.Path))
 	for _, id := range rel.Path {
-		t := id
-		if n, ok := s.G.Node(id); ok && n.Title != "" {
-			t = n.Title
-		}
-		pathNodes = append(pathNodes, relationNode{ID: id, Title: t})
+		pathNodes = append(pathNodes, relationNode{ID: id, Title: s.titleOf(id)})
 	}
 	writeJSON(w, relationResp{Relation: rel, PathNodes: pathNodes})
 }
@@ -662,11 +633,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "node not found"})
 		return
 	}
-	structural := map[string]bool{}
-	for _, t := range s.P.StructuralTypes {
-		structural[t] = true
-	}
-	sims := s.G.Similar(id, k, structural)
+	sims := s.G.Similar(id, k, s.P.StructuralSet())
 	out := make([]similarItem, 0, len(sims))
 	for _, sm := range sims {
 		var titles []string
@@ -698,11 +665,7 @@ func (s *Server) handleSuggestLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.mu.RUnlock()
-	structural := map[string]bool{}
-	for _, t := range s.P.StructuralTypes {
-		structural[t] = true
-	}
-	links := s.G.PotentialLinks(2, structural)
+	links := s.G.PotentialLinks(s.P.StructuralSet())
 	// top-K 节流：per-node K=2 已限总量（≤2N），这里再按请求条数截断
 	if len(links) > k {
 		links = links[:k]
@@ -903,10 +866,7 @@ func (s *Server) handleHot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := atoiDefault(r.URL.Query().Get("n"), 20)
-	structural := map[string]bool{}
-	for _, t := range s.P.StructuralTypes {
-		structural[t] = true
-	}
+	structural := s.P.StructuralSet()
 	hubThresh := s.G.Stats().Nodes / 2
 
 	type hub struct {
@@ -962,30 +922,21 @@ type roamItem struct {
 	URI   string   `json:"uri,omitempty"`   // obsidian:// 或 orca-note:// 跳转（对应源）
 }
 
-// obsidianURI 拼 obsidian://open?vault=<名>&file=<相对路径>（去 .md，URL 编码）。
-func (s *Server) obsidianURI(path string) string {
+// uriFor 按源类型生成跳转 URI：虎鲸（OrcaRepo 非空）用块 ID 拼 orca-note://；
+// 否则 Obsidian 路径拼 obsidian://open（obsidianURI/orcaURI 曾各自成函数，
+// 现内联为 uriFor 的单入口分支——见 ponytail C/D）。缺条件返回 ""。
+func (s *Server) uriFor(path, id string) string {
+	if s.OrcaRepo != "" {
+		if id == "" {
+			return ""
+		}
+		return "orca-note://" + url.QueryEscape(s.OrcaRepo) + "/block?blockId=" + url.QueryEscape(id)
+	}
 	if s.VaultName == "" || path == "" {
 		return ""
 	}
 	file := strings.TrimSuffix(path, ".md")
 	return "obsidian://open?vault=" + url.QueryEscape(s.VaultName) + "&file=" + url.QueryEscape(file)
-}
-
-// orcaURI 拼 orca-note://<repo>/block?blockId=<id>（虎鲸跳转，v0.1.4；
-// 协议见 orcanote-agent-skills 的 orcanote-markdown skill：块链接用块 ID）。
-func (s *Server) orcaURI(id string) string {
-	if s.OrcaRepo == "" || id == "" {
-		return ""
-	}
-	return "orca-note://" + url.QueryEscape(s.OrcaRepo) + "/block?blockId=" + url.QueryEscape(id)
-}
-
-// uriFor 按源类型生成跳转 URI：虎鲸（OrcaRepo 非空）用块 ID；否则 Obsidian 路径。
-func (s *Server) uriFor(path, id string) string {
-	if s.OrcaRepo != "" {
-		return s.orcaURI(id)
-	}
-	return s.obsidianURI(path)
 }
 
 func (s *Server) toItems(results []score.Result) []roamItem {
@@ -1054,16 +1005,16 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	if !s.rlockGraph(w) {
 		return
 	}
+	defer s.mu.RUnlock()
 	opt := roam.Options{
 		// 可调参数：前端可从 /api/config 取白名单，这里统一钳制到安全范围
 		// （高阶内部项——跳数配额/PPR 阻尼/迭代次数——不对外暴露，保持默认）。
-		Top:              clampInt(vals, "top", 15, 1, 60),
-		Hops:             clampInt(vals, "hops", 3, 1, 5),
-		Lambda:           clampFloat(vals, "lambda", 0.7, 0, 1),
-		Theta:            clampFloat(vals, "theta", 0.1, 0, 1),
-		Alpha:            clampFloat(vals, "alpha", 0.5, 0, 1),
-		Beta:             clampFloat(vals, "beta", 0.5, 0, 1),
-		FilterStructural: true,
+		Top:    clampInt(vals, "top", 15, 1, 60),
+		Hops:   clampInt(vals, "hops", 3, 1, 5),
+		Lambda: clampFloat(vals, "lambda", 0.7, 0, 1),
+		Theta:  clampFloat(vals, "theta", 0.1, 0, 1),
+		Alpha:  clampFloat(vals, "alpha", 0.5, 0, 1),
+		Beta:   clampFloat(vals, "beta", 0.5, 0, 1),
 	}
 
 	// 随机漫步（v0.1.7）：?random=1 时忽略 q，roll 随机起点 + 簇。
@@ -1072,11 +1023,9 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 		resp := s.roamRespOf(out, "random")
 		if export {
 			writeMarkdown(w, s.exportMD(resp))
-			s.mu.RUnlock()
 			return
 		}
 		writeJSON(w, resp)
-		s.mu.RUnlock()
 		return
 	}
 
@@ -1084,11 +1033,9 @@ func (s *Server) handleRoam(w http.ResponseWriter, r *http.Request) {
 	resp := s.roamRespOf(out, query)
 	if export {
 		writeMarkdown(w, s.exportMD(resp))
-		s.mu.RUnlock()
 		return
 	}
 	writeJSON(w, resp)
-	s.mu.RUnlock()
 }
 
 // exportMD 把一次漫游结果渲染为 Markdown 卡片清单（v0.1.11，backlog §3.2）。
@@ -1145,8 +1092,7 @@ func writeMarkdown(w http.ResponseWriter, s string) {
 func (s *Server) computeRandom(vals url.Values, opt roam.Options) *roam.Outcome {
 	alpha := clampFloat(vals, "rand_alpha", 0.5, 0, 1)
 	if n, err := strconv.ParseInt(vals.Get("seed"), 10, 64); err == nil {
-		rng := rand.New(rand.NewPCG(uint64(n), uint64(n)>>1^0x9E3779B97F4A7C15))
-		return roam.ComputeRandom(s.G, s.P, opt, roam.Roll{Rng: rng, Alpha: alpha})
+		return roam.ComputeRandom(s.G, s.P, opt, roam.Roll{Rng: roam.SeededRNG(n), Alpha: alpha})
 	}
 	s.randMu.Lock()
 	out := roam.ComputeRandom(s.G, s.P, opt, roam.Roll{Rng: s.rng, Alpha: alpha, Avoid: s.recent})

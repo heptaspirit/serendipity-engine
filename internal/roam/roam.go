@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"strings"
+	"time"
 
 	"serendipity-engine/internal/adapter"
 	"serendipity-engine/internal/graph"
@@ -24,11 +25,12 @@ import (
 
 // Options 漫游参数。
 type Options struct {
-	Top              int
-	Hops             int
-	Lambda, Theta    float64
-	Alpha, Beta      float64
-	FilterStructural bool // 簇输出是否排除结构类型（实体查询 true；文本搜索式降级 false）
+	Top           int
+	Hops          int
+	Lambda, Theta float64
+	Alpha, Beta   float64
+	// （FilterStructural 已于 2026-09 删除：结构类型排除为管线固有一步，全调用点恒 true，
+	//   无"文本搜索式降级"分支再豁免它——全文兜底本来就不过滤结构，见 ModeNoAnchor。）
 }
 
 // Anchor 锚点信息。
@@ -100,12 +102,9 @@ func Compute(g *graph.Graph, p *adapter.VaultProfile, query string, opt Options)
 		}
 		hits := g.TextSearch(searchQ, opt.Top*2)
 		filtered := hits[:0]
-		structural := map[string]bool{}
-		for _, t := range p.StructuralTypes {
-			structural[t] = true
-		}
+		structural := p.StructuralSet()
 		for _, h := range hits {
-			if opt.FilterStructural && structural[h.Type] {
+			if structural[h.Type] {
 				continue
 			}
 			filtered = append(filtered, h)
@@ -128,7 +127,7 @@ func clusterFromSeeds(g *graph.Graph, p *adapter.VaultProfile, seeds []string, a
 		actMap[r.ID] = r
 	}
 
-	// 排除：种子 + 目录枢纽（度 ≥ 半数节点）+ 结构类型
+	// 排除：种子 + 目录枢纽（度 ≥ 半数节点）+ 结构类型（管线固有一步）
 	exclude := map[string]bool{}
 	for _, s := range seeds {
 		exclude[s] = true
@@ -140,20 +139,15 @@ func clusterFromSeeds(g *graph.Graph, p *adapter.VaultProfile, seeds []string, a
 			exclude[id] = true
 		}
 	}
-	if opt.FilterStructural {
-		structural := map[string]bool{}
-		for _, t := range p.StructuralTypes {
-			structural[t] = true
-		}
-		for id := range actMap {
-			if n, ok := g.Node(id); ok && structural[n.Type()] {
-				exclude[id] = true
-			}
+	structural := p.StructuralSet()
+	for id := range actMap {
+		if n, ok := g.Node(id); ok && structural[n.Type()] {
+			exclude[id] = true
 		}
 	}
 
 	out.Results = score.Rank(g, actMap, ppr, score.RankOpts{
-		Alpha: opt.Alpha, Beta: opt.Beta, Gamma: 0, Delta: 0,
+		Alpha: opt.Alpha, Beta: opt.Beta,
 		TopN:     opt.Top,
 		Exclude:  exclude,
 		HopQuota: [3]float64{0.5, 0.3, 0.2},
@@ -202,10 +196,7 @@ func rollSeed(g *graph.Graph, p *adapter.VaultProfile, rng *rand.Rand, avoid []s
 	if rng == nil {
 		return ""
 	}
-	structural := map[string]bool{}
-	for _, t := range p.StructuralTypes {
-		structural[t] = true
-	}
+	structural := p.StructuralSet()
 	avoidSet := map[string]bool{}
 	for _, id := range avoid {
 		avoidSet[id] = true
@@ -254,4 +245,15 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// SeededRNG 构造随机源：seed=0 → 时间种子（每次不同）；seed≠0 → 固定种子
+// （同一 seed 同一序列，可复现——随机漫步"同一节点同一簇"可分享）。
+// PCG 双种子：seed>>1 ^ 黄金比散列（把相邻 seed 摊开，避免低位关联）。CLI（--seed）、
+// Web（?seed=）、MCP（graph.random seed）三入口共用，不再各自复制派生块。
+func SeededRNG(seed int64) *rand.Rand {
+	if seed != 0 {
+		return rand.New(rand.NewPCG(uint64(seed), uint64(seed)>>1^0x9E3779B97F4A7C15))
+	}
+	return rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15))
 }

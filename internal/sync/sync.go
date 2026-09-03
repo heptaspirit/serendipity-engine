@@ -251,6 +251,8 @@ func DetectRenames(old, cur []*adapter.Document) map[string]string {
 	return detectRenames(oldByID, curByID)
 }
 
+// detectRenames 映射版改名识别：Diff（已有映射）与 DetectRenames（切片转换后）
+// 共用同一实现。
 func detectRenames(oldByID, curByID map[string]*adapter.Document) map[string]string {
 	deleted := map[string]*adapter.Document{} // 旧有新无
 	for id, od := range oldByID {

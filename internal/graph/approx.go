@@ -44,7 +44,6 @@
 package graph
 
 import (
-	"math"
 	"sort"
 )
 
@@ -59,14 +58,13 @@ type ApproxEdge struct {
 }
 
 // PotentialLinks 计算潜在关联候选（待审清单）。
-// perNodeK：每节点保留的候选数（backlog K=2~3；默认 2）。structuralTypes：
-// 结构类型名集合（与 roam/Similar 同口径，目录/机器节点不做候选端点）。
+// structuralTypes：结构类型名集合（与 roam/Similar 同口径，目录/机器节点不做候选端点）。
 // 返回全局去重（无向对）后按聚合分降序的清单（并列按对稳定）。
 // 排除口径复用 Similar（#12）：自身/直接邻居/空标题/结构类型/孤立/目录枢纽。
-func (g *Graph) PotentialLinks(perNodeK int, structuralTypes map[string]bool) []ApproxEdge {
-	if perNodeK <= 0 {
-		perNodeK = 2
-	}
+// per-node 节流固定为 2（backlog K=2~3：生产恒 2，防爆上限 ≤2N；不做参数）。
+const perNodeTop = 2
+
+func (g *Graph) PotentialLinks(structuralTypes map[string]bool) []ApproxEdge {
 	hubThresh := g.Stats().Nodes / 2
 
 	// 每节点的 2-hop 候选 → 三算法分 → Borda 名次分 → top-K
@@ -86,8 +84,8 @@ func (g *Graph) PotentialLinks(perNodeK int, structuralTypes map[string]bool) []
 		// Borda：三算法各自排序取名次分
 		ranked := bordaRank(cands)
 		// top-K 节流：该节点保留前 K 个
-		if len(ranked) > perNodeK {
-			ranked = ranked[:perNodeK]
+		if len(ranked) > perNodeTop {
+			ranked = ranked[:perNodeTop]
 		}
 		for _, r := range ranked {
 			a, b := id, r.id
@@ -167,22 +165,11 @@ func (g *Graph) approxCandidates2Hop(id string, structuralTypes map[string]bool,
 		if cdeg == 0 || cdeg >= hubThresh {
 			continue
 		}
-		// 公共邻居（∩）+ 三指数（同一输入）
-		var shared []string
-		aa, ra := 0.0, 0.0
-		for _, nb := range g.adj[cid] {
-			if !nbSet[nb] {
-				continue
-			}
-			shared = append(shared, nb)
-			d := math.Max(2, float64(len(g.adj[nb])))
-			aa += 1.0 / math.Log(d)
-			ra += 1.0 / d
-		}
+		// 公共邻居（∩）+ 三指数（同一输入）——similar 共用 commonNeighbors 底座
+		shared, aa, ra := g.commonNeighbors(cid, nbSet)
 		if len(shared) == 0 {
 			continue
 		}
-		sort.Strings(shared)
 		union := len(nbSet) + cdeg - len(shared)
 		jc := float64(len(shared)) / float64(union)
 		out = append(out, approxCand{id: cid, aa: aa, jc: jc, ra: ra, shared: shared})

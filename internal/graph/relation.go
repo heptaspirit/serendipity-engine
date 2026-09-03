@@ -30,6 +30,7 @@ import (
 const (
 	pprRelationTeleport = 0.15
 	pprRelationIters    = 60
+	relationLambda      = 0.7 // 激活衰减（漫游默认同值；全调用点恒 0.7，不再做参数）
 )
 
 // NodeInfo 关系查询中的端点信息。
@@ -61,8 +62,7 @@ type Relation struct {
 }
 
 // ComputeRelation 计算 from 与 to 的关系。任一节点不存在返回 nil。
-// lambda 为激活衰减（漫游默认 0.7）。
-func (g *Graph) ComputeRelation(from, to string, lambda float64) *Relation {
+func (g *Graph) ComputeRelation(from, to string) *Relation {
 	fromNode, ok1 := g.Node(from)
 	toNode, ok2 := g.Node(to)
 	if !ok1 || !ok2 {
@@ -87,7 +87,7 @@ func (g *Graph) ComputeRelation(from, to string, lambda float64) *Relation {
 		rel.Hops = len(path) - 1
 		rel.Path = path
 		rel.Direct = rel.Hops == 1
-		rel.Activation = math.Pow(lambda, float64(rel.Hops))
+		rel.Activation = math.Pow(relationLambda, float64(rel.Hops))
 		rel.Evidence = g.edgeEvidence(path)
 	} else {
 		rel.Activation = -1

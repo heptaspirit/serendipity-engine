@@ -65,7 +65,7 @@ func loadTouches(t *testing.T, dbPath string) [][2]string {
 	return rows
 }
 
-func TestRenameTouchPlaceholder(t *testing.T) {
+func TestRenameTouch(t *testing.T) {
 	touchPath, _ := touchPair(t)
 	if err := AppendTouch(touchPath, "旧A", "来源"); err != nil {
 		t.Fatalf("AppendTouch: %v", err)
@@ -73,15 +73,16 @@ func TestRenameTouchPlaceholder(t *testing.T) {
 	if err := AppendTouch(touchPath, "旧B", "旧A"); err != nil {
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	// 链式：旧A→旧B→新B
-	if err := RenameTouch(touchPath, map[string]string{"旧A": "旧B", "旧B": "新B"}); err != nil {
+	// 折叠契约（入参 = sync.MergeRenames 输出）：链 旧A→旧B→新B 已被调用方折叠为
+	// 直达 旧A→新B，本函数直接查表迁移 target/src；链中间名 旧B 不在映射内（不动）。
+	if err := RenameTouch(touchPath, map[string]string{"旧A": "新B"}); err != nil {
 		t.Fatalf("RenameTouch: %v", err)
 	}
 	got := loadTouches(t, touchPath)
-	// 传递解析后：target 旧A→新B、旧B→新B；src 旧A 也解到 新B（来源身份同样迁移）
-	want := [][2]string{{"新B", "来源"}, {"新B", "新B"}}
+	// target 旧A→新B、旧B 不动；src 旧A 也迁到 新B（来源身份同样迁移）
+	want := [][2]string{{"新B", "来源"}, {"旧B", "新B"}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("链式 touch 迁移错误：%v ≠ %v", got, want)
+		t.Fatalf("touch 迁移错误：%v ≠ %v", got, want)
 	}
 }
 
@@ -130,7 +131,7 @@ func TestTouchStats(t *testing.T) {
 	if err := AppendTouch(touchPath, "幽灵节点", "来源Z"); err != nil { // 已删/不存在 → 应被过滤
 		t.Fatalf("AppendTouch: %v", err)
 	}
-	total, targets, sources, err := TouchStats(touchPath, graphPath, 10)
+	total, targets, sources, err := TouchStats(touchPath, graphPath)
 	if err != nil {
 		t.Fatalf("TouchStats: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestTouchStats(t *testing.T) {
 		t.Fatalf("src 是自由查询词，来源Z 应保留：%v", sources)
 	}
 	// 无 touch 库文件 → 全零（不报错）
-	total2, _, _, err := TouchStats(filepath.Join(t.TempDir(), "none.bbolt"), graphPath, 10)
+	total2, _, _, err := TouchStats(filepath.Join(t.TempDir(), "none.bbolt"), graphPath)
 	if err != nil || total2 != 0 {
 		t.Fatalf("无库应全零：total=%d err=%v", total2, err)
 	}

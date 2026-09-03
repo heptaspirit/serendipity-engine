@@ -78,8 +78,10 @@ const metaParserVersion = "parser_version"
 // 否则增量会复用未变文件的旧文档，新增排除不生效（log 权重/touch 残留等）。
 const metaProfileSignature = "profile_signature"
 
-// SaveParserVersion 记录写入该 store 的解析器版本。
-func SaveParserVersion(dbPath, ver string) error {
+// metaPut/metaGet meta 桶的读写原语：Save/LoadParserVersion 与 Save/LoadProfileSignature
+// 只差键名，共用一个打开库→建/取桶→读写键的结构（metaGet 文件/桶/键缺失 → ""，
+// 不创建文件，避免版本检查的副作用）。
+func metaPut(dbPath string, key, val []byte) error {
 	db, err := open(dbPath)
 	if err != nil {
 		return err
@@ -90,13 +92,11 @@ func SaveParserVersion(dbPath, ver string) error {
 		if err != nil {
 			return err
 		}
-		return mb.Put([]byte(metaParserVersion), []byte(ver))
+		return mb.Put(key, val)
 	})
 }
 
-// LoadParserVersion 读取该 store 记录的解析器版本；无 meta/键 → ""（旧库/未记录）。
-// 文件不存在 → ""（不创建文件，避免版本检查的副作用）。
-func LoadParserVersion(dbPath string) string {
+func metaGet(dbPath string, key []byte) string {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return ""
 	}
@@ -105,51 +105,34 @@ func LoadParserVersion(dbPath string) string {
 		return ""
 	}
 	defer db.Close()
-	var ver string
+	var val string
 	_ = db.View(func(tx *bolt.Tx) error {
 		if mb := tx.Bucket(bMeta); mb != nil {
-			ver = string(mb.Get([]byte(metaParserVersion)))
+			val = string(mb.Get(key))
 		}
 		return nil
 	})
-	return ver
+	return val
+}
+
+// SaveParserVersion 记录写入该 store 的解析器版本。
+func SaveParserVersion(dbPath, ver string) error {
+	return metaPut(dbPath, []byte(metaParserVersion), []byte(ver))
+}
+
+// LoadParserVersion 读取该 store 记录的解析器版本；无 meta/键 → ""（旧库/未记录）。
+func LoadParserVersion(dbPath string) string {
+	return metaGet(dbPath, []byte(metaParserVersion))
 }
 
 // SaveProfileSignature 记录建当前 store 所用的画像签名。
 func SaveProfileSignature(dbPath, sig string) error {
-	db, err := open(dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return db.Update(func(tx *bolt.Tx) error {
-		mb, err := tx.CreateBucketIfNotExists(bMeta)
-		if err != nil {
-			return err
-		}
-		return mb.Put([]byte(metaProfileSignature), []byte(sig))
-	})
+	return metaPut(dbPath, []byte(metaProfileSignature), []byte(sig))
 }
 
 // LoadProfileSignature 读取建 store 用的画像签名；无 meta/键 → ""（旧库/未记录）。
-// 文件不存在 → ""（不创建文件）。
 func LoadProfileSignature(dbPath string) string {
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return ""
-	}
-	db, err := open(dbPath)
-	if err != nil {
-		return ""
-	}
-	defer db.Close()
-	var sig string
-	_ = db.View(func(tx *bolt.Tx) error {
-		if mb := tx.Bucket(bMeta); mb != nil {
-			sig = string(mb.Get([]byte(metaProfileSignature)))
-		}
-		return nil
-	})
-	return sig
+	return metaGet(dbPath, []byte(metaProfileSignature))
 }
 
 // docRow 是 docs bucket 的持久化形态：Document 去 Refs（Refs 单独存 links
@@ -241,14 +224,19 @@ func SaveRenames(dbPath string, renames map[string]string) error {
 	})
 }
 
+// serendipityPath 派生 <vault>/.serendipity/<prefix>-<路径hash12>.bbolt（设计 §6.8：
+// 每库一文件、便携闭环——库在哪图在哪）。db = 图库、touch = 埋点独立库
+// （§3.7.1 同一 vault 同 hash 派生，两库成对）。
+func serendipityPath(vault, prefix string) string {
+	h := sha256.Sum256([]byte(filepath.Clean(vault)))
+	return filepath.Join(vault, ".serendipity", prefix+"-"+hex.EncodeToString(h[:])[:12]+".bbolt")
+}
+
 // DBPath 返回库的默认存储路径：<vault>/.serendipity/db-<路径hash>.bbolt
 // （设计 §6.8 多库：每库一 DB，便携闭环）。#16：扩展名 .sqlite → .bbolt
 // （无迁移——旧文件直接删，refresh 重建）。
 func DBPath(vault string) string {
-	h := sha256.Sum256([]byte(filepath.Clean(vault)))
-	hash := hex.EncodeToString(h[:])[:12]
-	dir := filepath.Join(vault, ".serendipity")
-	return filepath.Join(dir, "db-"+hash+".bbolt")
+	return serendipityPath(vault, "db")
 }
 
 // Save 写图：documents + links（有向边）。#16 P1 增量写：读库内旧值做差值，

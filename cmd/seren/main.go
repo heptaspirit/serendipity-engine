@@ -95,7 +95,6 @@ import (
 	"fmt"
 	"log"
 	"maps"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
@@ -467,34 +466,16 @@ func cmdRefresh(args []string) int {
 	}
 	storePath := storePathFor(vault, flags["store"])
 
-	old, err := store.Load(storePath)
-	if err != nil {
-		fatal("read old state failed: %v", err)
-	}
-	storedRenames, err := store.LoadRenames(storePath)
-	if err != nil {
-		fatal("read rename map failed: %v", err)
-	}
-	docs, reused, src, err := refreshParse(vault, p, flags, old)
+	// 对账刷新（CLI 与 Web 共用同一管线，见 refreshAll）
+	o, err := refreshAll(vault, p, flags, false)
 	if err != nil {
 		fatal("%v", err)
 	}
-	res := syncpkg.Diff(old, docs)
-	// 改名迁移（v0.1.5，修订 #8）：持久化映射合并（含本次新检测）→ 存 renames
-	// 表 + touch 迁移。documents 存原始 Refs（文件真相，diff 收敛）；
-	// 重定向只在建图时叠加（见 refreshFunc/loadSource 的 redirectForGraph）。
-	merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
-	if err := store.SaveRenames(storePath, merged); err != nil {
-		fatal("rename map persist failed: %v", err)
-	}
-	if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
-		fatal("touch migration failed: %v", err)
-	}
-	if err := store.Save(storePath, docs); err != nil {
-		fatal("persist failed: %v", err)
-	}
-	_ = store.SaveParserVersion(storePath, version)                // 记解析器版本（v0.2.1，升级失效）
-	_ = store.SaveProfileSignature(storePath, profileSignature(p)) // 记画像签名（改画像自动重析）
+	res := o.res
+	docs := o.docs
+	src := o.src
+	reused := o.reused
+	oldN := o.oldN
 
 	if flags["json"] != "" {
 		// --json：复用 syncpkg.Result 结构体（含 Changes/Renames 明细）。为可读，
@@ -510,7 +491,7 @@ func cmdRefresh(args []string) int {
 	fmt.Printf("source: %s\n", src)
 	fmt.Printf("profile: %s\n", p.Name)
 	fmt.Printf("store: %s\n", storePath)
-	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && len(old) > 0 {
+	if flags["db"] == "" && !adapter.IsOrcaDB(vault) && oldN > 0 {
 		fmt.Printf("parsed: %d docs (incremental: reused %d / reparsed %d)\n", len(docs), reused, len(docs)-reused)
 	} else {
 		fmt.Printf("parsed: %d docs (full)\n", len(docs))
@@ -568,13 +549,14 @@ func cmdIndex(args []string) int {
 		fatal("profile load failed: %v", err)
 	}
 	g, docs, src := loadSource(vault, p, flags["db"], flags["store"])
+	// 类型分布（--json 与人类输出共用一次统计）
+	typeCount := map[string]int{}
+	for _, d := range docs {
+		typeCount[d.Type]++
+	}
 	if flags["json"] != "" {
 		// --json：复用 graph.Stats 结构体 + 类型分布，顶层补 source/画像/文档数。
 		// 置于人类可读输出之前——--json 是整块序列化，不掺人类文本。
-		typeCount := map[string]int{}
-		for _, d := range docs {
-			typeCount[d.Type]++
-		}
 		jsonOut(map[string]any{
 			"vault": vault, "source": src, "profile": p.Name,
 			"documents": len(docs), "types": typeCount, "stats": g.Stats(),
@@ -587,10 +569,6 @@ func cmdIndex(args []string) int {
 	fmt.Printf("profile: %s\n", p.Name)
 	fmt.Printf("parsed documents: %d\n", len(docs))
 
-	typeCount := map[string]int{}
-	for _, d := range docs {
-		typeCount[d.Type]++
-	}
 	fmt.Println("type distribution:")
 	var types []string
 	for t := range typeCount {
@@ -670,19 +648,13 @@ func cmdRoam(args []string) int {
 	g, _, src := loadSource(vault, p, flags["db"], flags["store"])
 	opt := roam.Options{
 		Top: top, Hops: hops, Lambda: lambda, Theta: theta,
-		Alpha: alpha, Beta: beta, FilterStructural: true,
+		Alpha: alpha, Beta: beta,
 	}
 
 	var out *roam.Outcome
 	if random {
 		// 随机漫步（v0.1.7）：seed=0 用时间随机；固定 seed 可复现（同一节点同一簇）
-		var rng *rand.Rand
-		if seed != 0 {
-			rng = rand.New(rand.NewPCG(uint64(seed), uint64(seed)>>1^0x9E3779B97F4A7C15))
-		} else {
-			rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15))
-		}
-		out = roam.ComputeRandom(g, p, opt, roam.Roll{Rng: rng, Alpha: randAlpha})
+		out = roam.ComputeRandom(g, p, opt, roam.Roll{Rng: roam.SeededRNG(seed), Alpha: randAlpha})
 	} else {
 		out = roam.Compute(g, p, query, opt)
 	}
@@ -833,7 +805,7 @@ func buildServeState(env *serveEnv) (*web.VaultState, error) {
 	}
 	// 埋点只读统计（幽灵过滤跨图库，双路径）
 	st.TouchStat = func() (int, []web.TouchRow, []web.TouchRow, error) {
-		total, targets, sources, err := store.TouchStats(touchPath, storePath, 10)
+		total, targets, sources, err := store.TouchStats(touchPath, storePath)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -882,7 +854,7 @@ func (env *serveEnv) startWatch(srv *web.Server) {
 	if adapter.IsOrcaDB(vault) {
 		check = watch.NewOrcaChecker(vault)
 	} else {
-		check = watch.NewVaultChecker(vault, p.ExcludedDirs, p.ExcludedFiles, p.ExcludedPrefixes)
+		check = watch.NewVaultChecker(vault, p)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	env.cancel = cancel
@@ -937,7 +909,7 @@ func cmdServe(args []string) int {
 		poll:     time.Duration(fint(flags, "watch-interval", 10)) * time.Second,
 		throttle: time.Duration(fint(flags, "watch-throttle", 60)) * time.Second,
 	}
-	srv := web.New(nil, nil, "", "", version, nil, nil)
+	srv := web.New(version)
 	srv.Token = token
 
 	// 内嵌 MCP（v0.2.0）：serve 内 /mcp 端点（Streamable HTTP），Web+REST+MCP 三合一。
@@ -959,7 +931,7 @@ func cmdServe(args []string) int {
 		}
 		// v0.2.1 反馈 #1：digest（窗口摘要）与累计统计(ycle 口径)一起返回——
 		// AI 不会只看到 null，总有累计上下文；窗口未触发时 digest 为 null 但 total/targets/sources 有值。
-		total, targets, sources, serr := store.TouchStats(touchPath, storePath, 10)
+		total, targets, sources, serr := store.TouchStats(touchPath, storePath)
 		if serr != nil {
 			return nil, serr
 		}
@@ -976,7 +948,7 @@ func cmdServe(args []string) int {
 		if vault == "" {
 			return map[string]any{"total": 0, "targets": []store.TouchRow{}, "sources": []store.TouchRow{}}, nil
 		}
-		total, targets, sources, err := store.TouchStats(touchPathFor(vault), storePathFor(vault, flags["store"]), 10)
+		total, targets, sources, err := store.TouchStats(touchPathFor(vault), storePathFor(vault, flags["store"]))
 		if err != nil {
 			return nil, err
 		}
@@ -1111,48 +1083,69 @@ func toWebDigestTargets(ts []store.DigestTarget) []web.DigestTarget {
 	return out
 }
 
-// refreshFunc 构造 Web 端的刷新/重建闭包：重解析 → 对账 diff → 改名迁移（合并持久化
-// 映射 + touch 迁移 + renames 落盘）→ 写回存储（原始 Refs）→ 返回 diff 结果与
-// 刷新后的新图（建图叠加重定向）。Store 路径与 CLI refresh 一致。
-// forceFull=true → POST /api/rebuild 用：忽略增量复用、重新解析整库（强制全量重建）。
-func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string, forceFull bool) web.RefreshFunc {
+// refreshOut 一次对账刷新的完整产出（CLI 展示与 Web 换图各取所需）。
+type refreshOut struct {
+	res    *syncpkg.Result
+	ng     *graph.Graph // 新图（Web refresh/rebuild 换图用；CLI 忽略）
+	docs   []*adapter.Document
+	oldN   int // 旧状态文档数（CLI 判断"增量/全量"展示口径）
+	src    string
+	reused int
+}
+
+// refreshAll 执行一次完整对账刷新（CLI `seren refresh` 与 Web refresh/rebuild 共用
+// 同一管线，docs/architecture/04-sync.md 契约）：Load 旧态 → 重解析（Obsidian
+// 增量复用 / --db 回读 / forceFull 全量重析）→ 对账 diff → 改名迁移（合并持久化
+// 映射 + touch 迁移 + renames 落盘）→ 写回存储（原始 Refs）→ 记解析器版本/画像
+// 签名。forceFull=true（POST /api/rebuild 用）：忽略增量复用、重新解析整库。
+func refreshAll(vault string, p *adapter.VaultProfile, flags map[string]string, forceFull bool) (*refreshOut, error) {
 	storePath := storePathFor(vault, flags["store"])
+	old, err := store.Load(storePath)
+	if err != nil {
+		return nil, fmt.Errorf("read old state failed: %w", err)
+	}
+	storedRenames, err := store.LoadRenames(storePath)
+	if err != nil {
+		return nil, fmt.Errorf("read rename map failed: %w", err)
+	}
+	var docs []*adapter.Document
+	var src string
+	var reused int
+	if forceFull {
+		docs, src, err = parseSource(vault, p, "") // 全量重建：从库重析，无视增量
+	} else {
+		docs, reused, src, err = refreshParse(vault, p, flags, old)
+	}
+	if err != nil {
+		return nil, err
+	}
+	res := syncpkg.Diff(old, docs)
+	// 改名迁移（v0.1.5，修订 #8）：持久化映射合并（含本次新检测）→ 存 renames 表 +
+	// touch 迁移。documents 存原始 Refs（文件真相，diff 收敛）；重定向只在建图时叠加。
+	merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
+	if err := store.SaveRenames(storePath, merged); err != nil {
+		return nil, fmt.Errorf("rename map persist failed: %w", err)
+	}
+	if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
+		return nil, fmt.Errorf("touch migration failed: %w", err)
+	}
+	if err := store.Save(storePath, docs); err != nil {
+		return nil, fmt.Errorf("persist failed: %w", err)
+	}
+	_ = store.SaveParserVersion(storePath, version)                // 记解析器版本（v0.2.1，升级失效）
+	_ = store.SaveProfileSignature(storePath, profileSignature(p)) // 记画像签名（改画像自动重析）
+	return &refreshOut{res: res, ng: graph.Build(redirectForGraph(docs, merged)),
+		docs: docs, oldN: len(old), src: src, reused: reused}, nil
+}
+
+// refreshFunc 构造 Web 端的刷新/重建闭包（refreshAll 的薄封装：Web 只要 diff 与新图）。
+func refreshFunc(vault string, p *adapter.VaultProfile, flags map[string]string, forceFull bool) web.RefreshFunc {
 	return func() (*syncpkg.Result, *graph.Graph, error) {
-		old, err := store.Load(storePath)
+		o, err := refreshAll(vault, p, flags, forceFull)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read old state failed: %w", err)
+			return nil, nil, err
 		}
-		storedRenames, err := store.LoadRenames(storePath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read rename map failed: %w", err)
-		}
-		var docs []*adapter.Document
-		if forceFull {
-			docs, _, err = parseSource(vault, p, "") // 全量重建：从库重析，无视增量
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			docs, _, _, err = refreshParse(vault, p, flags, old)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		res := syncpkg.Diff(old, docs)
-		// 改名迁移（v0.1.5，修订 #8）：见 cmdRefresh 同段注释
-		merged := syncpkg.MergeRenames(storedRenames, renamesMap(res.Renames), docs)
-		if err := store.SaveRenames(storePath, merged); err != nil {
-			return nil, nil, fmt.Errorf("rename map persist failed: %w", err)
-		}
-		if err := store.RenameTouch(touchPathFor(vault), merged); err != nil {
-			return nil, nil, fmt.Errorf("touch migration failed: %w", err)
-		}
-		if err := store.Save(storePath, docs); err != nil {
-			return nil, nil, fmt.Errorf("persist failed: %w", err)
-		}
-		_ = store.SaveParserVersion(storePath, version)                // 记解析器版本（v0.2.1，升级失效）
-		_ = store.SaveProfileSignature(storePath, profileSignature(p)) // 记画像签名（改画像自动重析）
-		return res, graph.Build(redirectForGraph(docs, merged)), nil
+		return o.res, o.ng, nil
 	}
 }
 

@@ -35,9 +35,7 @@
 package store
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -72,10 +70,7 @@ type touchEntry struct {
 // （与图库 DBPath 同 hash 派生——同一 vault 的 touch 与图库成对；虎鲸库由调用方
 // 传库所在目录，见 cmd/seren storePathFor 同逻辑）。
 func TouchDBPath(vault string) string {
-	h := sha256.Sum256([]byte(filepath.Clean(vault)))
-	hash := hex.EncodeToString(h[:])[:12]
-	dir := filepath.Join(vault, ".serendipity")
-	return filepath.Join(dir, "touch-"+hash+".bbolt")
+	return serendipityPath(vault, "touch")
 }
 
 // AppendTouch 记录一次节点点击（反馈埋点，独立 store——图库重建不清除）。
@@ -105,21 +100,25 @@ func AppendTouch(dbPath, target, from string) error {
 		if err := tb.Put(key, val); err != nil {
 			return err
 		}
-		return truncateTouch(tb)
+		return trimBucket(tb, touchMax)
 	})
 }
 
-// truncateTouch 超限删最旧（seq 有序键 → 从头删到 <= touchMax）。
+// trimBucket 超限删最旧（键有序 → 从头删到 <= maxN 条）。AppendTouch 的 touch
+// 事件流与 digest backups 轮转共用同一结构。
 // 注：不用 Bucket.Stats().KeyN 短路——写事务内统计是 stale 的（实测 5005 插
 // 只删到 5001），必须真实遍历。NoSync 下每次事务微秒级，遍历 5000 条可忽略。
-func truncateTouch(tb *bolt.Bucket) error {
+func trimBucket(b *bolt.Bucket, maxN int) error {
+	if maxN <= 0 {
+		return nil
+	}
 	var keys [][]byte
-	c := tb.Cursor()
+	c := b.Cursor()
 	for k, _ := c.First(); k != nil; k, _ = c.Next() {
 		keys = append(keys, append([]byte(nil), k...))
 	}
-	for i := 0; i < len(keys)-touchMax; i++ {
-		if err := tb.Delete(keys[i]); err != nil {
+	for i := 0; i < len(keys)-maxN; i++ {
+		if err := b.Delete(keys[i]); err != nil {
 			return err
 		}
 	}
@@ -156,16 +155,17 @@ type TouchRow struct {
 	Count int    `json:"count"`
 }
 
+// touchTopN TouchStats/digest 的 TopN 展示上限（全调用点恒 10——CLI/Web/MCP
+// 无一处传别的值，不再做参数）。
+const touchTopN = 10
+
 // TouchStats 反馈埋点只读统计（v0.1.11，backlog §3.3 —— 反馈闭环只读第一步）。
 // 只读聚合，绝不写库、绝不反馈到排序/hot（红线 2：埋点只记录不演化）。
 // 库/桶不存在（从未埋点/旧库）→ 全零统计（不报错，展示友好）。
 // v0.1.12（backlog §四 缺口②）：targets 关联 documents 过滤幽灵 touch——
 // 点击过但已删的节点不再进热度榜；sources 是自由文本查询词（非节点 ID），不过滤。
 // §3.7.1：touch 独立 store 后幽灵过滤跨库——graphPath（图库）docs 桶查存在性 O(1)。
-func TouchStats(touchPath, graphPath string, limit int) (total int, targets, sources []TouchRow, err error) {
-	if limit <= 0 {
-		limit = 10
-	}
+func TouchStats(touchPath, graphPath string) (total int, targets, sources []TouchRow, err error) {
 	if _, err := os.Stat(touchPath); os.IsNotExist(err) {
 		return 0, nil, nil, nil // 无库 = 全零
 	}
@@ -199,8 +199,8 @@ func TouchStats(touchPath, graphPath string, limit int) (total int, targets, sou
 		if err != nil {
 			return err
 		}
-		targets = topTouchRows(targetCnt, limit, graphHasDoc)
-		sources = topTouchRows(srcCnt, limit, nil) // src 自由文本，不过滤
+		targets = topTouchRows(targetCnt, touchTopN, graphHasDoc)
+		sources = topTouchRows(srcCnt, touchTopN, nil) // src 自由文本，不过滤
 		return nil
 	})
 	return total, targets, sources, err
@@ -289,36 +289,14 @@ func topTouchRows(cnt map[string]int, limit int, filter func(string) bool) []Tou
 }
 
 // RenameTouch 把 touch 里 target/src 为旧 ID 的埋点迁移到新 ID（v0.1.5，
-// 改名迁移，设计修订 #8）。映射先做传递解析（旧→中→新 解到最终目标，与
-// ApplyRenames 语义一致）；touch 桶不存在（从未埋点）→ 静默跳过。
+// 改名迁移，设计修订 #8）。
+// 契约：renames 必须是**折叠后**的直达映射（旧链头 → 最终目标）——引擎所有调用点
+// （cmdRefresh / serve 刷新）都经 sync.MergeRenames（含 collapseChains）折叠，本函数
+// 直接查表应用即可，不再自行做链式传递解析。touch 桶不存在（从未埋点）→ 静默跳过。
 // 实现注：bbolt 单写事务内先收集再写，不存在 SQL 逐行 UPDATE 的中间态互踩，
 // 无需旧版两阶段占位（占位法保留在 v0.1.5 提交历史中）。
 func RenameTouch(dbPath string, renames map[string]string) error {
 	if len(renames) == 0 {
-		return nil
-	}
-	// 传递解析：链式改名解到最终目标（持久化映射跨刷新累积成链）
-	resolved := map[string]string{}
-	for o := range renames {
-		seen := map[string]bool{o: true}
-		cur := o
-		for {
-			nid, ok := renames[cur]
-			if !ok {
-				break
-			}
-			if seen[nid] {
-				cur = o // 环防御：回到原始
-				break
-			}
-			seen[nid] = true
-			cur = nid
-		}
-		if cur != o {
-			resolved[o] = cur
-		}
-	}
-	if len(resolved) == 0 {
 		return nil
 	}
 	db, err := open(dbPath)
@@ -343,11 +321,11 @@ func RenameTouch(dbPath string, renames map[string]string) error {
 				return err
 			}
 			changed := false
-			if nid, ok := resolved[e.Target]; ok {
+			if nid, ok := renames[e.Target]; ok {
 				e.Target = nid
 				changed = true
 			}
-			if nid, ok := resolved[e.Src]; ok {
+			if nid, ok := renames[e.Src]; ok {
 				e.Src = nid
 				changed = true
 			}
@@ -554,7 +532,7 @@ func MaybeDigest(touchPath, graphPath string, cfg TouchConfig) (bool, error) {
 		if err := bb.Put([]byte(dig.ID), snap); err != nil {
 			return err
 		}
-		return rotateBucket(bb, cfg.BackupMax)
+		return trimBucket(bb, cfg.BackupMax)
 	})
 	if err != nil {
 		return false, err
@@ -582,24 +560,6 @@ func buildDigest(entries []touchEntry, windowStart int64, graphPath string) *Dig
 	}
 	dig.Sources = topTouchRows(srcCnt, 10, nil)
 	return dig
-}
-
-// rotateBucket 保留最近 maxN 条键（键按字典序=时间序），超则删最旧。
-func rotateBucket(b *bolt.Bucket, maxN int) error {
-	if maxN <= 0 {
-		return nil
-	}
-	var keys [][]byte
-	c := b.Cursor()
-	for k, _ := c.First(); k != nil; k, _ = c.Next() {
-		keys = append(keys, append([]byte(nil), k...))
-	}
-	for i := 0; i < len(keys)-maxN; i++ {
-		if err := b.Delete(keys[i]); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // LatestDigest 返回最新 digest（无 → nil, nil）。

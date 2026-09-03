@@ -13,6 +13,14 @@ import (
 	"serendipity-engine/internal/graph"
 )
 
+// newTestServer 构造已配好图/画像/源信息的 Server（New 只带版本号后，测试直接
+// 补运行时状态——等价旧版 New(g,p,source,vault,version,nil,nil)）。
+func newTestServer(g *graph.Graph, p *adapter.VaultProfile, source, vault, ver string) *Server {
+	s := New(ver)
+	s.G, s.P, s.Source, s.VaultName = g, p, source, vault
+	return s
+}
+
 func newAuthServer(t *testing.T, s *Server) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(s.Handler())
@@ -52,7 +60,7 @@ func endpointGraph() *graph.Graph {
 
 // GET /api/similar?id=&k=：结构相似节点 + 共享邻居证据。
 func TestSimilarEndpoint(t *testing.T) {
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11")
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 	resp := doAuthGet(t, ts, "/api/similar?id=Alpha&k=10")
@@ -95,7 +103,7 @@ func TestSimilarEndpoint(t *testing.T) {
 
 // GET /api/node?id=：节点详情（L0 摘要 + L1 邻居/被引用）。
 func TestNodeEndpoint(t *testing.T) {
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11")
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 	resp := doAuthGet(t, ts, "/api/node?id=Beta")
@@ -124,7 +132,7 @@ func TestNodeEndpoint(t *testing.T) {
 
 // GET /api/roam?q=&export=1 → text/markdown 卡片清单。
 func TestRoamExportEndpoint(t *testing.T) {
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11")
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 	resp := doAuthGet(t, ts, "/api/roam?q=Alpha&export=1")
@@ -150,11 +158,11 @@ func TestRoamExportEndpoint(t *testing.T) {
 
 // GET /api/touch/stats：埋点只读统计（注入 TouchStat 闭包）。
 func TestTouchStatsEndpoint(t *testing.T) {
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.11")
 	s.Token = testToken
-	s.SetTouchStats(func() (int, []TouchRow, []TouchRow, error) {
+	s.TouchStat = func() (int, []TouchRow, []TouchRow, error) {
 		return 5, []TouchRow{{ID: "热点", Count: 3}}, []TouchRow{{ID: "来源", Count: 2}}, nil
-	})
+	}
 	ts := newAuthServer(t, s)
 	resp := doAuthGet(t, ts, "/api/touch/stats")
 	defer resp.Body.Close()
@@ -174,7 +182,7 @@ func TestTouchStatsEndpoint(t *testing.T) {
 // GET /api/communities：社区发现（v0.1.12，roadmap #10）。
 // a-b-c 链 + 孤立 x；Leiden 应产出 ≥1 社区，membership 含 a/b/c、不含孤立 x。
 func TestCommunitiesEndpoint(t *testing.T) {
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.12", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "test", "V", "v0.1.12")
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 	resp := doAuthGet(t, ts, "/api/communities?seed=42")

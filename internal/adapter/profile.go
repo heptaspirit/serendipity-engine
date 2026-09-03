@@ -32,7 +32,6 @@ import (
 	"embed"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -131,18 +130,15 @@ func LoadProfile(path string) (*VaultProfile, error) {
 // ExcludedName 判断文件名是否被画像排除：ExcludedFiles 精确匹配，或 ExcludedPrefixes
 // 前缀匹配（v0.1.13，反馈 #3——.ingest-report-、health_ 等自动生成文件不进图）。
 //
-// v0.2.1 bugfix：对 .md 后缀免疫——画像里写 "log" 或 "log.md" 都应排除 log.md。
-// 此前 ExcludedName 只做全名精确匹配，裸名（排除 log.md 但写 `excluded_files: [log]`）
-// 匹配不上 "log.md"，解析器实际不排除（曾导致日志/索引页照进图）。
+// .md 后缀免疫（v0.2.1 bugfix）：画像里写 "log" 或 "log.md" 都应排除 log.md——
+// 文件名与画像条目都剥 .md 后按裸名比较，四种形态（裸/带 .md × 裸/带 .md）全覆盖，
+// 大写的 .MD 一并处理；大小写不敏感（Obsidian 常跑在大小写不敏感的 Windows 文件系统，
+// "Log.md" 与 "log.md" 是同一文件）。
 func (p *VaultProfile) ExcludedName(name string) bool {
-	if slices.Contains(p.ExcludedFiles, name) {
-		return true
-	}
-	// 裸名/大小写不敏感匹配：画像写 "log" 排除 "log.md"/"LOG.md"（Obsidian 常跑在
-	// 大小写不敏感的 Windows 文件系统）。Windows 下 "Log.md" 与 "log.md" 是同一文件。
 	stem := strings.TrimSuffix(strings.TrimSuffix(name, ".md"), ".MD")
 	for _, f := range p.ExcludedFiles {
-		if strings.EqualFold(stem, f) || strings.EqualFold(name, f) {
+		fStem := strings.TrimSuffix(strings.TrimSuffix(f, ".md"), ".MD")
+		if strings.EqualFold(stem, fStem) {
 			return true
 		}
 	}
@@ -152,6 +148,16 @@ func (p *VaultProfile) ExcludedName(name string) bool {
 		}
 	}
 	return false
+}
+
+// StructuralSet 返回 StructuralTypes 的集合形态（map[string]bool）——各排除点
+// （roam 簇/rollSeed、similar、suggest、hot）共用同一建集逻辑，不在调用方重复循环。
+func (p *VaultProfile) StructuralSet() map[string]bool {
+	set := make(map[string]bool, len(p.StructuralTypes))
+	for _, t := range p.StructuralTypes {
+		set[t] = true
+	}
+	return set
 }
 
 // fillDefaults 用 default-obsidian 的默认填充画像中缺失的字段（防御性校验）。

@@ -38,19 +38,16 @@ func DetectProfile(vault string) (*VaultProfile, error) {
 		}
 		return nil
 	})
-	for e := range excluded {
-		p.ExcludedDirs = append(p.ExcludedDirs, e)
-	}
-	// 去重
-	seenDir := map[string]bool{}
-	dedup := p.ExcludedDirs[:0]
+	// 排除目录 = 默认三件套（p 初始值）∪ 工具点目录（excluded 键），去重排序
+	inExcluded := map[string]bool{}
 	for _, e := range p.ExcludedDirs {
-		if !seenDir[e] {
-			seenDir[e] = true
-			dedup = append(dedup, e)
+		inExcluded[e] = true
+	}
+	for e := range excluded {
+		if !inExcluded[e] {
+			p.ExcludedDirs = append(p.ExcludedDirs, e)
 		}
 	}
-	p.ExcludedDirs = dedup
 	sort.Strings(p.ExcludedDirs)
 
 	filepath.WalkDir(vault, func(path string, d os.DirEntry, err error) error {
@@ -196,20 +193,14 @@ func containsAny(s string, words []string) bool {
 
 // DetectLLMWiki 探测 vault 是否为 LLM Wiki（Karpathy 模式）结构（v0.1.12，backlog §3.5）。
 // 判定：存在 raw/ + wiki/ + wiki/index.md 组合。只提示不自动启用（白盒原则，用户显式
-// 选择 --profile-name llm-wiki）；探测成本 = 一次目录读取，可在 index/serve 启动时调用。
+// 选择 --profile-name llm-wiki）；探测成本 = 两次 stat（wiki/index.md 存在即蕴含
+// wiki 是目录——路径带子项，父为文件会 ENOTDIR）。
 func DetectLLMWiki(vault string) bool {
-	hasRaw := dirExists(filepath.Join(vault, "raw"))
-	if !hasRaw {
+	if !dirExists(filepath.Join(vault, "raw")) {
 		return false
 	}
 	_, err := os.Stat(filepath.Join(vault, "wiki", "index.md"))
-	if err != nil {
-		return false
-	}
-	if fi, err := os.Stat(filepath.Join(vault, "wiki")); err != nil || !fi.IsDir() {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func dirExists(path string) bool {

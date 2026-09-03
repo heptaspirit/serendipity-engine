@@ -1,5 +1,6 @@
 // Package score 实现四维打分与归一化融合（设计 §3.2 + 修订 #3/#4/#13）。
-// v1 默认：α=β=0.5, γ=δ=0（无 heat、无依赖分混入导航排名）；每维先归一化。
+// 融合权重：α=β=0.5 默认（γ/δ 维度及公式项已于 2026-09 ponytail C/D 删除——
+// 恒为 0，无 heat/依赖分混入导航排名）；每维先归一化。
 // spike 迭代：新增 种子/目录节点排除 + 跳数配额混合（serendipity 机制，参数实测来源已归档）。
 // v0.1.6：归一化改为**桶内**（按跳数分桶各自 min-max）——配额机制下候选是
 // "桶内排序、跨桶配额轮转"，全局归一化会让深跳桶整体趋 0（score=0 误导）；
@@ -27,10 +28,10 @@ type Result struct {
 
 // RankOpts 融合排序参数。
 type RankOpts struct {
-	Alpha, Beta, Gamma, Delta float64
-	TopN                      int
-	Exclude                   map[string]bool // 种子 + 目录节点等（spike 发现）
-	HopQuota                  [3]float64      // 1/2/3-hop 配额比例（spike 发现：纯相关度排不出深跳）
+	Alpha, Beta float64 // 结构分（PPR）与激活分权重（γ/δ 维度已于 2026-09 删除——恒为 0）
+	TopN        int
+	Exclude     map[string]bool // 种子 + 目录节点等（spike 发现）
+	HopQuota    [3]float64      // 1/2/3-hop 配额比例（spike 发现：纯相关度排不出深跳）
 }
 
 // Rank 把激活候选与 PPR 合并，min-max 归一化后线性融合，再按跳数配额混合取 topN。
@@ -45,57 +46,29 @@ func Rank(g *graph.Graph, actMap map[string]graph.ActivationResult, pprMap map[s
 		id       string
 		score    float64
 		ppr, act float64
-		hops     int
 	}
-	hopBuckets := map[int][]cand{1: {}, 2: {}, 3: {}}
+	buckets := map[int][]cand{1: {}, 2: {}, 3: {}}
 	for id, r := range actMap {
 		if opts.Exclude != nil && opts.Exclude[id] {
 			continue
 		}
-		h := r.Hops
-		if h > 3 {
-			h = 3
-		}
-		if h < 1 {
-			h = 1
-		}
-		hopBuckets[h] = append(hopBuckets[h], cand{id: id, ppr: pprMap[id], act: r.Score, hops: r.Hops})
+		h := clampHop(r.Hops)
+		buckets[h] = append(buckets[h], cand{id: id, ppr: pprMap[id], act: r.Score})
 	}
-	var all []cand
 	for h := 1; h <= 3; h++ {
-		actVals := make([]float64, 0, len(hopBuckets[h]))
-		pprVals := make([]float64, 0, len(hopBuckets[h]))
-		for _, c := range hopBuckets[h] {
+		actVals := make([]float64, 0, len(buckets[h]))
+		pprVals := make([]float64, 0, len(buckets[h]))
+		for _, c := range buckets[h] {
 			actVals = append(actVals, c.act)
 			pprVals = append(pprVals, c.ppr)
 		}
 		minAct, maxAct := minMax(actVals)
 		minPPR, maxPPR := minMax(pprVals)
-		for i := range hopBuckets[h] {
-			nAct := norm(hopBuckets[h][i].act, minAct, maxAct)
-			nPPR := norm(hopBuckets[h][i].ppr, minPPR, maxPPR)
-			hopBuckets[h][i].score = opts.Alpha*nPPR + opts.Beta*nAct + opts.Gamma*0 + opts.Delta*0
+		for i := range buckets[h] {
+			nAct := norm(buckets[h][i].act, minAct, maxAct)
+			nPPR := norm(buckets[h][i].ppr, minPPR, maxPPR)
+			buckets[h][i].score = opts.Alpha*nPPR + opts.Beta*nAct
 		}
-		all = append(all, hopBuckets[h]...)
-	}
-
-	// 2. 跳数配额混合（serendipity）：hop 越深越少，但保证出现
-	quota := opts.HopQuota
-	if quota == [3]float64{} {
-		quota = [3]float64{0.5, 0.3, 0.2}
-	}
-	buckets := map[int][]cand{1: {}, 2: {}, 3: {}}
-	for _, c := range all {
-		h := c.hops
-		if h > 3 {
-			h = 3
-		}
-		if h < 1 {
-			h = 1
-		}
-		buckets[h] = append(buckets[h], c)
-	}
-	for h := 1; h <= 3; h++ {
 		// 并列分按 ID 稳定破序（v0.1.7）：Rank 入参来自 map 迭代，sort.Slice 不稳定
 		// 会让并列项顺序随运行变化——同 seed 随机漫步"同一簇"就不成立。分数单调性
 		// 不受影响（只改并列顺序），查询漫游输出也更稳定。
@@ -105,6 +78,12 @@ func Rank(g *graph.Graph, actMap map[string]graph.ActivationResult, pprMap map[s
 			}
 			return buckets[h][i].id < buckets[h][j].id
 		})
+	}
+
+	// 2. 跳数配额混合（serendipity）：hop 越深越少，但保证出现
+	quota := opts.HopQuota
+	if quota == [3]float64{} {
+		quota = [3]float64{0.5, 0.3, 0.2}
 	}
 
 	need := opts.TopN
@@ -205,4 +184,15 @@ func norm(v, mn, mx float64) float64 {
 		return 0.5
 	}
 	return (v - mn) / (mx - mn)
+}
+
+// clampHop 跳数归一到 1..3（分桶键：<1 视作 1 跳锚点、>3 并入 3 跳桶）。
+func clampHop(h int) int {
+	if h > 3 {
+		return 3
+	}
+	if h < 1 {
+		return 1
+	}
+	return h
 }

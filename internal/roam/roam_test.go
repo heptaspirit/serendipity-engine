@@ -31,7 +31,7 @@ func testGraph(t *testing.T) (*graph.Graph, *adapter.VaultProfile) {
 
 func testOpt() Options {
 	return Options{Top: 10, Hops: 3, Lambda: 0.7, Theta: 0.1,
-		Alpha: 0.5, Beta: 0.5, FilterStructural: true}
+		Alpha: 0.5, Beta: 0.5}
 }
 
 // 候选池过滤：结构类型 / 空标题 / 孤立 永不被滚出。

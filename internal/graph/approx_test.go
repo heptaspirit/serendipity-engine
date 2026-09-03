@@ -22,7 +22,7 @@ func TestPotentialLinksBasic(t *testing.T) {
 		{ID: "E", Title: "E", Type: "note", Refs: []string{}},
 	}
 	g := Build(docs)
-	out := g.PotentialLinks(2, nil)
+	out := g.PotentialLinks(nil)
 	// 应至少有一对 A-C（唯一无直接边但有共同邻居的对）
 	found := false
 	for _, e := range out {
@@ -53,7 +53,7 @@ func TestPotentialLinksNoDirectNeighbor(t *testing.T) {
 		{ID: "X", Title: "X", Type: "note", Refs: []string{"A", "B"}},
 	}
 	g := Build(docs)
-	out := g.PotentialLinks(2, nil)
+	out := g.PotentialLinks(nil)
 	for _, e := range out {
 		if (e.A == "A" && e.B == "B") || (e.A == "B" && e.B == "A") {
 			t.Fatalf("直接邻居 A-B 不应进潜在关联：%+v", e)
@@ -70,7 +70,7 @@ func TestPotentialLinksDedup(t *testing.T) {
 		{ID: "C", Title: "C", Type: "note", Refs: []string{"X", "B"}},
 	}
 	g := Build(docs)
-	out := g.PotentialLinks(2, nil)
+	out := g.PotentialLinks(nil)
 	seen := map[string]bool{}
 	for _, e := range out {
 		if e.A >= e.B {
@@ -94,7 +94,7 @@ func TestPotentialLinksStructuralExcluded(t *testing.T) {
 	}
 	g := Build(docs)
 	// 排除 dir 后：A-C 仍有共同邻居 B，应正常产出；"目录" 不应作为端点出现
-	out := g.PotentialLinks(2, map[string]bool{"dir": true})
+	out := g.PotentialLinks(map[string]bool{"dir": true})
 	for _, e := range out {
 		if e.A == "目录" || e.B == "目录" {
 			t.Fatalf("结构类型不应作端点：%+v", e)
@@ -102,12 +102,12 @@ func TestPotentialLinksStructuralExcluded(t *testing.T) {
 	}
 }
 
-// TestPotentialLinksTopKThrottle：top-K 节流——perNodeK=1 时每端点最多 1 条。
-// 星形中心 hub（deg 3 < 半数 2? 构造使 hub 度 ≥ 半数排除）——这里用简单
-// 菱形图验证节流数量界。
+// TestPotentialLinksTopKThrottle：top-K 节流——每端点最多贡献 K=2 条候选
+// （perNodeTop 常量；原 perNodeK 参数已随 yagni 删除）。
+// 5 节点：中心 H 连接 4 叶（H 度 4 ≥ 半数 2 → 排除 hub），叶之间无直连，
+// 每叶的 2-hop 候选 = 其他 3 叶（经 H），分数全等 → 并列按 ID 升序取前 2。
+// 全局去重后恰 5 对；被节流丢弃的是各叶第 3 名（如 L3-L4，互为对方第 3 名）。
 func TestPotentialLinksTopKThrottle(t *testing.T) {
-	// 5 节点：中心 H 连接 4 叶（H 度 4 ≥ 半数 2.5 → 排除 hub），叶之间无直连。
-	// 每叶的 2-hop 候选 = 其他叶（经 H）。perNodeK=1 → 全局至多 4 对。
 	docs := []*adapter.Document{
 		{ID: "H", Title: "H", Type: "note", Refs: []string{"L1", "L2", "L3", "L4"}},
 		{ID: "L1", Title: "L1", Type: "note", Refs: []string{"H"}},
@@ -116,13 +116,16 @@ func TestPotentialLinksTopKThrottle(t *testing.T) {
 		{ID: "L4", Title: "L4", Type: "note", Refs: []string{"H"}},
 	}
 	g := Build(docs)
-	out := g.PotentialLinks(1, nil)
-	if len(out) > 4 {
-		t.Fatalf("perNodeK=1 全局应 ≤ 4 对：%d", len(out))
+	out := g.PotentialLinks(nil)
+	if len(out) != 5 {
+		t.Fatalf("K=2 节流去重后应恰 5 对（L1-L2/L1-L3/L1-L4/L2-L3/L2-L4），实际 %d：%+v", len(out), out)
 	}
 	for _, e := range out {
 		if e.A == "H" || e.B == "H" {
 			t.Fatalf("hub 不应作端点：%+v", e)
+		}
+		if (e.A == "L3" && e.B == "L4") || (e.A == "L4" && e.B == "L3") {
+			t.Fatalf("L3-L4 互为对方第 3 名，应被 K=2 节流丢弃：%+v", e)
 		}
 	}
 }
@@ -142,7 +145,7 @@ func TestPotentialLinksBordaOrdering(t *testing.T) {
 		{ID: "F", Title: "F", Type: "note", Refs: []string{}},
 	}
 	g := Build(docs)
-	out := g.PotentialLinks(2, nil)
+	out := g.PotentialLinks(nil)
 	scoreOf := func(a, b string) float64 {
 		for _, e := range out {
 			if (e.A == a && e.B == b) || (e.A == b && e.B == a) {
@@ -166,7 +169,7 @@ func TestPotentialLinksEmpty(t *testing.T) {
 	g := Build([]*adapter.Document{
 		{ID: "A", Title: "A", Type: "note", Refs: []string{}},
 	})
-	if out := g.PotentialLinks(2, nil); len(out) != 0 {
+	if out := g.PotentialLinks(nil); len(out) != 0 {
 		t.Fatalf("孤立节点图应空：%+v", out)
 	}
 }
@@ -180,8 +183,8 @@ func TestPotentialLinksDeterministic(t *testing.T) {
 		{ID: "X", Title: "X", Type: "note", Refs: []string{"A", "B", "C"}},
 	}
 	g := Build(docs)
-	o1 := g.PotentialLinks(2, nil)
-	o2 := g.PotentialLinks(2, nil)
+	o1 := g.PotentialLinks(nil)
+	o2 := g.PotentialLinks(nil)
 	if !reflect.DeepEqual(o1, o2) {
 		t.Fatalf("应确定性：%+v ≠ %+v", o1, o2)
 	}

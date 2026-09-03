@@ -67,39 +67,9 @@ var (
 // 通用语法（[[...]] / markdown 链接 / frontmatter / H1）是固定的；语义映射走画像。
 // 同名文件消歧（v0.1.2）：ID = 文件名，不同目录同名文件会撞 ID（Obsidian 自身
 // 也不允许重名——冲突通常是归档/副本），从第二个起改用相对路径作 ID，两者都保留。
+// 实现：与 ParseVaultIncremental 同一扫描循环（无旧状态 = 全量解析；见其语义说明）。
 func ParseVault(root string, p *VaultProfile) ([]*Document, error) {
-	var docs []*Document
-	seen := map[string]string{} // id → 已占用的相对路径（冲突检测）
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if d.Name() != "." && slices.Contains(p.ExcludedDirs, d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
-			return nil
-		}
-		if p.ExcludedName(d.Name()) {
-			return nil // v0.1.12/13：文件名级/前缀级排除（画像 ExcludedFiles/ExcludedPrefixes）
-		}
-		doc, err := ParseFile(path, root, p)
-		if err != nil {
-			return err
-		}
-		if prev, dup := seen[doc.ID]; dup {
-			// 同名冲突：保留前者 basename ID（[[链接]] 走最短名），
-			// 后者改用相对路径 ID（去 .md、/ 分隔），二者都进图
-			doc.ID = strings.TrimSuffix(doc.Path, ".md")
-			_ = prev
-		}
-		seen[doc.ID] = doc.Path
-		docs = append(docs, doc)
-		return nil
-	})
+	docs, _, err := ParseVaultIncremental(root, p, nil)
 	return docs, err
 }
 

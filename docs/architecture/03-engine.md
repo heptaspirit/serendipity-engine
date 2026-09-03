@@ -5,12 +5,13 @@
 
 ## 1. 漫游管线（`roam.Compute`）—— 全流程
 
-CLI 与 Web 共用同一管线（`roam.Options{Top, Hops, Lambda, Theta, Alpha, Beta, FilterStructural}`）：
+CLI 与 Web 共用同一管线（`roam.Options{Top, Hops, Lambda, Theta, Alpha, Beta}`；原
+FilterStructural 开关已删——结构类型排除是管线固有一步，见 §2）：
 
 ```
 锚定（graph.Resolve）
   → PPR（结构分）+ Activate（激活分）双通道并行
-  → 排除：种子 + 目录枢纽（度 ≥ 半数节点）+ 结构类型（FilterStructural）
+  → 排除：种子 + 目录枢纽（度 ≥ 半数节点）+ 结构类型
   → score.Rank：min-max 归一化 → 线性融合（0.5·PPR + 0.5·Act）→ 跳数配额混合
   → 降级兜底（见 §4）
 ```
@@ -44,14 +45,15 @@ CLI 与 Web 共用同一管线（`roam.Options{Top, Hops, Lambda, Theta, Alpha, 
 - 每维独立 min-max 归一化后再融合（避免量纲失衡）。
 - **跳数配额**（serendipity 旋钮）：1:2:3-hop = 0.5/0.3/0.2，桶内 round-robin
   交错——保证"我没想到但确实相关"的深跳惊喜稳定出现。
-- 依赖分 δ 与热度分 γ 独立于本排名（设计修订：δ=0 不参与）。
+- 热度分 γ / 依赖分 δ 恒为 0、从不混入本排名（相关字段与公式项已于 2026-09
+  随 ponytail C/D 删除——曾为 δ=0 的占位维度）。
 
 ## 2. 排除规则（`roam.Compute` 内）
 
 - **种子**：锚点自身不进簇（降级模式除外）。
 - **目录枢纽**：`deg ≥ Nodes/2` 的节点（如 Obsidian 的 index 汇总页）。
 - **结构类型**：`profile.StructuralTypes`（Obsidian 的章节/大纲/索引…；虎鲸的
-  container）。仅 `FilterStructural=true` 时（实体查询）。
+  container）。实体查询/簇输出恒排除（原 `FilterStructural` 开关恒 true、已删）。
 
 ## 3. 降级兜底（决策 #10，实测刚需）
 

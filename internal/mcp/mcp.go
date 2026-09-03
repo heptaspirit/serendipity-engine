@@ -22,9 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"math/rand/v2"
 	"net/http"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -369,13 +367,12 @@ func (s *Server) roam(g *graph.Graph, p *adapter.VaultProfile, raw map[string]an
 	}
 	remarshal(raw, &a)
 	opt := roam.Options{
-		Top:              clamp(a.Top, 15, 1, 60),
-		Hops:             clamp(a.Hops, 3, 1, 5),
-		Lambda:           clampF(a.Lambda, 0.7, 0, 1),
-		Theta:            clampF(a.Theta, 0.1, 0, 1),
-		Alpha:            clampF(a.Alpha, 0.5, 0, 1),
-		Beta:             clampF(a.Beta, 0.5, 0, 1),
-		FilterStructural: true,
+		Top:    clamp(a.Top, 15, 1, 60),
+		Hops:   clamp(a.Hops, 3, 1, 5),
+		Lambda: clampF(a.Lambda, 0.7, 0, 1),
+		Theta:  clampF(a.Theta, 0.1, 0, 1),
+		Alpha:  clampF(a.Alpha, 0.5, 0, 1),
+		Beta:   clampF(a.Beta, 0.5, 0, 1),
 	}
 	if a.Q == "" {
 		return errText("roam: q is required")
@@ -390,15 +387,9 @@ func (s *Server) randomWalk(g *graph.Graph, p *adapter.VaultProfile, raw map[str
 		RandAlpha float64 `json:"rand_alpha"`
 	}
 	remarshal(raw, &a)
-	var rng *rand.Rand
-	if a.Seed != 0 {
-		rng = rand.New(rand.NewPCG(uint64(a.Seed), uint64(a.Seed)>>1^0x9E3779B97F4A7C15))
-	} else {
-		rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x9E3779B97F4A7C15))
-	}
 	opt := roam.Options{Top: clamp(a.Top, 15, 1, 60), Hops: 3, Lambda: 0.7,
-		Theta: 0.1, Alpha: 0.5, Beta: 0.5, FilterStructural: true}
-	return okText(roam.ComputeRandom(g, p, opt, roam.Roll{Rng: rng, Alpha: clampF(a.RandAlpha, 0.5, 0, 1)}))
+		Theta: 0.1, Alpha: 0.5, Beta: 0.5}
+	return okText(roam.ComputeRandom(g, p, opt, roam.Roll{Rng: roam.SeededRNG(a.Seed), Alpha: clampF(a.RandAlpha, 0.5, 0, 1)}))
 }
 
 func (s *Server) relation(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) *graph.Relation {
@@ -415,7 +406,7 @@ func (s *Server) relation(g *graph.Graph, p *adapter.VaultProfile, raw map[strin
 	if from == "" || to == "" {
 		return nil
 	}
-	return g.ComputeRelation(from, to, 0.7)
+	return g.ComputeRelation(from, to)
 }
 
 func (s *Server) nodeDetail(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) *graph.NodeDetail {
@@ -446,11 +437,7 @@ func (s *Server) similar(g *graph.Graph, p *adapter.VaultProfile, raw map[string
 	if id == "" {
 		return errText("similar: id could not be anchored")
 	}
-	structural := map[string]bool{}
-	for _, t := range p.StructuralTypes {
-		structural[t] = true
-	}
-	return okText(g.Similar(id, clamp(m.K, 10, 1, 60), structural))
+	return okText(g.Similar(id, clamp(m.K, 10, 1, 60), p.StructuralSet()))
 }
 
 func (s *Server) community(g *graph.Graph, p *adapter.VaultProfile, raw map[string]any) any {
@@ -512,11 +499,7 @@ func (s *Server) suggest(g *graph.Graph, p *adapter.VaultProfile, raw map[string
 		K int `json:"k"`
 	}
 	remarshal(raw, &m)
-	structural := map[string]bool{}
-	for _, t := range p.StructuralTypes {
-		structural[t] = true
-	}
-	links := g.PotentialLinks(2, structural)
+	links := g.PotentialLinks(p.StructuralSet())
 	if k := clamp(m.K, 20, 1, 200); len(links) > k {
 		links = links[:k]
 	}

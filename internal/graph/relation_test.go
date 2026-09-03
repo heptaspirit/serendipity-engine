@@ -21,7 +21,7 @@ func testRelGraph() *Graph {
 // a-b 直达：hops=1、direct、激活 λ^1；证据链含文档 a/b。
 func TestRelationDirect(t *testing.T) {
 	g := testRelGraph()
-	rel := g.ComputeRelation("a", "b", 0.7)
+	rel := g.ComputeRelation("a", "b")
 	if rel == nil {
 		t.Fatal("nil")
 	}
@@ -43,7 +43,7 @@ func TestRelationDirect(t *testing.T) {
 // 无直达：a-e 最短 2 跳 a-c-e；激活 λ²。
 func TestRelationTwoHop(t *testing.T) {
 	g := testRelGraph()
-	rel := g.ComputeRelation("a", "e", 0.7)
+	rel := g.ComputeRelation("a", "e")
 	if rel.Hops != 2 || rel.Direct {
 		t.Fatalf("应 2 跳非直达：hops=%d direct=%v", rel.Hops, rel.Direct)
 	}
@@ -62,7 +62,7 @@ func TestRelationTwoHop(t *testing.T) {
 // 结构不同时（度差异）方向性会体现。此处验证两值都存在且 affinity 为均值。
 func TestRelationPPR(t *testing.T) {
 	g := testRelGraph()
-	rel := g.ComputeRelation("a", "b", 0.7)
+	rel := g.ComputeRelation("a", "b")
 	if rel.PPRFromTo <= 0 || rel.PPRToFrom <= 0 {
 		t.Fatalf("PPR 应为正：%v / %v", rel.PPRFromTo, rel.PPRToFrom)
 	}
@@ -75,7 +75,7 @@ func TestRelationPPR(t *testing.T) {
 // 不存在节点 → nil。
 func TestRelationMissingNode(t *testing.T) {
 	g := testRelGraph()
-	if rel := g.ComputeRelation("a", "不存在", 0.7); rel != nil {
+	if rel := g.ComputeRelation("a", "不存在"); rel != nil {
 		t.Fatal("应 nil")
 	}
 }
@@ -83,7 +83,7 @@ func TestRelationMissingNode(t *testing.T) {
 // 自关系：hops=0、激活 1.0。
 func TestRelationSelf(t *testing.T) {
 	g := testRelGraph()
-	rel := g.ComputeRelation("a", "a", 0.7)
+	rel := g.ComputeRelation("a", "a")
 	if rel.Hops != 0 || rel.Activation != 1.0 {
 		t.Fatalf("自关系错误：hops=%d act=%v", rel.Hops, rel.Activation)
 	}
@@ -98,7 +98,7 @@ func TestRelationDisconnected(t *testing.T) {
 		{ID: "y", Title: "Y", Type: "note", Path: "y.md", Refs: []string{"x"}, Text: "y"},
 	}
 	g := Build(docs)
-	rel := g.ComputeRelation("a", "x", 0.7)
+	rel := g.ComputeRelation("a", "x")
 	if rel == nil {
 		t.Fatal("nil")
 	}

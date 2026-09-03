@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"serendipity-engine/internal/adapter"
 )
 
 // excludedDirs 自动监听必须跳过的目录（含 .serendipity 自身存储，防自触发循环）。
@@ -41,7 +43,7 @@ var excludedDirs = map[string]bool{
 
 // Run 启动监听循环：每 poll 检测一次变化；有变化且距上次刷新 >= throttle 时
 // 执行 refresh（吸收窗口内所有变化）。阻塞直到 ctx 取消。
-// pending（可空）：暴露"有待刷新变化"的标志——serve 注入到 /api/stats 的
+// pending（非空）：暴露"有待刷新变化"的标志——serve 注入到 /api/stats 的
 // is_pending 字段 + 前端"库有变化"提示条（roadmap 阶段 1 #14）。
 //   - 检测到变化 → pending=true（"有变化待刷新"）；
 //   - 刷新成功 → pending=false（"已刷新"）。
@@ -61,9 +63,9 @@ func Run(ctx context.Context, poll, throttle time.Duration, pending *atomic.Bool
 				continue
 			}
 			if changed {
-				setPending(pending, true)
+				pending.Store(true)
 			}
-			if !getPending(pending) || time.Since(lastRefresh) < throttle {
+			if !pending.Load() || time.Since(lastRefresh) < throttle {
 				continue // 节流窗口内：合并等待
 			}
 			// 合并执行一次刷新
@@ -71,43 +73,26 @@ func Run(ctx context.Context, poll, throttle time.Duration, pending *atomic.Bool
 				log.Printf("[watch] 自动刷新失败（保留待刷新，节流后重试）: %v", err)
 				continue // pending 保留，下轮重试
 			}
-			setPending(pending, false)
+			pending.Store(false)
 			lastRefresh = time.Now()
 		}
 	}
 }
 
-// getPending/setPending 原子读写待刷新标志；pending 为空（调用方不关心）时安全。
-func getPending(p *atomic.Bool) bool { return p != nil && p.Load() }
-func setPending(p *atomic.Bool, v bool) {
-	if p != nil {
-		p.Store(v)
-	}
-}
-
 // NewVaultChecker 构造 Obsidian vault 的变化检测器：逐 .md 文件比对
 // (mtime, size) 快照，含新增/删除检测。快照存于闭包内（量级 = 文件数）。
-// extraExclude 为额外排除的目录名（画像 ExcludedDirs），extraExcludeFiles 为额外
-// 排除的文件名（画像 ExcludedFiles，v0.1.12——与 ParseVault 排除同源，否则 LLM Wiki
-// 的 index.md/log.md 变化会无效触发刷新，backlog §四 缺口③）。extraExcludePrefixes
-// 为额外排除的文件名前缀（画像 ExcludedPrefixes，v0.1.13——与 ParseVault 同源）。
-func NewVaultChecker(root string, extraExclude, extraExcludeFiles, extraExcludePrefixes []string) func() (bool, error) {
+// 排除口径与 ParseVault 同源（p 非空）：目录排除 = 内置硬编码（含 .serendipity
+// 自身存储，防 store 写入自触发循环）+ 画像 ExcludedDirs；文件级排除走
+// VaultProfile.ExcludedName（ExcludedFiles 精确/裸名 + ExcludedPrefixes，.md 免疫）——
+// 否则被解析排除的 index.md/log.md 等变化会无效触发刷新（backlog §四 缺口③，
+// v0.1.12/13；此前 watch 自带一份更弱的文件名排除副本，已并入画像单一真相源）。
+func NewVaultChecker(root string, p *adapter.VaultProfile) func() (bool, error) {
 	exclude := map[string]bool{}
 	for k := range excludedDirs {
 		exclude[k] = true
 	}
-	for _, e := range extraExclude {
+	for _, e := range p.ExcludedDirs {
 		exclude[e] = true
-	}
-	fileExclude := map[string]bool{}
-	for _, f := range extraExcludeFiles {
-		fileExclude[f] = true
-	}
-	filePrefixExclude := map[string]bool{}
-	for _, p := range extraExcludePrefixes {
-		if p != "" {
-			filePrefixExclude[p] = true
-		}
 	}
 	last := map[string][2]int64{} // path → {mtimeNs, size}
 	return func() (bool, error) {
@@ -126,8 +111,8 @@ func NewVaultChecker(root string, extraExclude, extraExcludeFiles, extraExcludeP
 			if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 				return nil
 			}
-			if fileExclude[d.Name()] || filePrefixExcluded(filePrefixExclude, d.Name()) {
-				// 被画像排除的文件（精确名或前缀）：不进快照（也不计变化）——与 ParseVault 同源
+			if p.ExcludedName(d.Name()) {
+				// 被画像排除的文件：不进快照（也不计变化）——与 ParseVault 同源
 				delete(last, path)
 				return nil
 			}
@@ -152,19 +137,6 @@ func NewVaultChecker(root string, extraExclude, extraExcludeFiles, extraExcludeP
 		}
 		return changed, err
 	}
-}
-
-// filePrefixExcluded 判断文件名是否命中任一前缀排除规则（与画像 ExcludedPrefixes 同源）。
-func filePrefixExcluded(m map[string]bool, name string) bool {
-	if len(m) == 0 {
-		return false
-	}
-	for pre := range m {
-		if strings.HasPrefix(name, pre) {
-			return true
-		}
-	}
-	return false
 }
 
 // NewOrcaChecker 构造虎鲸库的变化检测器：stat 库文件 (mtime, size)。

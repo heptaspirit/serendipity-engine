@@ -18,23 +18,23 @@ import (
 // contractServer 构造带全端点（含 refresh/touch/touchStat）的契约测试服务。
 func contractServer(t *testing.T, storePath string) *Server {
 	t.Helper()
-	s := New(endpointGraph(), &adapter.VaultProfile{}, "obsidian:test", "V", "v0.1.12", nil, nil)
+	s := newTestServer(endpointGraph(), &adapter.VaultProfile{}, "obsidian:test", "V", "v0.1.12")
 	s.Token = testToken
 	s.OrcaRepo = ""
-	s.SetTouchStats(func() (int, []TouchRow, []TouchRow, error) {
+	s.TouchStat = func() (int, []TouchRow, []TouchRow, error) {
 		return 7, []TouchRow{{ID: "b", Count: 4}}, []TouchRow{{ID: "Alpha", Count: 2}}, nil
-	})
-	s.SetTouchDigest(func() (*Digest, error) {
+	}
+	s.TouchDg = func() (*Digest, error) {
 		return &Digest{
 			ID: "d1", GeneratedAt: 1700000000, WindowStart: 1699990000,
 			Since: "2026-08-25 10:00", Total: 7,
 			Targets: []DigestTarget{{ID: "b", Title: "Beta", Count: 4}},
 			Sources: []TouchRow{{ID: "Alpha", Count: 2}},
 		}, nil
-	})
-	s.SetTouchAck(func(id string) error { return nil })
-	s.SetDigestAvailable(func() bool { return true })
-	s.SetIsPending(func() bool { return true })
+	}
+	s.TouchAck = func(id string) error { return nil }
+	s.DigAvail = func() bool { return true }
+	s.IsPending = func() bool { return true }
 	// refresh 闭包：返回一个合成 diff + 同一图（端点只验证 JSON 形状，不做真刷新）
 	s.Refresh = func() (*syncpkg.Result, *graph.Graph, error) {
 		res := &syncpkg.Result{Added: 1, Updated: 2, Deleted: 0, Renamed: 1, Unchanged: 1, DurationMS: 3}
@@ -311,7 +311,7 @@ func TestVaultPostEndpointJSONContract(t *testing.T) {
 
 // 未配库（G==nil）时数据端点返回 configured:false（v0.1.15 无库启动守卫）。
 func TestVaultStateUnconfigured(t *testing.T) {
-	s := New(nil, nil, "", "", "v0.1.15", nil, nil) // 空库启动：G==nil
+	s := New("v0.1.15") // 空库启动：G==nil
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 
@@ -354,7 +354,7 @@ func TestVaultStateUnconfigured(t *testing.T) {
 // 空库时所有数据端点统一返回 configured:false 而不 panic（v0.1.15 回归：
 // handleHot 曾在守卫前访问 s.P 导致 nil panic——本测试覆盖全部图依赖端点）。
 func TestVaultStateAllEndpointsNoPanic(t *testing.T) {
-	s := New(nil, nil, "", "", "v0.1.15", nil, nil) // 空库：G 与 P 均为 nil
+	s := New("v0.1.15") // 空库：G 与 P 均为 nil
 	s.Token = testToken
 	ts := newAuthServer(t, s)
 

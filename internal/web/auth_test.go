@@ -20,7 +20,7 @@ func authTestServer(t *testing.T) *Server {
 		{ID: "a", Title: "Alpha", Type: "note", Refs: []string{"b"}},
 		{ID: "b", Title: "Beta", Type: "note", Refs: []string{"a"}},
 	}
-	s := New(graph.Build(docs), &adapter.VaultProfile{}, "test", "TestVault", "v0.1.8", nil, nil)
+	s := newTestServer(graph.Build(docs), &adapter.VaultProfile{}, "test", "TestVault", "v0.1.8")
 	s.Token = testToken
 	return s
 }
